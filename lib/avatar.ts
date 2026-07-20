@@ -143,6 +143,13 @@ function pick<T>(arr: T[], seed: number, salt: number): T {
   return arr[Math.abs((seed + salt * 9973) % arr.length)];
 }
 
+/** Prefer a real prop over "none" so the grid doesn't fill with bare blobs. */
+function pickAccessory(options: AvatarAccessory[], seed: number, salt: number): AvatarAccessory {
+  const weighted = options.filter((a) => a !== "none");
+  const pool = weighted.length > 0 && seed % 5 !== 0 ? weighted : options;
+  return pick(pool, seed, salt);
+}
+
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === "string" && (allowed as readonly string[]).includes(value)
     ? (value as T)
@@ -161,21 +168,26 @@ export function deriveLarvatarTraits(input: {
   const seed = walletSeed(input.wallet || String(input.hue));
   const p = input.partial || {};
 
+  // Spread hues for old hue/tone-only profiles; keep explicit stored hue stable when present with traits
+  const hasRichTraits = typeof p.body === "string" || typeof p.eyes === "string";
+  const baseHue = ((Number.isFinite(input.hue) ? input.hue : seed % 360) + 360) % 360;
+  const hue = hasRichTraits ? baseHue : (baseHue + ((seed % 47) - 23) + 360) % 360;
+
   return {
-    hue: ((Number.isFinite(input.hue) ? input.hue : seed % 360) + 360) % 360,
+    hue,
     tone,
     body: oneOf(p.body, BODIES, pick(look.bodies, seed, 1)),
     pattern: oneOf(p.pattern, PATTERNS, pick(look.patterns, seed, 2)),
     eyes: oneOf(p.eyes, EYES, pick(look.eyes, seed, 3)),
     antenna: oneOf(p.antenna, ANTENNAE, pick(look.antenna, seed, 4)),
-    accessory: oneOf(p.accessory, ACCESSORIES, pick(look.accessories, seed, 5)),
+    accessory: oneOf(p.accessory, ACCESSORIES, pickAccessory(look.accessories, seed, 5)),
     mouth: oneOf(p.mouth, MOUTHS, pick(look.mouths, seed, 6)),
     pose: oneOf(p.pose, POSES, pick(look.poses, seed, 7)),
-    cheeks: typeof p.cheeks === "boolean" ? p.cheeks : look.cheeks,
+    cheeks: typeof p.cheeks === "boolean" ? p.cheeks : look.cheeks || seed % 4 === 0,
     accent:
       typeof p.accent === "number" && Number.isFinite(p.accent)
         ? ((p.accent % 360) + 360) % 360
-        : (input.hue + 28 + (seed % 40)) % 360,
+        : (hue + 40 + (seed % 80)) % 360,
   };
 }
 
