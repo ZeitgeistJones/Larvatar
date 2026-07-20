@@ -20,6 +20,8 @@ export type LarvaProfile = {
 
 const PROFILE_KEY = (w: string) => `lpp:profile:${w.toLowerCase()}`;
 const INDEX_KEY = "lpp:index";
+const QUEUE_KEY = "lpp:build:queue"; // JSON: { wallet, texts, forum, labs }[] still pending
+const DONE_KEY = "lpp:build:done";   // JSON: { wallet, responseCount }[] finished this build run
 
 export async function saveProfile(p: LarvaProfile) {
   await redis.set(PROFILE_KEY(p.wallet), JSON.stringify(p));
@@ -40,6 +42,46 @@ export async function getIndex(): Promise<{ wallet: string; responseCount: numbe
   if (!raw) return [];
   return typeof raw === "string" ? JSON.parse(raw) : raw;
 }
+
+// ---------- chunked build queue ----------
+
+type QueueItem = { wallet: string; texts: string[]; forum: number; labs: number };
+
+export async function setQueue(items: QueueItem[]) {
+  await redis.set(QUEUE_KEY, JSON.stringify(items));
+}
+
+export async function getQueue(): Promise<QueueItem[]> {
+  const raw = await redis.get<string | QueueItem[]>(QUEUE_KEY);
+  if (!raw) return [];
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+export async function clearQueue() {
+  await redis.del(QUEUE_KEY);
+}
+
+export async function appendDone(entries: { wallet: string; responseCount: number }[]) {
+  const raw = await redis.get<string | any[]>(DONE_KEY);
+  const cur: { wallet: string; responseCount: number }[] = raw
+    ? typeof raw === "string" ? JSON.parse(raw) : raw
+    : [];
+  const merged = [...cur, ...entries];
+  await redis.set(DONE_KEY, JSON.stringify(merged));
+  return merged;
+}
+
+export async function getDone(): Promise<{ wallet: string; responseCount: number }[]> {
+  const raw = await redis.get<string | any[]>(DONE_KEY);
+  if (!raw) return [];
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+export async function clearDone() {
+  await redis.del(DONE_KEY);
+}
+
+// ---------- larv.ai fetchers ----------
 
 const BASE = "https://larv.ai/api";
 
@@ -67,12 +109,33 @@ function extractResponses(detail: any): { wallet: string; text: string }[] {
   return out;
 }
 
-export async function pullAllResponses(): Promise<Map<string, { texts: string[]; forum: number; labs: number }>> {
-  const byWallet = new Map<string, { texts: string[]; forum: number; labs: number }>();
+// fetch a list of detail URLs with limited concurrency, so we don't hammer larv.ai
+// or blow the time budget on a single huge sequential loop
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(worker));
+  return results;
+}
+
+// collection phase: pull everything, build the pending queue, store it in redis.
+// this does NOT call the LLM, so it's the fast part — just fetches.
+export async function collectIntoQueue(): Promise<number> {
+  const byWallet = new Map<string, QueueItem>();
 
   const add = (wallet: string, text: string, source: "forum" | "labs") => {
     const key = wallet.toLowerCase();
-    const cur = byWallet.get(key) || { texts: [], forum: 0, labs: 0 };
+    const cur = byWallet.get(key) || { wallet: key, texts: [], forum: 0, labs: 0 };
     cur.texts.push(text);
     cur[source] += 1;
     byWallet.set(key, cur);
@@ -80,26 +143,34 @@ export async function pullAllResponses(): Promise<Map<string, { texts: string[];
 
   const posts = await getJson(`${BASE}/forum`);
   if (Array.isArray(posts)) {
-    for (const p of posts) {
-      const id = p?.id;
-      if (id == null) continue;
-      const detail = await getJson(`${BASE}/forum/${id}`);
+    const details = await mapWithConcurrency(posts, 8, (p: any) =>
+      p?.id != null ? getJson(`${BASE}/forum/${p.id}`) : Promise.resolve(null)
+    );
+    for (const detail of details) {
       for (const r of extractResponses(detail)) add(r.wallet, r.text, "forum");
     }
   }
 
   const ideas = await getJson(`${BASE}/labs`);
   if (Array.isArray(ideas)) {
-    for (const i of ideas) {
-      const id = i?.id;
-      if (id == null) continue;
-      const detail = await getJson(`${BASE}/labs/${id}`);
+    const details = await mapWithConcurrency(ideas, 8, (i: any) =>
+      i?.id != null ? getJson(`${BASE}/labs/${i.id}`) : Promise.resolve(null)
+    );
+    for (const detail of details) {
       for (const r of extractResponses(detail)) add(r.wallet, r.text, "labs");
     }
   }
 
-  return byWallet;
+  const MIN_RESPONSES = 2;
+  const queue = Array.from(byWallet.values()).filter(
+    (q) => q.forum + q.labs >= MIN_RESPONSES
+  );
+
+  await setQueue(queue);
+  return queue.length;
 }
+
+// ---------- anthropic (haiku) ----------
 
 export async function haiku(system: string, user: string, maxTokens = 700): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
