@@ -10,7 +10,7 @@
 // saves each one immediately, and stops itself before the time budget runs out.
 // Progress is stored in Redis, so nothing is lost between visits even if you close the tab.
 //
-// Add &reset=true to wipe progress and start over from scratch (e.g. after new posts appear).
+// Add &reset=true to wipe progress and start over from scratch (e.g. after naming changes).
 
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -18,6 +18,7 @@ import {
   parseJsonLoose,
   saveProfile,
   saveIndex,
+  getProfile,
   walletHue,
   collectIntoQueue,
   getQueue,
@@ -37,7 +38,7 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const MAX_CORPUS_CHARS = 6000;
-const TIME_BUDGET_MS = 45_000; // stop processing before hitting the 60s hard limit
+const TIME_BUDGET_MS = 45_000;
 
 const PROFILE_SYSTEM = `You write personality profiles for "larvae" — personal AI governance agents in the $CLAWD ecosystem on Base. Each larva was trained by a different token holder and has opinions.
 
@@ -45,7 +46,7 @@ You will receive everything one larva has said across forum posts and labs ideas
 
 Respond with ONLY a JSON object, no markdown, no preamble:
 {
-  "name": "invented specimen nickname, preferably 1-2 words (max 3), vivid and characterful, grounded in what THIS larva said — e.g. 'Ash Whisper', 'Quota Hawk', 'Molt Prophet', 'Squit'. Never role titles. Never reuse a name from the taken list.",
+  "name": "weird specimen nickname with proper-noun energy, preferably 1-2 words (max 3). Invent something memorable and specific to THIS larva's words — e.g. 'Ash Whisper', 'Quota Hawk', 'Molt Prophet', 'Squit', 'Burn Latch', 'Soft Fork Fox'. Never a job title. Never reuse a taken name.",
   "tagline": "one punchy line capturing its essence",
   "tone": "one of: fiery, chill, analytical, chaotic, earnest, cynical — pick from evidence, not habit",
   "values": ["2-4 short phrases for what it consistently cares about"],
@@ -65,12 +66,12 @@ Respond with ONLY a JSON object, no markdown, no preamble:
 }
 
 Naming rules (strict):
-- Prefer 1–2 word nicknames with personality (specimen vibe), not job titles.
-- NEVER use names starting with "The ".
+- Prefer 1–2 word nicknames that sound like a character name, not a résumé title.
+- NEVER start with "The ".
 - NEVER use bare "Larva" / "Unnamed" / "Specimen".
-- NEVER use generic role templates ending in Maximalist, Purist, Architect, Pragmatist, Builder, Operator, Auditor, Executor, Sequencer, Empiricist, Mechanism — or near-clones of those.
-- Ground the name in quirks, fixations, or distinctive phrasing from their actual words.
-- Must be unique among the taken-names list.
+- NEVER use role/title words or stems: Architect, Pragmatist, Maximalist, Purist, Builder, Operator, Auditor, Executor, Sequencer, Empiricist, Mechanism, Validator, Strategist, Analyst, Optimizer — alone or in compounds like "Infrastructure Purist" / "Revenue Architect" / "Execution Maximalist".
+- Ground the name in a quirk, fixation, metaphor, or distinctive phrase from their actual words.
+- Must be unique among the taken-names list. No near-copies of taken names.
 
 Tone rules:
 - Choose tone from the larva's actual voice and priorities.
@@ -85,7 +86,7 @@ Larvatar rules:
 
 Base everything on the actual responses. Be specific, not generic. If the larva contradicts itself, that's a quirk.`;
 
-const BANNED_NAME_SUFFIXES = [
+const BANNED_STEMS = [
   "maximalist",
   "purist",
   "architect",
@@ -97,21 +98,279 @@ const BANNED_NAME_SUFFIXES = [
   "sequencer",
   "empiricist",
   "mechanism",
+  "validator",
+  "strategist",
+  "analyst",
+  "optimizer",
+  "executionist",
+  "shipbuilder",
 ];
 
-const NICKNAME_PARTS: Record<string, string[]> = {
-  fiery: ["Ember", "Spark", "Forge", "Blaze", "Volt", "Flare"],
-  chill: ["Drift", "Moss", "Dew", "Haze", "Soft", "Lull"],
-  analytical: ["Glyph", "Prism", "Cipher", "Vector", "Lattice", "Axiom"],
-  chaotic: ["Zig", "Static", "Glitch", "Scatter", "Wobble", "Spark"],
-  earnest: ["Grove", "Pledge", "Kindle", "Harbor", "Root", "Bloom"],
-  cynical: ["Ash", "Wry", "Salt", "Shade", "Dry", "Skeptic"],
+const BANNED_PREFIX_COMPOUNDS = [
+  "infrastructure",
+  "revenue",
+  "execution",
+  "fuel",
+  "burn",
+  "market",
+  "dao",
+  "infra",
+];
+
+const STOPWORDS = new Set(
+  [
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "if",
+    "then",
+    "else",
+    "when",
+    "while",
+    "for",
+    "to",
+    "of",
+    "in",
+    "on",
+    "at",
+    "by",
+    "from",
+    "with",
+    "as",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "should",
+    "could",
+    "can",
+    "may",
+    "might",
+    "must",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "its",
+    "we",
+    "our",
+    "they",
+    "them",
+    "their",
+    "you",
+    "your",
+    "i",
+    "me",
+    "my",
+    "not",
+    "no",
+    "yes",
+    "more",
+    "most",
+    "than",
+    "into",
+    "over",
+    "under",
+    "about",
+    "just",
+    "also",
+    "only",
+    "very",
+    "really",
+    "like",
+    "so",
+    "too",
+    "all",
+    "any",
+    "some",
+    "such",
+    "token",
+    "tokens",
+    "proposal",
+    "proposals",
+    "governance",
+    "dao",
+    "clawd",
+    "larva",
+    "larvae",
+    "need",
+    "needs",
+    "want",
+    "wants",
+    "make",
+    "makes",
+    "get",
+    "gets",
+    "use",
+    "using",
+    "used",
+    "via",
+    "per",
+    "etc",
+  ].map((w) => w.toLowerCase())
+);
+
+const NICKNAME_HEADS: Record<string, string[]> = {
+  fiery: [
+    "Ember",
+    "Spark",
+    "Forge",
+    "Blaze",
+    "Volt",
+    "Flare",
+    "Cinder",
+    "Pyre",
+    "Kindle",
+    "Scorch",
+    "Fuse",
+    "Torch",
+    "Rivet",
+    "Crucible",
+  ],
+  chill: [
+    "Drift",
+    "Moss",
+    "Dew",
+    "Haze",
+    "Lull",
+    "Mist",
+    "Tide",
+    "Soft",
+    "Murmur",
+    "Pollen",
+    "Shade",
+    "Ripple",
+    "Loom",
+    "Drowse",
+  ],
+  analytical: [
+    "Glyph",
+    "Prism",
+    "Cipher",
+    "Vector",
+    "Lattice",
+    "Axiom",
+    "Quanta",
+    "Ledger",
+    "Helix",
+    "Nexus",
+    "Metric",
+    "Signal",
+    "Orbit",
+    "Scribe",
+  ],
+  chaotic: [
+    "Zig",
+    "Static",
+    "Glitch",
+    "Scatter",
+    "Wobble",
+    "Quirk",
+    "Jolt",
+    "Fizz",
+    "Riff",
+    "Sputter",
+    "Twitch",
+    "Warp",
+    "Clatter",
+    "Squit",
+  ],
+  earnest: [
+    "Grove",
+    "Pledge",
+    "Harbor",
+    "Root",
+    "Bloom",
+    "Hearth",
+    "Vow",
+    "Sprout",
+    "Beacon",
+    "Anchor",
+    "Kin",
+    "Orchard",
+    "Lantern",
+    "True",
+  ],
+  cynical: [
+    "Ash",
+    "Wry",
+    "Salt",
+    "Dry",
+    "Skeptic",
+    "Grim",
+    "Irony",
+    "Snag",
+    "Grit",
+    "Sardonic",
+    "Brine",
+    "Rust",
+    "Quirk",
+    "Doubt",
+  ],
 };
 
-const NICKNAME_TAILS = ["Molt", "Whisper", "Coil", "Hive", "Quirk", "Pulse", "Nod", "Tint"];
+const NICKNAME_TAILS = [
+  "Molt",
+  "Whisper",
+  "Coil",
+  "Hive",
+  "Pulse",
+  "Nod",
+  "Tint",
+  "Latch",
+  "Quirk",
+  "Fox",
+  "Hawk",
+  "Moth",
+  "Wisp",
+  "Knot",
+  "Spur",
+  "Bloom",
+  "Shard",
+  "Glim",
+  "Reed",
+  "Vane",
+  "Pith",
+  "Nub",
+  "Sprocket",
+  "Murmur",
+  "Scratch",
+  "Glyph",
+  "Drift",
+  "Spark",
+];
 
 function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function nameTokens(name: string): string[] {
+  return normalizeName(name)
+    .split(/\s+/)
+    .map((t) => t.replace(/[^a-z0-9-]/g, ""))
+    .filter(Boolean);
+}
+
+function nameSignature(name: string): string {
+  const toks = nameTokens(name);
+  if (toks.length === 0) return "";
+  if (toks.length === 1) return toks[0];
+  return `${toks[0]}|${toks[toks.length - 1]}`;
 }
 
 function isBannedName(name: string): boolean {
@@ -121,33 +380,49 @@ function isBannedName(name: string): boolean {
     return true;
   }
   if (/^the\s/.test(key)) return true;
-  const last = key.split(/\s+/).pop() || "";
-  if (BANNED_NAME_SUFFIXES.includes(last)) return true;
-  // "Infrastructure Purist", "Revenue Architect", etc.
-  for (const suffix of BANNED_NAME_SUFFIXES) {
-    if (key.endsWith(` ${suffix}`) || key === suffix) return true;
+
+  const toks = nameTokens(name);
+  for (const t of toks) {
+    if (BANNED_STEMS.includes(t)) return true;
+    for (const stem of BANNED_STEMS) {
+      if (t.includes(stem) || (stem.includes(t) && t.length > 4)) return true;
+    }
+  }
+
+  // "Infrastructure Purist", "Revenue Architect", "Execution Maximalist", etc.
+  if (toks.length >= 2) {
+    const first = toks[0];
+    const last = toks[toks.length - 1];
+    if (BANNED_PREFIX_COMPOUNDS.includes(first) && BANNED_STEMS.includes(last)) return true;
+  }
+
+  for (const stem of BANNED_STEMS) {
+    if (key.includes(stem)) return true;
   }
   return false;
 }
 
-function isNameTaken(name: string, used: Set<string>): boolean {
+function isNameTaken(name: string, used: Set<string>, usedSigs: Set<string>): boolean {
   const key = normalizeName(name);
-  return !key || used.has(key);
+  if (!key) return true;
+  if (used.has(key)) return true;
+  const sig = nameSignature(name);
+  if (sig && usedSigs.has(sig)) return true;
+  return false;
 }
 
-function isAcceptableName(name: string, used: Set<string>): boolean {
-  return !isBannedName(name) && !isNameTaken(name, used);
+function isAcceptableName(name: string, used: Set<string>, usedSigs: Set<string>): boolean {
+  const key = normalizeName(name);
+  if (!key || key.length < 2) return false;
+  if (isBannedName(name)) return false;
+  if (isNameTaken(name, used, usedSigs)) return false;
+  return true;
 }
 
-function quirkTokens(quirks: string[]): string[] {
-  const out: string[] = [];
-  for (const q of quirks) {
-    for (const w of q.split(/\s+/)) {
-      const cleaned = w.replace(/[^a-zA-Z0-9-]/g, "");
-      if (cleaned.length > 2 && cleaned.length < 12) out.push(cleaned);
-    }
-  }
-  return out;
+function rememberName(name: string, used: Set<string>, usedSigs: Set<string>) {
+  used.add(normalizeName(name));
+  const sig = nameSignature(name);
+  if (sig) usedSigs.add(sig);
 }
 
 function titleCaseWord(w: string): string {
@@ -155,16 +430,51 @@ function titleCaseWord(w: string): string {
   return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 }
 
+function quirkTokens(quirks: string[]): string[] {
+  const out: string[] = [];
+  for (const q of quirks) {
+    for (const w of q.split(/\s+/)) {
+      const cleaned = w.replace(/[^a-zA-Z0-9-]/g, "");
+      if (cleaned.length > 2 && cleaned.length < 14 && !STOPWORDS.has(cleaned.toLowerCase())) {
+        out.push(cleaned);
+      }
+    }
+  }
+  return out;
+}
+
+/** Pull distinctive content words from corpus for nickname grounding. */
+function corpusTokens(corpus: string): string[] {
+  const counts = new Map<string, number>();
+  for (const raw of corpus.toLowerCase().match(/[a-z][a-z0-9-]{2,13}/g) || []) {
+    if (STOPWORDS.has(raw)) continue;
+    if (BANNED_STEMS.includes(raw)) continue;
+    if (BANNED_PREFIX_COMPOUNDS.includes(raw)) continue;
+    counts.set(raw, (counts.get(raw) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 8)
+    .map(([w]) => titleCaseWord(w));
+}
+
 function uniquifyName(
   base: string,
   tone: string,
   quirks: string[],
+  corpus: string,
   used: Set<string>,
+  usedSigs: Set<string>,
   walletHint = ""
 ): string {
-  const toneKey = NICKNAME_PARTS[tone] ? tone : "earnest";
-  const heads = NICKNAME_PARTS[toneKey];
-  const tokens = quirkTokens(quirks).map(titleCaseWord);
+  const toneKey = NICKNAME_HEADS[tone] ? tone : "earnest";
+  const heads = NICKNAME_HEADS[toneKey];
+  const fromQuirk = quirkTokens(quirks).map(titleCaseWord);
+  const fromCorpus = corpusTokens(corpus);
+  const flavor = [...fromQuirk, ...fromCorpus].filter(
+    (w, i, arr) => arr.findIndex((x) => x.toLowerCase() === w.toLowerCase()) === i
+  );
+
   const seed =
     [...(walletHint || base || tone)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) || 1;
 
@@ -177,36 +487,48 @@ function uniquifyName(
   );
 
   const candidates: string[] = [];
-  if (cleanedBase && !isBannedName(cleanedBase)) candidates.push(cleanedBase);
 
-  for (let i = 0; i < heads.length; i++) {
+  // Prefer corpus/quirk grounded pairs first
+  for (let i = 0; i < Math.max(flavor.length, 6); i++) {
+    const word = flavor[i % Math.max(flavor.length, 1)];
+    if (!word) continue;
+    const head = heads[(seed + i) % heads.length];
+    const tail = NICKNAME_TAILS[(seed + i * 5) % NICKNAME_TAILS.length];
+    candidates.push(`${word} ${tail}`);
+    candidates.push(`${head} ${word}`);
+    candidates.push(word);
+  }
+
+  if (cleanedBase && !isBannedName(cleanedBase)) {
+    candidates.push(cleanedBase);
+    for (const tail of NICKNAME_TAILS) candidates.push(`${cleanedBase} ${tail}`);
+  }
+
+  for (let i = 0; i < heads.length * 2; i++) {
     const head = heads[(seed + i) % heads.length];
     const tail = NICKNAME_TAILS[(seed + i * 3) % NICKNAME_TAILS.length];
     candidates.push(`${head} ${tail}`);
-    if (tokens[i % Math.max(tokens.length, 1)]) {
-      candidates.push(`${head} ${tokens[i % tokens.length]}`);
-      candidates.push(`${tokens[i % tokens.length]} ${tail}`);
-    }
-  }
-
-  if (cleanedBase) {
-    for (const tail of NICKNAME_TAILS) {
-      candidates.push(`${cleanedBase} ${tail}`);
-    }
   }
 
   for (const c of candidates) {
     const sliced = c.trim().slice(0, 40);
-    if (isAcceptableName(sliced, used)) return sliced;
+    if (isAcceptableName(sliced, used, usedSigs)) return sliced;
   }
 
-  // last resort: tone head + short wallet-derived suffix (still nickname-like)
-  for (let n = 0; n < 200; n++) {
+  for (let n = 0; n < 400; n++) {
     const head = heads[(seed + n) % heads.length];
-    const tail = NICKNAME_TAILS[(seed + n * 5) % NICKNAME_TAILS.length];
-    const suffix = ((seed + n * 17) % 97).toString(36);
-    const candidate = `${head}${tail}${suffix}`.slice(0, 40);
-    if (isAcceptableName(candidate, used)) return candidate;
+    const tail = NICKNAME_TAILS[(seed + n * 7) % NICKNAME_TAILS.length];
+    const flavorWord = flavor[n % Math.max(flavor.length, 1)];
+    const suffix = ((seed + n * 19) % 997).toString(36);
+    const options = [
+      flavorWord ? `${flavorWord} ${tail}` : null,
+      `${head} ${tail}`,
+      `${head}${tail}${suffix}`,
+    ].filter(Boolean) as string[];
+    for (const opt of options) {
+      const candidate = opt.slice(0, 40);
+      if (isAcceptableName(candidate, used, usedSigs)) return candidate;
+    }
   }
 
   return `${heads[seed % heads.length]}${Date.now().toString(36)}`.slice(0, 40);
@@ -215,11 +537,12 @@ function uniquifyName(
 async function inventUniqueName(
   parsed: any,
   used: Set<string>,
+  usedSigs: Set<string>,
   corpusContext: string,
   wallet: string
 ): Promise<string> {
   let name = String(parsed.name || "").trim().slice(0, 40);
-  if (isAcceptableName(name, used)) return name;
+  if (isAcceptableName(name, used, usedSigs)) return name;
 
   const takenList = [...used].slice(0, 200).join(", ");
   const tone = ["fiery", "chill", "analytical", "chaotic", "earnest", "cynical"].includes(
@@ -228,20 +551,62 @@ async function inventUniqueName(
     ? parsed.tone
     : "earnest";
   const quirks = (Array.isArray(parsed.quirks) ? parsed.quirks : []).map(String);
+  const hintWords = corpusTokens(corpusContext).slice(0, 5).join(", ");
 
   try {
     const raw = await haiku(
-      `You rename a larva specimen. Reply with ONLY a JSON object: {"name":"..."}. Rules: 1-2 words preferred (max 3), vivid nickname, personality-forward, unused. NEVER start with "The". NEVER use role titles like Architect/Pragmatist/Maximalist/Purist/Builder. Never copy a taken name.`,
-      `Previous name "${name || "(empty)"}" is invalid or taken.\nTaken names: ${takenList || "(none)"}\nTone: ${tone}\nQuirks: ${quirks.join("; ")}\nContext:\n${corpusContext.slice(0, 1500)}`
+      `You invent a weird specimen nickname for a larva mascot. Reply with ONLY JSON: {"name":"..."}.
+Rules:
+- 1-2 words preferred (max 3), proper-noun energy, memorable, specific
+- Ground it in a quirk or distinctive word from the context (not a job title)
+- NEVER start with "The"
+- NEVER use role titles/stems: Architect, Pragmatist, Maximalist, Purist, Builder, Operator, Auditor, Executor, Sequencer, Validator, Strategist
+- NEVER copy or near-copy a taken name`,
+      `Previous name "${name || "(empty)"}" is invalid or taken.
+Taken names: ${takenList || "(none)"}
+Tone: ${tone}
+Quirks: ${quirks.join("; ") || "(none)"}
+Distinctive words to maybe riff on: ${hintWords || "(none)"}
+Context:
+${corpusContext.slice(0, 1500)}`
     );
     const retryParsed = parseJsonLoose(raw);
     name = String(retryParsed.name || name).trim().slice(0, 40);
   } catch {
-    // fall through to deterministic uniquify
+    // fall through
   }
 
-  if (isAcceptableName(name, used)) return name;
-  return uniquifyName(name, tone, quirks, used, wallet);
+  if (isAcceptableName(name, used, usedSigs)) return name;
+  return uniquifyName(name, tone, quirks, corpusContext, used, usedSigs, wallet);
+}
+
+async function enforceUniqueNamesOnDone(
+  done: { wallet: string; responseCount: number }[]
+): Promise<void> {
+  const used = new Set<string>();
+  const usedSigs = new Set<string>();
+
+  for (const entry of done) {
+    const p = await getProfile(entry.wallet);
+    if (!p) continue;
+
+    let name = p.profile.name;
+    if (!isAcceptableName(name, used, usedSigs)) {
+      name = uniquifyName(
+        name,
+        p.profile.tone,
+        p.profile.quirks || [],
+        `${p.profile.summary}\n${(p.profile.quirks || []).join(" ")}`,
+        used,
+        usedSigs,
+        p.wallet
+      );
+      p.profile.name = name;
+      p.updatedAt = new Date().toISOString();
+      await saveProfile(p);
+    }
+    rememberName(name, used, usedSigs);
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -261,8 +626,6 @@ export async function GET(req: NextRequest) {
   let queue = await getQueue();
   const alreadyDone = await getDone();
 
-  // first visit (or after reset): no queue yet — collect from larv.ai first.
-  // this is fetch-only, no LLM calls, so it's the fast phase.
   let justCollected = false;
   if (queue.length === 0 && alreadyDone.length === 0) {
     await clearUsedNames();
@@ -283,6 +646,11 @@ export async function GET(req: NextRequest) {
   const processedThisRun: { wallet: string; responseCount: number }[] = [];
   const failed: string[] = [];
   const usedNames = new Set((await getUsedNames()).map(normalizeName));
+  const usedSigs = new Set<string>();
+  for (const n of usedNames) {
+    const sig = nameSignature(n);
+    if (sig) usedSigs.add(sig);
+  }
 
   while (queue.length > 0 && Date.now() - start < TIME_BUDGET_MS) {
     const item = queue.shift()!;
@@ -298,7 +666,7 @@ export async function GET(req: NextRequest) {
       const takenList = [...usedNames].slice(0, 200).join(", ");
       const raw = await haiku(
         PROFILE_SYSTEM,
-        `Larva wallet: ${item.wallet}\nTaken names (do not reuse any of these): ${takenList || "(none yet)"}\nResponses (${count} total across forum + labs):\n\n${corpus}`,
+        `Larva wallet: ${item.wallet}\nTaken names (do not reuse any of these, including near-copies): ${takenList || "(none yet)"}\nResponses (${count} total across forum + labs):\n\n${corpus}`,
         1000
       );
       const parsed = parseJsonLoose(raw);
@@ -308,7 +676,7 @@ export async function GET(req: NextRequest) {
         ? parsed.tone
         : "earnest";
       const quirks = (Array.isArray(parsed.quirks) ? parsed.quirks : []).slice(0, 3).map(String);
-      const name = await inventUniqueName(parsed, usedNames, corpus, item.wallet);
+      const name = await inventUniqueName(parsed, usedNames, usedSigs, corpus, item.wallet);
       const hue = walletHue(item.wallet);
       const avatar = parseAvatarFromLlm(parsed, hue, tone, item.wallet);
 
@@ -329,22 +697,20 @@ export async function GET(req: NextRequest) {
       };
 
       await saveProfile(profile);
-      usedNames.add(normalizeName(name));
+      rememberName(name, usedNames, usedSigs);
       await addUsedName(name);
       processedThisRun.push({ wallet: item.wallet, responseCount: count });
     } catch {
       failed.push(item.wallet);
     }
 
-    // persist queue progress after every single larva, so a mid-batch crash
-    // or a future timeout never loses more than the one in-flight item
     await setQueue(queue);
   }
 
   const allDone = await appendDone(processedThisRun);
 
   if (queue.length === 0) {
-    // fully finished — build final sorted index and clean up
+    await enforceUniqueNamesOnDone(allDone);
     const finalIndex = [...allDone].sort((a, b) => b.responseCount - a.responseCount);
     await saveIndex(finalIndex);
     await clearDone();

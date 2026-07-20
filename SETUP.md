@@ -40,7 +40,7 @@ LARVAE_BUILD_SECRET=pick-any-long-random-string
 
 ### regenerate names + mascots (full rebuild)
 
-Profiles store invented nicknames and full larvatar traits (`body`, `pattern`, `eyes`, `antenna`, `accessory`, `mouth`, `pose`, …). After naming/avatar code changes, wipe the in-flight queue and rebuild from scratch:
+**Required after naming or avatar code changes** — production Redis still holds old profiles until you reset-rebuild. Profiles store invented nicknames and full larvatar traits (`body`, `pattern`, `eyes`, `antenna`, `accessory`, `mouth`, `pose`, …).
 
 ```
 https://yourapp.vercel.app/api/larvae/build?secret=YOUR_SECRET&reset=true
@@ -48,7 +48,9 @@ https://yourapp.vercel.app/api/larvae/build?secret=YOUR_SECRET&reset=true
 
 Keep reloading that URL (without needing `&reset=true` again) until the response says `"done": true`. Then spot-check `/api/larvae`:
 
-- every `profile.name` unique; no `The Architect`-style pile-ups
+- `unique names === larva count` (zero repeats)
+- zero names starting with `The `
+- no role-title pile-ups (`Architect` / `Pragmatist` / `Maximalist` / …)
 - every `avatar` includes `body`, `mouth`, `pose`, `accessory`, etc. (not just `hue`/`tone`)
 
 re-run the build URL whenever there are new forum posts / labs ideas. it overwrites cleanly.
