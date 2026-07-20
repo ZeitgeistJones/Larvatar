@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import type { LarvatarTraits } from "@/lib/avatar";
 
 export const redis = Redis.fromEnv();
 
@@ -14,7 +15,7 @@ export type LarvaProfile = {
     quirks: string[];
     summary: string;
   };
-  avatar: { hue: number; tone: string };
+  avatar: LarvatarTraits;
   updatedAt: string;
 };
 

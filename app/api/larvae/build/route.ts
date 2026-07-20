@@ -31,6 +31,7 @@ import {
   clearUsedNames,
   type LarvaProfile,
 } from "@/lib/larvae";
+import { parseAvatarFromLlm } from "@/lib/avatar";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ const TIME_BUDGET_MS = 45_000; // stop processing before hitting the 60s hard li
 
 const PROFILE_SYSTEM = `You write personality profiles for "larvae" — personal AI governance agents in the $CLAWD ecosystem on Base. Each larva was trained by a different token holder and has opinions.
 
-You will receive everything one larva has said across forum posts and labs ideas. Synthesize a personality profile.
+You will receive everything one larva has said across forum posts and labs ideas. Synthesize a personality profile AND invent a matching "larvatar" — the little mascot creature that visually expresses this larva's personality.
 
 Respond with ONLY a JSON object, no markdown, no preamble:
 {
@@ -49,10 +50,21 @@ Respond with ONLY a JSON object, no markdown, no preamble:
   "tone": "one of: fiery, chill, analytical, chaotic, earnest, cynical",
   "values": ["2-4 short phrases for what it consistently cares about"],
   "quirks": ["1-3 short phrases for distinctive habits or fixations"],
-  "summary": "2-3 sentences describing its personality and governance style"
+  "summary": "2-3 sentences describing its personality and governance style",
+  "avatar": {
+    "body": "one of: plump, slim, round, tall — silhouette that fits their energy",
+    "pattern": "one of: plain, stripes, spots, bands — body marking style",
+    "eyes": "one of: soft, sharp, wide, sleepy, gleam — expression matching tone",
+    "antenna": "one of: curl, fork, droop, bolt, sway — antenna vibe",
+    "accessory": "one of: none, monocle, bowtie, cap, horns, flower, badge, scarf — one signature prop that fits their personality (use none if nothing fits)",
+    "cheeks": "boolean — true if warm/blushy presence, false if cooler/sharper",
+    "accent": "integer 0-359 — secondary accent hue that complements their vibe"
+  }
 }
 
 Naming rules: creative and characterful; fit the larva's actual opinions and vibe; larva/governance-flavored when it fits; unique among the hive.
+
+Larvatar rules: every visual choice must reflect THIS larva's personality from its words — not random cute defaults. Fiery larvae look intense; chill ones look soft; analytical ones look precise; chaotic ones look asymmetric/wild; earnest ones look open; cynical ones look wry.
 
 Base everything on the actual responses. Be specific, not generic. If the larva contradicts itself, that's a quirk.`;
 
@@ -182,7 +194,8 @@ export async function GET(req: NextRequest) {
       const takenList = [...usedNames].slice(0, 120).join(", ");
       const raw = await haiku(
         PROFILE_SYSTEM,
-        `Larva wallet: ${item.wallet}\nTaken names (do not reuse any of these): ${takenList || "(none yet)"}\nResponses (${count} total across forum + labs):\n\n${corpus}`
+        `Larva wallet: ${item.wallet}\nTaken names (do not reuse any of these): ${takenList || "(none yet)"}\nResponses (${count} total across forum + labs):\n\n${corpus}`,
+        900
       );
       const parsed = parseJsonLoose(raw);
       const tone = ["fiery", "chill", "analytical", "chaotic", "earnest", "cynical"].includes(
@@ -192,6 +205,8 @@ export async function GET(req: NextRequest) {
         : "earnest";
       const quirks = (Array.isArray(parsed.quirks) ? parsed.quirks : []).slice(0, 3).map(String);
       const name = await inventUniqueName(parsed, usedNames, corpus);
+      const hue = walletHue(item.wallet);
+      const avatar = parseAvatarFromLlm(parsed, hue, tone, item.wallet);
 
       const profile: LarvaProfile = {
         wallet: item.wallet,
@@ -205,7 +220,7 @@ export async function GET(req: NextRequest) {
           quirks,
           summary: String(parsed.summary || "").slice(0, 500),
         },
-        avatar: { hue: walletHue(item.wallet), tone },
+        avatar,
         updatedAt: new Date().toISOString(),
       };
 

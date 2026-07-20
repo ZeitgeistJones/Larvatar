@@ -46,6 +46,7 @@ Answer the question fully in character. 2-4 sentences max. Stay opinionated and 
           name: p.profile.name,
           tone: p.profile.tone,
           hue: p.avatar.hue,
+          avatar: p.avatar,
           answer: answer.trim(),
         };
       } catch {

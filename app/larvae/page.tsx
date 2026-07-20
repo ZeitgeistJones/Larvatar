@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import LarvaAvatar from "@/components/LarvaAvatar";
+import type { LarvatarTraits } from "@/lib/avatar";
 
 type Larva = {
   wallet: string;
@@ -15,10 +16,17 @@ type Larva = {
     quirks: string[];
     summary: string;
   };
-  avatar: { hue: number; tone: string };
+  avatar: LarvatarTraits;
 };
 
-type Answer = { wallet: string; name: string; tone: string; hue: number; answer: string };
+type Answer = {
+  wallet: string;
+  name: string;
+  tone: string;
+  hue: number;
+  avatar?: Partial<LarvatarTraits>;
+  answer: string;
+};
 
 const INK = "#1e2a3a";
 const CORAL = "#e8604c";
@@ -132,7 +140,14 @@ export default function LarvaePage() {
               {answers.map((a) => (
                 <div key={a.wallet} className="flex items-start gap-3">
                   <div className="shrink-0">
-                    <LarvaAvatar hue={a.hue} tone={a.tone} size={44} />
+                    <LarvaAvatar
+                      hue={a.hue}
+                      tone={a.tone}
+                      wallet={a.wallet}
+                      traits={a.avatar}
+                      label={a.name}
+                      size={44}
+                    />
                   </div>
                   <div>
                     <p className="text-sm font-semibold">{a.name}</p>
@@ -162,7 +177,14 @@ export default function LarvaePage() {
                   style={{ borderColor: `${INK}22`, background: "#fff" }}
                 >
                   <div className="flex items-center gap-4">
-                    <LarvaAvatar hue={l.avatar.hue} tone={l.profile.tone} size={72} />
+                    <LarvaAvatar
+                      hue={l.avatar.hue}
+                      tone={l.profile.tone}
+                      wallet={l.wallet}
+                      traits={l.avatar}
+                      label={l.profile.name}
+                      size={72}
+                    />
                     <div className="min-w-0">
                       <p className="truncate text-lg font-bold">{l.profile.name}</p>
                       <p className="text-xs italic opacity-70">{l.profile.tagline}</p>
