@@ -69,13 +69,10 @@ Respond with ONLY a JSON object, no markdown, no preamble:
   }
 }
 
-Naming rules (strict):
-- Prefer 1–2 word nicknames that sound like a character name, not a résumé title.
-- NEVER start with "The ".
-- NEVER use bare "Larva" / "Unnamed" / "Specimen".
-- NEVER use role/title words or stems: Architect, Pragmatist, Maximalist, Purist, Builder, Operator, Auditor, Executor, Sequencer, Empiricist, Mechanism, Validator, Strategist, Analyst, Optimizer — alone or in compounds like "Infrastructure Purist" / "Revenue Architect" / "Execution Maximalist".
-- Ground the name in a quirk, fixation, metaphor, or distinctive phrase from their actual words.
-- Must be unique among the taken-names list. No near-copies of taken names.
+Naming rules:
+- Prefer 1–2 word nicknames that sound like a character name or title, not generic filler.
+- Can use role/title words like "Architect", "Pragmatist", "Purist" etc. — those are fine and often fit well.
+- Must be unique — check the taken-names list and pick something different. If your first instinct is already taken, add a distinguishing word rather than reusing it verbatim (e.g. "The Architect" taken → try "Silent Architect" or a different word entirely).
 
 Tone rules:
 - Choose tone from the larva's actual voice and priorities.
@@ -89,6 +86,13 @@ Larvatar rules:
 - Accessory should feel like a signature prop for their quirks when it fits.
 
 Base everything on the actual responses. Be specific, not generic. If the larva contradicts itself, that's a quirk.`;
+
+const RENAME_SYSTEM = `You invent a short specimen nickname for a "larva" — a personal AI governance agent in the $CLAWD ecosystem — based on its personality profile.
+
+1-2 words, character-name or title energy — role words like "Architect" or "Pragmatist" are fine.
+Must NOT exactly match any name in the taken list.
+
+Respond with ONLY the nickname text. No quotes, no punctuation, no explanation.`;
 
 const BANNED_STEMS = [
   "maximalist",
@@ -582,27 +586,39 @@ function inventUniqueName(
   return uniquifyName(hint, tone, quirks, corpusContext, used, usedSigs, wallet);
 }
 
-/** Always invent a fresh unique nickname from stored profile text (rename-only path). */
-function inventNameFromProfile(
+/** LLM nickname for rename-only; uniqueness enforced against the taken set. */
+async function inventNameFromProfile(
   p: LarvaProfile,
   used: Set<string>,
   usedSigs: Set<string>
-): string {
+): Promise<string> {
   const corpus = [
     p.profile.tagline,
     p.profile.summary,
     ...(p.profile.values || []),
     ...(p.profile.quirks || []),
   ].join("\n");
-  return uniquifyName(
-    "",
-    p.profile.tone,
-    p.profile.quirks || [],
-    corpus,
-    used,
-    usedSigs,
-    p.wallet
-  );
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const takenList = [...used].slice(0, 300).join(", ");
+      const raw = await haiku(
+        RENAME_SYSTEM,
+        `Profile:\n${corpus}\n\nTaken names (pick something different): ${takenList || "(none yet)"}`,
+        60
+      );
+      const candidate = raw.trim().replace(/^["']|["']$/g, "").slice(0, 40);
+      const key = candidate.trim().replace(/\s+/g, " ").toLowerCase();
+      if (key && key.length >= 2 && !used.has(key)) return candidate;
+    } catch {
+      // try again
+    }
+  }
+  // last resort — append a number rather than a random word swap
+  const base = corpus ? "Larva" : "Larva";
+  let n = 2;
+  while (used.has(`${base} ${n}`.toLowerCase())) n++;
+  return `${base} ${n}`;
 }
 
 async function enforceUniqueNamesOnDone(
@@ -676,7 +692,7 @@ async function runRenameOnly(req: NextRequest): Promise<NextResponse> {
       if (!p) {
         failed.push(wallet);
       } else {
-        const name = inventNameFromProfile(p, usedNames, usedSigs);
+        const name = await inventNameFromProfile(p, usedNames, usedSigs);
         p.profile.name = name;
         p.updatedAt = new Date().toISOString();
         await saveProfile(p);
