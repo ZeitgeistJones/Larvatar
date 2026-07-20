@@ -229,6 +229,23 @@ const STOPWORDS = new Set(
   ].map((w) => w.toLowerCase())
 );
 
+const GENERIC_FLAVOR_WORDS = new Set([
+  "obsessed",
+  "obsessive",
+  "obsessively",
+  "obsesses",
+  "obsess",
+  "focused",
+  "dedicated",
+  "committed",
+  "passionate",
+  "driven",
+  "determined",
+  "serious",
+  "relentless",
+  "unwavering",
+]);
+
 const NICKNAME_HEADS: Record<string, string[]> = {
   fiery: [
     "Ember",
@@ -439,7 +456,12 @@ function quirkTokens(quirks: string[]): string[] {
   for (const q of quirks) {
     for (const w of q.split(/\s+/)) {
       const cleaned = w.replace(/[^a-zA-Z0-9-]/g, "");
-      if (cleaned.length > 2 && cleaned.length < 14 && !STOPWORDS.has(cleaned.toLowerCase())) {
+      if (
+        cleaned.length > 2 &&
+        cleaned.length < 14 &&
+        !STOPWORDS.has(cleaned.toLowerCase()) &&
+        !GENERIC_FLAVOR_WORDS.has(cleaned.toLowerCase())
+      ) {
         out.push(cleaned);
       }
     }
@@ -452,6 +474,7 @@ function corpusTokens(corpus: string): string[] {
   const counts = new Map<string, number>();
   for (const raw of corpus.toLowerCase().match(/[a-z][a-z0-9-]{2,13}/g) || []) {
     if (STOPWORDS.has(raw)) continue;
+    if (GENERIC_FLAVOR_WORDS.has(raw)) continue;
     if (BANNED_STEMS.includes(raw)) continue;
     if (BANNED_PREFIX_COMPOUNDS.includes(raw)) continue;
     counts.set(raw, (counts.get(raw) || 0) + 1);
