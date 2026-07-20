@@ -6,7 +6,9 @@ import {
   type AvatarAntenna,
   type AvatarBody,
   type AvatarEyes,
+  type AvatarMouth,
   type AvatarPattern,
+  type AvatarPose,
 } from "@/lib/avatar";
 
 type Props = {
@@ -86,13 +88,25 @@ function eyeGeom(eyes: AvatarEyes) {
   }
 }
 
-function mouthPath(tone: string, eyes: AvatarEyes): string {
-  if (tone === "cynical" || eyes === "sleepy") return "M -6 9 Q 0 6 6 9";
-  if (tone === "fiery") return "M -7 6 Q 0 13 7 6";
-  if (tone === "chaotic") return "M -7 7 Q -3 11 0 7 Q 3 11 7 7";
-  if (tone === "analytical") return "M -5 8 L 5 8";
-  if (tone === "chill") return "M -6 8 Q 0 10 6 8";
-  return "M -6 7 Q 0 11 6 7";
+function mouthPath(mouth: AvatarMouth): string {
+  switch (mouth) {
+    case "flat":
+      return "M -5 8 L 5 8";
+    case "smirk":
+      return "M -6 8 Q 0 7 6 10";
+    case "grin":
+      return "M -7 6 Q 0 13 7 6";
+    case "frown":
+      return "M -6 9 Q 0 6 6 9";
+    default: // smile
+      return "M -6 7 Q 0 11 6 7";
+  }
+}
+
+function poseTilt(pose: AvatarPose, seed: number): number {
+  if (pose === "lean-left") return -4 - (seed % 3);
+  if (pose === "lean-right") return 4 + (seed % 3);
+  return 0;
 }
 
 function Antennae({
@@ -349,6 +363,64 @@ function Accessory({
       </g>
     );
   }
+  if (kind === "goggles") {
+    return (
+      <g>
+        <circle cx="-6" cy={headY - 1} r="4.4" fill="none" stroke={aDark} strokeWidth="1.6" />
+        <circle cx="6" cy={headY - 1} r="4.4" fill="none" stroke={aDark} strokeWidth="1.6" />
+        <line x1="-1.6" y1={headY - 1} x2="1.6" y2={headY - 1} stroke={aDark} strokeWidth="1.4" />
+        <line
+          x1="-10.4"
+          y1={headY - 1}
+          x2={-headR + 1}
+          y2={headY - 1}
+          stroke={a}
+          strokeWidth="1.2"
+        />
+        <line
+          x1="10.4"
+          y1={headY - 1}
+          x2={headR - 1}
+          y2={headY - 1}
+          stroke={a}
+          strokeWidth="1.2"
+        />
+      </g>
+    );
+  }
+  if (kind === "crown") {
+    const y = headY - headR + 1;
+    return (
+      <g>
+        <path
+          d={`M -8 ${y + 2} L -6 ${y - 7} L -3 ${y} L 0 ${y - 9} L 3 ${y} L 6 ${y - 7} L 8 ${y + 2} Z`}
+          fill={a}
+          stroke={aDark}
+          strokeWidth="0.8"
+        />
+        <circle cx="0" cy={y - 9} r="1.2" fill={`hsl(${(accent + 50) % 360} 75% 60%)`} />
+      </g>
+    );
+  }
+  if (kind === "clipboard") {
+    return (
+      <g transform={`translate(${headR + 2} ${headY + 4})`}>
+        <rect x="-4" y="-6" width="9" height="12" rx="1.2" fill={a} stroke={aDark} strokeWidth="0.9" />
+        <rect x="-2" y="-8" width="5" height="2.4" rx="0.6" fill={aDark} />
+        <line x1="-2" y1="-2" x2="3" y2="-2" stroke="#fff" strokeWidth="1" opacity="0.85" />
+        <line x1="-2" y1="1" x2="2.5" y2="1" stroke="#fff" strokeWidth="1" opacity="0.7" />
+        <line x1="-2" y1="4" x2="1.5" y2="4" stroke="#fff" strokeWidth="1" opacity="0.55" />
+      </g>
+    );
+  }
+  if (kind === "leaf") {
+    return (
+      <g transform={`translate(${headR - 2} ${headY - headR + 6}) rotate(25)`}>
+        <ellipse cx="0" cy="0" rx="3.2" ry="6" fill={a} />
+        <line x1="0" y1="5" x2="0" y2="-5" stroke={aDark} strokeWidth="0.9" />
+      </g>
+    );
+  }
   return null;
 }
 
@@ -374,8 +446,8 @@ export default function LarvaAvatar({
   const belly = `hsl(${t.accent} 50% 78%)`;
   const bg = `hsl(${t.hue} 32% 96%)`;
   const ring = `hsl(${t.accent} 28% 80%)`;
-  const mouth = mouthPath(t.tone, t.eyes);
-  const tilt = t.tone === "chaotic" ? ((seed % 7) - 3) : 0;
+  const mouth = mouthPath(t.mouth);
+  const tilt = poseTilt(t.pose, seed);
 
   return (
     <svg

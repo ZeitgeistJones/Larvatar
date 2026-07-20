@@ -35,8 +35,21 @@ LARVAE_BUILD_SECRET=pick-any-long-random-string
 1. deploy
 2. visit in browser (no CLI needed):
    `https://yourapp.vercel.app/api/larvae/build?secret=YOUR_SECRET`
-   — wait for the JSON response. it reports built / skipped / failed wallets.
+   — wait for the JSON response. if `done` is false, visit the **same URL again** until `done: true`.
 3. visit `/larvae`
+
+### regenerate names + mascots (full rebuild)
+
+Profiles store invented nicknames and full larvatar traits (`body`, `pattern`, `eyes`, `antenna`, `accessory`, `mouth`, `pose`, …). After naming/avatar code changes, wipe the in-flight queue and rebuild from scratch:
+
+```
+https://yourapp.vercel.app/api/larvae/build?secret=YOUR_SECRET&reset=true
+```
+
+Keep reloading that URL (without needing `&reset=true` again) until the response says `"done": true`. Then spot-check `/api/larvae`:
+
+- every `profile.name` unique; no `The Architect`-style pile-ups
+- every `avatar` includes `body`, `mouth`, `pose`, `accessory`, etc. (not just `hue`/`tone`)
 
 re-run the build URL whenever there are new forum posts / labs ideas. it overwrites cleanly.
 

@@ -4,6 +4,8 @@ export type AvatarBody = "plump" | "slim" | "round" | "tall";
 export type AvatarPattern = "plain" | "stripes" | "spots" | "bands";
 export type AvatarEyes = "soft" | "sharp" | "wide" | "sleepy" | "gleam";
 export type AvatarAntenna = "curl" | "fork" | "droop" | "bolt" | "sway";
+export type AvatarMouth = "smile" | "flat" | "smirk" | "grin" | "frown";
+export type AvatarPose = "upright" | "lean-left" | "lean-right";
 export type AvatarAccessory =
   | "none"
   | "monocle"
@@ -12,7 +14,11 @@ export type AvatarAccessory =
   | "horns"
   | "flower"
   | "badge"
-  | "scarf";
+  | "scarf"
+  | "goggles"
+  | "crown"
+  | "clipboard"
+  | "leaf";
 
 export type LarvatarTraits = {
   hue: number;
@@ -22,6 +28,8 @@ export type LarvatarTraits = {
   eyes: AvatarEyes;
   antenna: AvatarAntenna;
   accessory: AvatarAccessory;
+  mouth: AvatarMouth;
+  pose: AvatarPose;
   cheeks: boolean;
   accent: number; // secondary hue 0-359
 };
@@ -30,6 +38,8 @@ const BODIES: AvatarBody[] = ["plump", "slim", "round", "tall"];
 const PATTERNS: AvatarPattern[] = ["plain", "stripes", "spots", "bands"];
 const EYES: AvatarEyes[] = ["soft", "sharp", "wide", "sleepy", "gleam"];
 const ANTENNAE: AvatarAntenna[] = ["curl", "fork", "droop", "bolt", "sway"];
+const MOUTHS: AvatarMouth[] = ["smile", "flat", "smirk", "grin", "frown"];
+const POSES: AvatarPose[] = ["upright", "lean-left", "lean-right"];
 const ACCESSORIES: AvatarAccessory[] = [
   "none",
   "monocle",
@@ -39,6 +49,10 @@ const ACCESSORIES: AvatarAccessory[] = [
   "flower",
   "badge",
   "scarf",
+  "goggles",
+  "crown",
+  "clipboard",
+  "leaf",
 ];
 
 const TONE_LOOK: Record<
@@ -49,55 +63,69 @@ const TONE_LOOK: Record<
     eyes: AvatarEyes[];
     antenna: AvatarAntenna[];
     accessories: AvatarAccessory[];
+    mouths: AvatarMouth[];
+    poses: AvatarPose[];
     cheeks: boolean;
   }
 > = {
   fiery: {
-    bodies: ["plump", "tall"],
-    patterns: ["stripes", "bands"],
+    bodies: ["plump", "tall", "slim"],
+    patterns: ["stripes", "bands", "spots"],
     eyes: ["sharp", "wide", "gleam"],
-    antenna: ["bolt", "sway"],
-    accessories: ["horns", "badge", "none"],
+    antenna: ["bolt", "sway", "fork"],
+    accessories: ["horns", "badge", "crown", "goggles", "none"],
+    mouths: ["grin", "smirk", "flat"],
+    poses: ["upright", "lean-right"],
     cheeks: false,
   },
   chill: {
-    bodies: ["round", "plump"],
-    patterns: ["plain", "spots"],
-    eyes: ["sleepy", "soft"],
+    bodies: ["round", "plump", "tall"],
+    patterns: ["plain", "spots", "bands"],
+    eyes: ["sleepy", "soft", "gleam"],
     antenna: ["droop", "sway", "curl"],
-    accessories: ["flower", "scarf", "none"],
+    accessories: ["flower", "scarf", "leaf", "none", "cap"],
+    mouths: ["smile", "flat", "smirk"],
+    poses: ["upright", "lean-left"],
     cheeks: true,
   },
   analytical: {
-    bodies: ["slim", "tall"],
-    patterns: ["bands", "plain"],
-    eyes: ["sharp", "gleam"],
-    antenna: ["fork", "curl"],
-    accessories: ["monocle", "badge", "cap"],
+    bodies: ["slim", "tall", "round"],
+    patterns: ["bands", "plain", "stripes"],
+    eyes: ["sharp", "gleam", "soft"],
+    antenna: ["fork", "curl", "bolt"],
+    accessories: ["monocle", "goggles", "clipboard", "badge", "cap", "none"],
+    mouths: ["flat", "smirk", "smile"],
+    poses: ["upright", "lean-left"],
     cheeks: false,
   },
   chaotic: {
-    bodies: ["tall", "plump", "round"],
-    patterns: ["spots", "stripes"],
-    eyes: ["wide", "gleam", "sharp"],
-    antenna: ["sway", "bolt", "fork"],
-    accessories: ["horns", "flower", "badge", "none"],
+    bodies: ["tall", "plump", "round", "slim"],
+    patterns: ["spots", "stripes", "bands"],
+    eyes: ["wide", "gleam", "sharp", "sleepy"],
+    antenna: ["sway", "bolt", "fork", "curl"],
+    accessories: ["horns", "flower", "crown", "badge", "leaf", "none"],
+    mouths: ["grin", "smirk", "frown", "flat"],
+    poses: ["lean-left", "lean-right"],
     cheeks: false,
   },
   earnest: {
-    bodies: ["plump", "round"],
-    patterns: ["plain", "spots"],
+    bodies: ["plump", "round", "tall"],
+    patterns: ["plain", "spots", "bands"],
     eyes: ["soft", "wide", "gleam"],
-    antenna: ["curl", "sway"],
-    accessories: ["bowtie", "flower", "badge", "none"],
+    antenna: ["curl", "sway", "droop"],
+    accessories: ["bowtie", "flower", "badge", "leaf", "scarf", "none"],
+    mouths: ["smile", "grin", "flat"],
+    poses: ["upright", "lean-right"],
     cheeks: true,
   },
   cynical: {
-    bodies: ["slim", "round"],
-    patterns: ["bands", "plain"],
-    eyes: ["sharp", "sleepy"],
-    antenna: ["droop", "fork"],
-    accessories: ["scarf", "monocle", "cap", "none"],
+    bodies: ["slim", "round", "plump"],
+    patterns: ["bands", "plain", "stripes"],
+    eyes: ["sharp", "sleepy", "gleam"],
+    antenna: ["droop", "fork", "curl"],
+    accessories: ["scarf", "monocle", "cap", "goggles", "clipboard", "none"],
+    mouths: ["smirk", "frown", "flat"],
+    poses: ["upright", "lean-left"],
     cheeks: false,
   },
 };
@@ -141,6 +169,8 @@ export function deriveLarvatarTraits(input: {
     eyes: oneOf(p.eyes, EYES, pick(look.eyes, seed, 3)),
     antenna: oneOf(p.antenna, ANTENNAE, pick(look.antenna, seed, 4)),
     accessory: oneOf(p.accessory, ACCESSORIES, pick(look.accessories, seed, 5)),
+    mouth: oneOf(p.mouth, MOUTHS, pick(look.mouths, seed, 6)),
+    pose: oneOf(p.pose, POSES, pick(look.poses, seed, 7)),
     cheeks: typeof p.cheeks === "boolean" ? p.cheeks : look.cheeks,
     accent:
       typeof p.accent === "number" && Number.isFinite(p.accent)
@@ -166,6 +196,8 @@ export function parseAvatarFromLlm(
       eyes: a.eyes,
       antenna: a.antenna,
       accessory: a.accessory,
+      mouth: a.mouth,
+      pose: a.pose,
       cheeks: a.cheeks,
       accent: typeof a.accent === "number" ? a.accent : undefined,
     },
