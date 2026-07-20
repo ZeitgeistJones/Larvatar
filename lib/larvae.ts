@@ -100,6 +100,24 @@ export async function clearUsedNames() {
   await redis.del(NAMES_KEY);
 }
 
+// ---------- rename-only pass (rewrite names on existing profiles) ----------
+
+const RENAME_QUEUE_KEY = "lpp:rename:queue"; // JSON: string[] wallets still pending
+
+export async function setRenameQueue(wallets: string[]) {
+  await redis.set(RENAME_QUEUE_KEY, JSON.stringify(wallets));
+}
+
+export async function getRenameQueue(): Promise<string[]> {
+  const raw = await redis.get<string | string[]>(RENAME_QUEUE_KEY);
+  if (!raw) return [];
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+export async function clearRenameQueue() {
+  await redis.del(RENAME_QUEUE_KEY);
+}
+
 // ---------- larv.ai fetchers ----------
 
 const BASE = "https://larv.ai/api";

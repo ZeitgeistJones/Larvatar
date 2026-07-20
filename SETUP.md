@@ -38,9 +38,23 @@ LARVAE_BUILD_SECRET=pick-any-long-random-string
    — wait for the JSON response. if `done` is false, visit the **same URL again** until `done: true`.
 3. visit `/larvae`
 
+### fix boring / duplicate names on live hive (rename only)
+
+**This is what you want when the grid still shows `The Architect` repeats.** It rewrites every stored `profile.name` with a code-guaranteed unique nickname. No forum re-scrape, no LLM, no full rebuild.
+
+```
+https://yourapp.vercel.app/api/larvae/build?secret=YOUR_SECRET&renameOnly=true&reset=true
+```
+
+Keep reloading (same URL without `&reset=true` is fine after the first hit) until `"done": true`. Then check `/api/larvae`:
+
+- unique name count === larva count
+- zero names starting with `The `
+- nicknames look like specimen names, not role titles
+
 ### regenerate names + mascots (full rebuild)
 
-**Required after naming or avatar code changes** — production Redis still holds old profiles until you reset-rebuild. Profiles store invented nicknames and full larvatar traits (`body`, `pattern`, `eyes`, `antenna`, `accessory`, `mouth`, `pose`, …).
+**Required after avatar/trait schema changes** — or when you want fresh summaries from larv.ai. Profiles store invented nicknames and full larvatar traits (`body`, `pattern`, `eyes`, `antenna`, `accessory`, `mouth`, `pose`, …).
 
 ```
 https://yourapp.vercel.app/api/larvae/build?secret=YOUR_SECRET&reset=true

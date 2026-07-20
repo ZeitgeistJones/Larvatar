@@ -19,6 +19,7 @@ import {
   saveProfile,
   saveIndex,
   getProfile,
+  getIndex,
   walletHue,
   collectIntoQueue,
   getQueue,
@@ -30,6 +31,9 @@ import {
   getUsedNames,
   addUsedName,
   clearUsedNames,
+  getRenameQueue,
+  setRenameQueue,
+  clearRenameQueue,
   type LarvaProfile,
 } from "@/lib/larvae";
 import { parseAvatarFromLlm } from "@/lib/avatar";
@@ -534,50 +538,48 @@ function uniquifyName(
   return `${heads[seed % heads.length]}${Date.now().toString(36)}`.slice(0, 40);
 }
 
-async function inventUniqueName(
+/** Code-owned nickname: LLM name is only a hint if already unique + allowed. */
+function inventUniqueName(
   parsed: any,
   used: Set<string>,
   usedSigs: Set<string>,
   corpusContext: string,
   wallet: string
-): Promise<string> {
-  let name = String(parsed.name || "").trim().slice(0, 40);
-  if (isAcceptableName(name, used, usedSigs)) return name;
-
-  const takenList = [...used].slice(0, 200).join(", ");
+): string {
+  const hint = String(parsed.name || "").trim().slice(0, 40);
   const tone = ["fiery", "chill", "analytical", "chaotic", "earnest", "cynical"].includes(
     parsed.tone
   )
     ? parsed.tone
     : "earnest";
   const quirks = (Array.isArray(parsed.quirks) ? parsed.quirks : []).map(String);
-  const hintWords = corpusTokens(corpusContext).slice(0, 5).join(", ");
 
-  try {
-    const raw = await haiku(
-      `You invent a weird specimen nickname for a larva mascot. Reply with ONLY JSON: {"name":"..."}.
-Rules:
-- 1-2 words preferred (max 3), proper-noun energy, memorable, specific
-- Ground it in a quirk or distinctive word from the context (not a job title)
-- NEVER start with "The"
-- NEVER use role titles/stems: Architect, Pragmatist, Maximalist, Purist, Builder, Operator, Auditor, Executor, Sequencer, Validator, Strategist
-- NEVER copy or near-copy a taken name`,
-      `Previous name "${name || "(empty)"}" is invalid or taken.
-Taken names: ${takenList || "(none)"}
-Tone: ${tone}
-Quirks: ${quirks.join("; ") || "(none)"}
-Distinctive words to maybe riff on: ${hintWords || "(none)"}
-Context:
-${corpusContext.slice(0, 1500)}`
-    );
-    const retryParsed = parseJsonLoose(raw);
-    name = String(retryParsed.name || name).trim().slice(0, 40);
-  } catch {
-    // fall through
-  }
+  if (isAcceptableName(hint, used, usedSigs)) return hint;
 
-  if (isAcceptableName(name, used, usedSigs)) return name;
-  return uniquifyName(name, tone, quirks, corpusContext, used, usedSigs, wallet);
+  return uniquifyName(hint, tone, quirks, corpusContext, used, usedSigs, wallet);
+}
+
+/** Always invent a fresh unique nickname from stored profile text (rename-only path). */
+function inventNameFromProfile(
+  p: LarvaProfile,
+  used: Set<string>,
+  usedSigs: Set<string>
+): string {
+  const corpus = [
+    p.profile.tagline,
+    p.profile.summary,
+    ...(p.profile.values || []),
+    ...(p.profile.quirks || []),
+  ].join("\n");
+  return uniquifyName(
+    "",
+    p.profile.tone,
+    p.profile.quirks || [],
+    corpus,
+    used,
+    usedSigs,
+    p.wallet
+  );
 }
 
 async function enforceUniqueNamesOnDone(
@@ -609,10 +611,96 @@ async function enforceUniqueNamesOnDone(
   }
 }
 
+async function runRenameOnly(req: NextRequest): Promise<NextResponse> {
+  const reset = req.nextUrl.searchParams.get("reset") === "true";
+  if (reset) {
+    await clearRenameQueue();
+    await clearUsedNames();
+  }
+
+  const start = Date.now();
+  let queue = await getRenameQueue();
+
+  if (queue.length === 0) {
+    const index = await getIndex();
+    if (index.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        done: true,
+        renamed: 0,
+        message: "No profiles in index — run a full build first.",
+      });
+    }
+    await clearUsedNames();
+    queue = index.map((e) => e.wallet.toLowerCase());
+    await setRenameQueue(queue);
+  }
+
+  const usedNames = new Set((await getUsedNames()).map(normalizeName));
+  const usedSigs = new Set<string>();
+  for (const n of usedNames) {
+    const sig = nameSignature(n);
+    if (sig) usedSigs.add(sig);
+  }
+
+  const renamedThisRun: { wallet: string; name: string }[] = [];
+  const failed: string[] = [];
+
+  while (queue.length > 0 && Date.now() - start < TIME_BUDGET_MS) {
+    const wallet = queue.shift()!;
+    try {
+      const p = await getProfile(wallet);
+      if (!p) {
+        failed.push(wallet);
+      } else {
+        const name = inventNameFromProfile(p, usedNames, usedSigs);
+        p.profile.name = name;
+        p.updatedAt = new Date().toISOString();
+        await saveProfile(p);
+        rememberName(name, usedNames, usedSigs);
+        await addUsedName(name);
+        renamedThisRun.push({ wallet, name });
+      }
+    } catch {
+      failed.push(wallet);
+    }
+    await setRenameQueue(queue);
+  }
+
+  if (queue.length === 0) {
+    await clearRenameQueue();
+    await clearUsedNames();
+    return NextResponse.json({
+      ok: true,
+      done: true,
+      mode: "renameOnly",
+      renamedThisRun: renamedThisRun.length,
+      sample: renamedThisRun.slice(0, 12),
+      failed,
+      message: "All profiles renamed with unique creative nicknames.",
+    });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    done: false,
+    mode: "renameOnly",
+    renamedThisRun: renamedThisRun.length,
+    remaining: queue.length,
+    sample: renamedThisRun.slice(0, 8),
+    failed,
+    message: "Not finished — visit this same URL again to continue renaming.",
+  });
+}
+
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
   if (!secret || secret !== process.env.LARVAE_BUILD_SECRET) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  if (req.nextUrl.searchParams.get("renameOnly") === "true") {
+    return runRenameOnly(req);
   }
 
   const reset = req.nextUrl.searchParams.get("reset") === "true";
@@ -620,6 +708,7 @@ export async function GET(req: NextRequest) {
     await clearQueue();
     await clearDone();
     await clearUsedNames();
+    await clearRenameQueue();
   }
 
   const start = Date.now();
@@ -676,7 +765,7 @@ export async function GET(req: NextRequest) {
         ? parsed.tone
         : "earnest";
       const quirks = (Array.isArray(parsed.quirks) ? parsed.quirks : []).slice(0, 3).map(String);
-      const name = await inventUniqueName(parsed, usedNames, usedSigs, corpus, item.wallet);
+      const name = inventUniqueName(parsed, usedNames, usedSigs, corpus, item.wallet);
       const hue = walletHue(item.wallet);
       const avatar = parseAvatarFromLlm(parsed, hue, tone, item.wallet);
 
