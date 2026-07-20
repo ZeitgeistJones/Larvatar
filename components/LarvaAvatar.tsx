@@ -20,162 +20,123 @@ type Props = {
   label?: string;
 };
 
+/** Shared gumdrop footprint — all body variants stay inside this band. */
 function bodyGeom(body: AvatarBody) {
+  // Baseline: ~rx 22, ry 20, centered so silhouette fills the circle evenly
   switch (body) {
     case "slim":
-      return {
-        headR: 13.5,
-        headY: -16,
-        seg: [
-          { cy: 2, rx: 12, ry: 10 },
-          { cy: 14, rx: 10, ry: 8 },
-          { cy: 24, rx: 8, ry: 6.5 },
-        ],
-        belly: { cy: 4, rx: 6.5, ry: 7 },
-        armX: 14,
-      };
+      return { cx: 0, cy: 2, rx: 19.5, ry: 20, faceY: -4, tail: { cx: -16, cy: 10, rx: 6, ry: 5 } };
     case "tall":
-      return {
-        headR: 14.5,
-        headY: -20,
-        seg: [
-          { cy: 0, rx: 14, ry: 11 },
-          { cy: 13, rx: 12.5, ry: 9 },
-          { cy: 24, rx: 10.5, ry: 7.5 },
-          { cy: 32, rx: 8, ry: 5.5 },
-        ],
-        belly: { cy: 2, rx: 7.5, ry: 8 },
-        armX: 16,
-      };
+      return { cx: 0, cy: 1, rx: 20, ry: 22, faceY: -5, tail: { cx: -15, cy: 12, rx: 5.5, ry: 5 } };
     case "round":
-      return {
-        headR: 17,
-        headY: -12,
-        seg: [
-          { cy: 8, rx: 18, ry: 14 },
-          { cy: 22, rx: 14, ry: 10 },
-        ],
-        belly: { cy: 10, rx: 10, ry: 9 },
-        armX: 18,
-      };
+      return { cx: 0, cy: 2, rx: 21.5, ry: 20.5, faceY: -3, tail: { cx: -17, cy: 9, rx: 6.5, ry: 5.5 } };
     default: // plump
-      return {
-        headR: 16,
-        headY: -14,
-        seg: [
-          { cy: 6, rx: 16, ry: 12 },
-          { cy: 18, rx: 13, ry: 9 },
-          { cy: 26, rx: 10, ry: 7 },
-        ],
-        belly: { cy: 8, rx: 9, ry: 8 },
-        armX: 17,
-      };
+      return { cx: 0, cy: 2, rx: 22.5, ry: 20, faceY: -3.5, tail: { cx: -17.5, cy: 10, rx: 7, ry: 5.5 } };
   }
 }
 
 function eyeGeom(eyes: AvatarEyes) {
+  // Large white-sclera eyes (reference aesthetic); traits tweak shape within a tight size band
   switch (eyes) {
     case "sharp":
-      return { rx: 2.2, ry: 3.4, brow: -10, sparkle: false, lids: false };
+      return { rx: 5.2, ry: 5.8, pupil: 2.7, brow: -8, lids: false, sparkle: false };
     case "wide":
-      return { rx: 3.4, ry: 3.6, brow: -4, sparkle: true, lids: false };
+      return { rx: 6.2, ry: 6.0, pupil: 2.9, brow: -2, lids: false, sparkle: true };
     case "sleepy":
-      return { rx: 2.8, ry: 1.5, brow: 10, sparkle: false, lids: true };
+      return { rx: 5.6, ry: 4.2, pupil: 2.4, brow: 6, lids: true, sparkle: false };
     case "gleam":
-      return { rx: 2.7, ry: 2.9, brow: -2, sparkle: true, lids: false };
+      return { rx: 5.8, ry: 5.6, pupil: 2.8, brow: -3, lids: false, sparkle: true };
     default: // soft
-      return { rx: 2.6, ry: 2.8, brow: 6, sparkle: false, lids: false };
+      return { rx: 5.6, ry: 5.5, pupil: 2.6, brow: 2, lids: false, sparkle: false };
   }
 }
 
 function mouthPath(mouth: AvatarMouth): string {
   switch (mouth) {
     case "flat":
-      return "M -5 8 L 5 8";
+      return "M -4.5 7.5 L 4.5 7.5";
     case "smirk":
-      return "M -6 8 Q 0 7 6 10";
+      return "M -4.5 7.2 Q 0 6.5 4.5 8.5";
     case "grin":
-      return "M -7 6 Q 0 13 7 6";
+      return "M -5 6.2 Q 0 10.5 5 6.2";
     case "frown":
-      return "M -6 9 Q 0 6 6 9";
+      return "M -4.5 8.5 Q 0 6.2 4.5 8.5";
     default: // smile
-      return "M -6 7 Q 0 11 6 7";
+      return "M -4.5 6.8 Q 0 9.5 4.5 6.8";
   }
 }
 
 function poseTilt(pose: AvatarPose, seed: number): number {
-  if (pose === "lean-left") return -4 - (seed % 3);
-  if (pose === "lean-right") return 4 + (seed % 3);
+  if (pose === "lean-left") return -3 - (seed % 2);
+  if (pose === "lean-right") return 3 + (seed % 2);
   return 0;
 }
 
 function Antennae({
   style,
   color,
-  headY,
-  headR,
+  faceY,
 }: {
   style: AvatarAntenna;
   color: string;
-  headY: number;
-  headR: number;
+  faceY: number;
 }) {
-  const baseY = headY - headR + 2;
-  const L = -7;
-  const R = 7;
+  // Short stubs — stay inside the circle, don't dominate the blob
+  const baseY = faceY - 16;
+  const L = -6;
+  const R = 6;
   const paths: Record<AvatarAntenna, [string, string]> = {
     curl: [
-      `M ${L} ${baseY} Q ${L - 10} ${baseY - 16} ${L - 2} ${baseY - 22}`,
-      `M ${R} ${baseY} Q ${R + 10} ${baseY - 16} ${R + 2} ${baseY - 22}`,
+      `M ${L} ${baseY} Q ${L - 5} ${baseY - 8} ${L - 1} ${baseY - 11}`,
+      `M ${R} ${baseY} Q ${R + 5} ${baseY - 8} ${R + 1} ${baseY - 11}`,
     ],
     fork: [
-      `M ${L} ${baseY} L ${L - 2} ${baseY - 14} M ${L - 2} ${baseY - 10} L ${L - 7} ${baseY - 18} M ${L - 2} ${baseY - 10} L ${L + 3} ${baseY - 18}`,
-      `M ${R} ${baseY} L ${R + 2} ${baseY - 14} M ${R + 2} ${baseY - 10} L ${R + 7} ${baseY - 18} M ${R + 2} ${baseY - 10} L ${R - 3} ${baseY - 18}`,
+      `M ${L} ${baseY} L ${L - 1} ${baseY - 8} M ${L - 1} ${baseY - 5} L ${L - 4} ${baseY - 9} M ${L - 1} ${baseY - 5} L ${L + 2} ${baseY - 9}`,
+      `M ${R} ${baseY} L ${R + 1} ${baseY - 8} M ${R + 1} ${baseY - 5} L ${R + 4} ${baseY - 9} M ${R + 1} ${baseY - 5} L ${R - 2} ${baseY - 9}`,
     ],
     droop: [
-      `M ${L} ${baseY} Q ${L - 12} ${baseY - 6} ${L - 10} ${baseY + 4}`,
-      `M ${R} ${baseY} Q ${R + 12} ${baseY - 6} ${R + 10} ${baseY + 4}`,
+      `M ${L} ${baseY} Q ${L - 6} ${baseY - 2} ${L - 5} ${baseY + 3}`,
+      `M ${R} ${baseY} Q ${R + 6} ${baseY - 2} ${R + 5} ${baseY + 3}`,
     ],
     bolt: [
-      `M ${L} ${baseY} L ${L - 4} ${baseY - 8} L ${L + 1} ${baseY - 10} L ${L - 5} ${baseY - 20}`,
-      `M ${R} ${baseY} L ${R + 4} ${baseY - 8} L ${R - 1} ${baseY - 10} L ${R + 5} ${baseY - 20}`,
+      `M ${L} ${baseY} L ${L - 2} ${baseY - 4} L ${L + 1} ${baseY - 5} L ${L - 2} ${baseY - 10}`,
+      `M ${R} ${baseY} L ${R + 2} ${baseY - 4} L ${R - 1} ${baseY - 5} L ${R + 2} ${baseY - 10}`,
     ],
     sway: [
-      `M ${L} ${baseY} Q ${L - 14} ${baseY - 10} ${L - 4} ${baseY - 20} Q ${L + 4} ${baseY - 26} ${L - 2} ${baseY - 28}`,
-      `M ${R} ${baseY} Q ${R + 8} ${baseY - 12} ${R + 12} ${baseY - 18} Q ${R + 2} ${baseY - 24} ${R + 6} ${baseY - 28}`,
+      `M ${L} ${baseY} Q ${L - 6} ${baseY - 5} ${L - 2} ${baseY - 10}`,
+      `M ${R} ${baseY} Q ${R + 4} ${baseY - 6} ${R + 5} ${baseY - 10}`,
+    ],
+  };
+  const tips: Record<AvatarAntenna, [[number, number], [number, number]]> = {
+    curl: [
+      [L - 1, baseY - 11],
+      [R + 1, baseY - 11],
+    ],
+    fork: [
+      [L - 1, baseY - 8],
+      [R + 1, baseY - 8],
+    ],
+    droop: [
+      [L - 5, baseY + 3],
+      [R + 5, baseY + 3],
+    ],
+    bolt: [
+      [L - 2, baseY - 10],
+      [R + 2, baseY - 10],
+    ],
+    sway: [
+      [L - 2, baseY - 10],
+      [R + 5, baseY - 10],
     ],
   };
   const [left, right] = paths[style] || paths.curl;
-  const tip = (x: number, y: number) => <circle cx={x} cy={y} r="1.8" fill={color} />;
-  const tips: Record<AvatarAntenna, [[number, number], [number, number]]> = {
-    curl: [
-      [L - 2, baseY - 22],
-      [R + 2, baseY - 22],
-    ],
-    fork: [
-      [L - 2, baseY - 14],
-      [R + 2, baseY - 14],
-    ],
-    droop: [
-      [L - 10, baseY + 4],
-      [R + 10, baseY + 4],
-    ],
-    bolt: [
-      [L - 5, baseY - 20],
-      [R + 5, baseY - 20],
-    ],
-    sway: [
-      [L - 2, baseY - 28],
-      [R + 6, baseY - 28],
-    ],
-  };
   const [lt, rt] = tips[style] || tips.curl;
   return (
-    <g>
-      <path d={left} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d={right} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-      {tip(lt[0], lt[1])}
-      {tip(rt[0], rt[1])}
+    <g opacity="0.85">
+      <path d={left} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={right} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={lt[0]} cy={lt[1]} r="1.3" fill={color} />
+      <circle cx={rt[0]} cy={rt[1]} r="1.3" fill={color} />
     </g>
   );
 }
@@ -184,35 +145,29 @@ function PatternOverlay({
   pattern,
   hue,
   accent,
-  segs,
+  rx,
+  ry,
+  cy,
   seed,
 }: {
   pattern: AvatarPattern;
   hue: number;
   accent: number;
-  segs: { cy: number; rx: number; ry: number }[];
+  rx: number;
+  ry: number;
+  cy: number;
   seed: number;
 }) {
-  if (pattern === "plain" || segs.length === 0) return null;
-  const ink = `hsl(${accent} 45% 38%)`;
-  const mid = segs[0];
+  if (pattern === "plain") return null;
+  const ink = `hsl(${accent} 40% 42%)`;
 
   if (pattern === "stripes") {
-    const count = 3 + (seed % 2);
+    const count = 3;
     return (
-      <g opacity="0.35">
+      <g opacity="0.18">
         {Array.from({ length: count }, (_, i) => {
-          const y = mid.cy - mid.ry * 0.6 + (i * (mid.ry * 1.2)) / (count - 1 || 1);
-          return (
-            <ellipse
-              key={i}
-              cx="0"
-              cy={y}
-              rx={mid.rx * 0.92}
-              ry={1.4}
-              fill={ink}
-            />
-          );
+          const y = cy - ry * 0.35 + (i * (ry * 0.7)) / (count - 1);
+          return <ellipse key={i} cx="0" cy={y} rx={rx * 0.85} ry={1.3} fill={ink} />;
         })}
       </g>
     );
@@ -220,30 +175,21 @@ function PatternOverlay({
 
   if (pattern === "bands") {
     return (
-      <g opacity="0.4">
-        {segs.slice(0, 2).map((s, i) => (
-          <ellipse
-            key={i}
-            cx="0"
-            cy={s.cy}
-            rx={s.rx * 0.95}
-            ry={s.ry * 0.28}
-            fill={`hsl(${hue} 40% 42%)`}
-          />
-        ))}
+      <g opacity="0.2">
+        <ellipse cx="0" cy={cy - ry * 0.15} rx={rx * 0.88} ry={ry * 0.18} fill={`hsl(${hue} 35% 45%)`} />
+        <ellipse cx="0" cy={cy + ry * 0.25} rx={rx * 0.8} ry={ry * 0.14} fill={`hsl(${hue} 35% 45%)`} />
       </g>
     );
   }
 
-  // spots
   const spots = [
-    { cx: -5, cy: mid.cy - 2, r: 2.2 },
-    { cx: 6, cy: mid.cy + 3, r: 1.7 },
-    { cx: 1, cy: mid.cy + 7, r: 2.0 },
-    { cx: -7, cy: mid.cy + 6, r: 1.4 },
+    { cx: -6, cy: cy - 2, r: 2.0 },
+    { cx: 7, cy: cy + 3, r: 1.6 },
+    { cx: 1, cy: cy + 8, r: 1.8 },
+    { cx: -8, cy: cy + 7, r: 1.3 },
   ];
   return (
-    <g opacity="0.4">
+    <g opacity="0.22">
       {spots.map((s, i) => (
         <circle key={i} cx={s.cx + ((seed >> i) % 3) - 1} cy={s.cy} r={s.r} fill={ink} />
       ))}
@@ -254,13 +200,13 @@ function PatternOverlay({
 function Accessory({
   kind,
   accent,
-  headY,
-  headR,
+  faceY,
+  rx,
 }: {
   kind: AvatarAccessory;
   accent: number;
-  headY: number;
-  headR: number;
+  faceY: number;
+  rx: number;
 }) {
   const a = `hsl(${accent} 65% 48%)`;
   const aDark = `hsl(${accent} 60% 36%)`;
@@ -269,54 +215,53 @@ function Accessory({
   if (kind === "monocle") {
     return (
       <g>
-        <circle cx="6.5" cy={headY - 1} r="4.2" fill="none" stroke={aDark} strokeWidth="1.4" />
-        <line x1="10.5" y1={headY + 1} x2="14" y2={headY + 10} stroke={aDark} strokeWidth="1.1" />
+        <circle cx="7" cy={faceY} r="3.6" fill="none" stroke={aDark} strokeWidth="1.2" />
+        <line x1="10.4" y1={faceY + 1.5} x2="12.5" y2={faceY + 7} stroke={aDark} strokeWidth="1" />
       </g>
     );
   }
   if (kind === "bowtie") {
     return (
-      <g transform={`translate(0 ${headY + headR - 1})`}>
-        <path d="M -7 0 L -1 -3 L -1 3 Z" fill={a} />
-        <path d="M 7 0 L 1 -3 L 1 3 Z" fill={a} />
-        <circle cx="0" cy="0" r="1.6" fill={aDark} />
+      <g transform={`translate(0 ${faceY + 16})`}>
+        <path d="M -5.5 0 L -1 -2.2 L -1 2.2 Z" fill={a} />
+        <path d="M 5.5 0 L 1 -2.2 L 1 2.2 Z" fill={a} />
+        <circle cx="0" cy="0" r="1.2" fill={aDark} />
       </g>
     );
   }
   if (kind === "cap") {
+    const y = faceY - 14;
     return (
       <g>
-        <ellipse cx="0" cy={headY - headR + 2} rx={headR * 0.95} ry="4" fill={aDark} />
-        <path
-          d={`M ${-headR * 0.7} ${headY - headR + 2} Q 0 ${headY - headR - 10} ${headR * 0.7} ${headY - headR + 2}`}
-          fill={a}
-        />
+        <ellipse cx="0" cy={y + 2} rx={10} ry="3.2" fill={aDark} />
+        <path d={`M -8 ${y + 2} Q 0 ${y - 7} 8 ${y + 2}`} fill={a} />
       </g>
     );
   }
   if (kind === "horns") {
+    const y = faceY - 12;
     return (
       <g>
         <path
-          d={`M -8 ${headY - headR + 4} Q -14 ${headY - headR - 6} -10 ${headY - headR - 12}`}
+          d={`M -7 ${y} Q -11 ${y - 6} -8 ${y - 10}`}
           fill="none"
           stroke={aDark}
-          strokeWidth="2.4"
+          strokeWidth="2"
           strokeLinecap="round"
         />
         <path
-          d={`M 8 ${headY - headR + 4} Q 14 ${headY - headR - 6} 10 ${headY - headR - 12}`}
+          d={`M 7 ${y} Q 11 ${y - 6} 8 ${y - 10}`}
           fill="none"
           stroke={aDark}
-          strokeWidth="2.4"
+          strokeWidth="2"
           strokeLinecap="round"
         />
       </g>
     );
   }
   if (kind === "flower") {
-    const cx = 12;
-    const cy = headY - 2;
+    const cx = rx * 0.55;
+    const cy = faceY - 2;
     return (
       <g>
         {[0, 72, 144, 216, 288].map((deg) => {
@@ -324,22 +269,22 @@ function Accessory({
           return (
             <circle
               key={deg}
-              cx={cx + Math.cos(rad) * 3.2}
-              cy={cy + Math.sin(rad) * 3.2}
-              r="2.1"
+              cx={cx + Math.cos(rad) * 2.4}
+              cy={cy + Math.sin(rad) * 2.4}
+              r="1.6"
               fill={a}
             />
           );
         })}
-        <circle cx={cx} cy={cy} r="1.6" fill={`hsl(${(accent + 40) % 360} 70% 62%)`} />
+        <circle cx={cx} cy={cy} r="1.2" fill={`hsl(${(accent + 40) % 360} 70% 62%)`} />
       </g>
     );
   }
   if (kind === "badge") {
     return (
-      <g transform={`translate(10 ${headY + headR + 2})`}>
-        <circle r="4.5" fill={a} stroke={aDark} strokeWidth="1" />
-        <circle r="2" fill="#fff" opacity="0.85" />
+      <g transform={`translate(${rx * 0.45} ${faceY + 12})`}>
+        <circle r="3.4" fill={a} stroke={aDark} strokeWidth="0.9" />
+        <circle r="1.5" fill="#fff" opacity="0.85" />
       </g>
     );
   }
@@ -347,17 +292,17 @@ function Accessory({
     return (
       <g>
         <path
-          d={`M -12 ${headY + headR - 2} Q 0 ${headY + headR + 4} 12 ${headY + headR - 2}`}
+          d={`M -14 ${faceY + 14} Q 0 ${faceY + 18} 14 ${faceY + 14}`}
           fill="none"
           stroke={a}
-          strokeWidth="3.2"
+          strokeWidth="2.6"
           strokeLinecap="round"
         />
         <path
-          d={`M 4 ${headY + headR} Q 8 ${headY + headR + 10} 6 ${headY + headR + 14}`}
+          d={`M 3 ${faceY + 16} Q 6 ${faceY + 22} 5 ${faceY + 25}`}
           fill="none"
           stroke={aDark}
-          strokeWidth="2.4"
+          strokeWidth="2"
           strokeLinecap="round"
         />
       </g>
@@ -366,62 +311,101 @@ function Accessory({
   if (kind === "goggles") {
     return (
       <g>
-        <circle cx="-6" cy={headY - 1} r="4.4" fill="none" stroke={aDark} strokeWidth="1.6" />
-        <circle cx="6" cy={headY - 1} r="4.4" fill="none" stroke={aDark} strokeWidth="1.6" />
-        <line x1="-1.6" y1={headY - 1} x2="1.6" y2={headY - 1} stroke={aDark} strokeWidth="1.4" />
-        <line
-          x1="-10.4"
-          y1={headY - 1}
-          x2={-headR + 1}
-          y2={headY - 1}
-          stroke={a}
-          strokeWidth="1.2"
-        />
-        <line
-          x1="10.4"
-          y1={headY - 1}
-          x2={headR - 1}
-          y2={headY - 1}
-          stroke={a}
-          strokeWidth="1.2"
-        />
+        <circle cx="-6" cy={faceY} r="4.8" fill="none" stroke={aDark} strokeWidth="1.4" />
+        <circle cx="6" cy={faceY} r="4.8" fill="none" stroke={aDark} strokeWidth="1.4" />
+        <line x1="-1.2" y1={faceY} x2="1.2" y2={faceY} stroke={aDark} strokeWidth="1.2" />
+        <line x1="-10.8" y1={faceY} x2={-rx + 4} y2={faceY} stroke={a} strokeWidth="1.1" />
+        <line x1="10.8" y1={faceY} x2={rx - 4} y2={faceY} stroke={a} strokeWidth="1.1" />
       </g>
     );
   }
   if (kind === "crown") {
-    const y = headY - headR + 1;
+    const y = faceY - 15;
     return (
       <g>
         <path
-          d={`M -8 ${y + 2} L -6 ${y - 7} L -3 ${y} L 0 ${y - 9} L 3 ${y} L 6 ${y - 7} L 8 ${y + 2} Z`}
+          d={`M -6.5 ${y + 2} L -5 ${y - 5} L -2.5 ${y} L 0 ${y - 7} L 2.5 ${y} L 5 ${y - 5} L 6.5 ${y + 2} Z`}
           fill={a}
           stroke={aDark}
-          strokeWidth="0.8"
+          strokeWidth="0.7"
         />
-        <circle cx="0" cy={y - 9} r="1.2" fill={`hsl(${(accent + 50) % 360} 75% 60%)`} />
+        <circle cx="0" cy={y - 7} r="1" fill={`hsl(${(accent + 50) % 360} 75% 60%)`} />
       </g>
     );
   }
   if (kind === "clipboard") {
     return (
-      <g transform={`translate(${headR + 2} ${headY + 4})`}>
-        <rect x="-4" y="-6" width="9" height="12" rx="1.2" fill={a} stroke={aDark} strokeWidth="0.9" />
-        <rect x="-2" y="-8" width="5" height="2.4" rx="0.6" fill={aDark} />
-        <line x1="-2" y1="-2" x2="3" y2="-2" stroke="#fff" strokeWidth="1" opacity="0.85" />
-        <line x1="-2" y1="1" x2="2.5" y2="1" stroke="#fff" strokeWidth="1" opacity="0.7" />
-        <line x1="-2" y1="4" x2="1.5" y2="4" stroke="#fff" strokeWidth="1" opacity="0.55" />
+      <g transform={`translate(${rx * 0.55} ${faceY + 6})`}>
+        <rect x="-3" y="-5" width="7" height="10" rx="1" fill={a} stroke={aDark} strokeWidth="0.8" />
+        <rect x="-1.5" y="-6.5" width="4" height="2" rx="0.5" fill={aDark} />
+        <line x1="-1.5" y1="-1.5" x2="2.5" y2="-1.5" stroke="#fff" strokeWidth="0.9" opacity="0.85" />
+        <line x1="-1.5" y1="1" x2="2" y2="1" stroke="#fff" strokeWidth="0.9" opacity="0.7" />
       </g>
     );
   }
   if (kind === "leaf") {
     return (
-      <g transform={`translate(${headR - 2} ${headY - headR + 6}) rotate(25)`}>
-        <ellipse cx="0" cy="0" rx="3.2" ry="6" fill={a} />
-        <line x1="0" y1="5" x2="0" y2="-5" stroke={aDark} strokeWidth="0.9" />
+      <g transform={`translate(${rx * 0.5} ${faceY - 10}) rotate(25)`}>
+        <ellipse cx="0" cy="0" rx="2.4" ry="4.5" fill={a} />
+        <line x1="0" y1="3.5" x2="0" y2="-3.5" stroke={aDark} strokeWidth="0.8" />
       </g>
     );
   }
   return null;
+}
+
+function Eye({
+  cx,
+  cy,
+  geom,
+}: {
+  cx: number;
+  cy: number;
+  geom: ReturnType<typeof eyeGeom>;
+}) {
+  return (
+    <g>
+      {/* sclera */}
+      <ellipse cx={cx} cy={cy} rx={geom.rx} ry={geom.ry} fill="#fffef8" />
+      <ellipse
+        cx={cx}
+        cy={cy}
+        rx={geom.rx}
+        ry={geom.ry}
+        fill="none"
+        stroke="rgba(40,30,25,0.12)"
+        strokeWidth="0.6"
+      />
+      {/* pupil */}
+      <circle cx={cx + 0.4} cy={cy + 0.3} r={geom.pupil} fill="#1c1410" />
+      {/* catchlight */}
+      <circle cx={cx + geom.pupil * 0.35} cy={cy - geom.pupil * 0.35} r={geom.pupil * 0.32} fill="#fff" />
+      {geom.lids && (
+        <path
+          d={`M ${cx - geom.rx * 0.9} ${cy - 1} Q ${cx} ${cy - geom.ry * 0.7} ${cx + geom.rx * 0.9} ${cy - 1}`}
+          fill="none"
+          stroke="#1c1410"
+          strokeWidth="1.1"
+          strokeLinecap="round"
+        />
+      )}
+      {geom.sparkle && (
+        <circle cx={cx + geom.rx * 0.7} cy={cy - geom.ry * 0.85} r="0.7" fill="rgba(255,255,255,0.9)" />
+      )}
+      {/* subtle brow */}
+      <line
+        x1={cx - geom.rx * 0.75}
+        y1={cy - geom.ry - 1.5}
+        x2={cx + geom.rx * 0.35}
+        y2={cy - geom.ry - 1.2}
+        stroke="#1c1410"
+        strokeWidth="1.1"
+        strokeLinecap="round"
+        opacity="0.55"
+        transform={`rotate(${geom.brow * 0.35} ${cx} ${cy - geom.ry})`}
+      />
+    </g>
+  );
 }
 
 export default function LarvaAvatar({
@@ -441,13 +425,19 @@ export default function LarvaAvatar({
   const seed = walletSeed(wallet || `${t.hue}-${t.tone}`);
   const geom = bodyGeom(t.body);
   const eyes = eyeGeom(t.eyes);
-  const body = `hsl(${t.hue} 62% 58%)`;
-  const bodyDark = `hsl(${t.hue} 62% 44%)`;
-  const belly = `hsl(${t.accent} 50% 78%)`;
-  const bg = `hsl(${t.hue} 32% 96%)`;
-  const ring = `hsl(${t.accent} 28% 80%)`;
   const mouth = mouthPath(t.mouth);
   const tilt = poseTilt(t.pose, seed);
+
+  const gid = `larva-${t.hue}-${t.body}-${seed.toString(36)}`;
+  const bodyGradId = `${gid}-body`;
+  const bellyGradId = `${gid}-belly`;
+
+  const mid = `hsl(${t.hue} 68% 58%)`;
+  const dark = `hsl(${t.hue} 62% 42%)`;
+  const light = `hsl(${t.hue} 70% 72%)`;
+  const antennaColor = `hsl(${t.hue} 55% 38%)`;
+  const bg = `hsl(${t.hue} 28% 96%)`;
+  const ring = `hsl(${t.accent} 26% 82%)`;
 
   return (
     <svg
@@ -458,110 +448,99 @@ export default function LarvaAvatar({
       role="img"
       aria-label={label || `larvatar, ${t.tone}, ${t.body}, ${t.accessory}`}
     >
+      <defs>
+        <radialGradient id={bodyGradId} cx="35%" cy="30%" r="70%">
+          <stop offset="0%" stopColor={light} />
+          <stop offset="45%" stopColor={mid} />
+          <stop offset="100%" stopColor={dark} />
+        </radialGradient>
+        <radialGradient id={bellyGradId} cx="50%" cy="40%" r="60%">
+          <stop offset="0%" stopColor={`hsl(${t.accent} 45% 82%)`} stopOpacity="0.85" />
+          <stop offset="100%" stopColor={`hsl(${t.accent} 40% 70%)`} stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
       <circle r="47" fill={bg} stroke={ring} strokeWidth="1.5" />
-      {/* soft ground shadow */}
-      <ellipse cx="0" cy="38" rx="16" ry="5" fill={`hsl(${t.hue} 25% 70%)`} opacity="0.35" />
+      <ellipse cx="0" cy="36" rx="18" ry="4.5" fill={`hsl(${t.hue} 20% 55%)`} opacity="0.22" />
 
       <g transform={`rotate(${tilt})`}>
-        {/* body segments back-to-front */}
-        {[...geom.seg].reverse().map((s, i) => (
-          <ellipse
-            key={`seg-${i}`}
-            cx="0"
-            cy={s.cy}
-            rx={s.rx}
-            ry={s.ry}
-            fill={i === geom.seg.length - 1 ? body : i % 2 === 0 ? bodyDark : body}
-          />
-        ))}
+        {/* rear tail nub */}
+        <ellipse
+          cx={geom.tail.cx}
+          cy={geom.tail.cy}
+          rx={geom.tail.rx}
+          ry={geom.tail.ry}
+          fill={`url(#${bodyGradId})`}
+        />
+
+        {/* main gumdrop blob */}
+        <ellipse
+          cx={geom.cx}
+          cy={geom.cy}
+          rx={geom.rx}
+          ry={geom.ry}
+          fill={`url(#${bodyGradId})`}
+        />
 
         <PatternOverlay
           pattern={t.pattern}
           hue={t.hue}
           accent={t.accent}
-          segs={geom.seg}
+          rx={geom.rx}
+          ry={geom.ry}
+          cy={geom.cy}
           seed={seed}
         />
 
+        {/* soft belly undertone */}
         <ellipse
-          cx="0"
-          cy={geom.belly.cy}
-          rx={geom.belly.rx}
-          ry={geom.belly.ry}
-          fill={belly}
-          opacity="0.95"
+          cx={0}
+          cy={geom.cy + 4}
+          rx={geom.rx * 0.55}
+          ry={geom.ry * 0.45}
+          fill={`url(#${bellyGradId})`}
         />
 
-        {/* little arms */}
+        {/* specular highlight (gummy gloss) */}
         <ellipse
-          cx={-geom.armX}
-          cy={geom.seg[0].cy}
-          rx="5"
-          ry="3.4"
-          fill={bodyDark}
-          transform={`rotate(-28 ${-geom.armX} ${geom.seg[0].cy})`}
+          cx={-6}
+          cy={geom.cy - geom.ry * 0.35}
+          rx={geom.rx * 0.38}
+          ry={geom.ry * 0.22}
+          fill="#fff"
+          opacity="0.45"
         />
         <ellipse
-          cx={geom.armX}
-          cy={geom.seg[0].cy}
-          rx="5"
-          ry="3.4"
-          fill={bodyDark}
-          transform={`rotate(28 ${geom.armX} ${geom.seg[0].cy})`}
+          cx={-9}
+          cy={geom.cy - geom.ry * 0.15}
+          rx={geom.rx * 0.14}
+          ry={geom.ry * 0.1}
+          fill="#fff"
+          opacity="0.35"
         />
 
-        {/* head */}
-        <circle cx="0" cy={geom.headY} r={geom.headR} fill={body} />
+        <Antennae style={t.antenna} color={antennaColor} faceY={geom.faceY} />
 
-        <Antennae style={t.antenna} color={bodyDark} headY={geom.headY} headR={geom.headR} />
-
-        <Accessory kind={t.accessory} accent={t.accent} headY={geom.headY} headR={geom.headR} />
+        <Accessory kind={t.accessory} accent={t.accent} faceY={geom.faceY} rx={geom.rx} />
 
         {/* face */}
-        <g transform={`translate(0 ${geom.headY})`}>
+        <g transform={`translate(0 ${geom.faceY})`}>
           {t.cheeks && (
             <>
-              <ellipse cx="-9" cy="3" rx="2.8" ry="1.8" fill={`hsl(${t.hue} 70% 70%)`} opacity="0.55" />
-              <ellipse cx="9" cy="3" rx="2.8" ry="1.8" fill={`hsl(${t.hue} 70% 70%)`} opacity="0.55" />
+              <ellipse cx="-11" cy="5" rx="3.2" ry="2" fill={`hsl(${t.hue} 70% 68%)`} opacity="0.45" />
+              <ellipse cx="11" cy="5" rx="3.2" ry="2" fill={`hsl(${t.hue} 70% 68%)`} opacity="0.45" />
             </>
           )}
-          <ellipse cx="-6" cy="-1" rx={eyes.rx} ry={eyes.ry} fill="#1c1c28" />
-          <ellipse cx="6" cy="-1" rx={eyes.rx} ry={eyes.ry} fill="#1c1c28" />
-          {eyes.lids && (
-            <>
-              <path d="M -9 -2 Q -6 -4 -3 -2" fill="none" stroke="#1c1c28" strokeWidth="1.2" />
-              <path d="M 3 -2 Q 6 -4 9 -2" fill="none" stroke="#1c1c28" strokeWidth="1.2" />
-            </>
-          )}
-          <circle cx={-6 + eyes.rx * 0.25} cy={-1 - eyes.ry * 0.35} r="0.85" fill="#fff" />
-          <circle cx={6 + eyes.rx * 0.25} cy={-1 - eyes.ry * 0.35} r="0.85" fill="#fff" />
-          {eyes.sparkle && (
-            <>
-              <circle cx="-3.5" cy="-4.5" r="0.7" fill={`hsl(${t.accent} 80% 60%)`} />
-              <circle cx="9" cy="-5" r="0.55" fill={`hsl(${t.accent} 80% 60%)`} />
-            </>
-          )}
-          <line
-            x1="-9.5"
-            y1="-6"
-            x2="-3"
-            y2="-6"
-            stroke="#1c1c28"
-            strokeWidth="1.4"
+          <Eye cx={-6.5} cy={0} geom={eyes} />
+          <Eye cx={6.5} cy={0} geom={eyes} />
+          <path
+            d={mouth}
+            fill="none"
+            stroke="#2a2018"
+            strokeWidth="1.5"
             strokeLinecap="round"
-            transform={`rotate(${eyes.brow} -6 -6)`}
+            opacity="0.85"
           />
-          <line
-            x1="3"
-            y1="-6"
-            x2="9.5"
-            y2="-6"
-            stroke="#1c1c28"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            transform={`rotate(${-eyes.brow} 6 -6)`}
-          />
-          <path d={mouth} fill="none" stroke="#1c1c28" strokeWidth="1.6" strokeLinecap="round" />
         </g>
       </g>
     </svg>
