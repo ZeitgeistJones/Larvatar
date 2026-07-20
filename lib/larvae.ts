@@ -22,6 +22,7 @@ const PROFILE_KEY = (w: string) => `lpp:profile:${w.toLowerCase()}`;
 const INDEX_KEY = "lpp:index";
 const QUEUE_KEY = "lpp:build:queue"; // JSON: { wallet, texts, forum, labs }[] still pending
 const DONE_KEY = "lpp:build:done";   // JSON: { wallet, responseCount }[] finished this build run
+const NAMES_KEY = "lpp:build:names"; // JSON: string[] of display names taken this build run
 
 export async function saveProfile(p: LarvaProfile) {
   await redis.set(PROFILE_KEY(p.wallet), JSON.stringify(p));
@@ -79,6 +80,23 @@ export async function getDone(): Promise<{ wallet: string; responseCount: number
 
 export async function clearDone() {
   await redis.del(DONE_KEY);
+}
+
+export async function getUsedNames(): Promise<string[]> {
+  const raw = await redis.get<string | string[]>(NAMES_KEY);
+  if (!raw) return [];
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+export async function addUsedName(name: string): Promise<string[]> {
+  const cur = await getUsedNames();
+  const next = [...cur, name];
+  await redis.set(NAMES_KEY, JSON.stringify(next));
+  return next;
+}
+
+export async function clearUsedNames() {
+  await redis.del(NAMES_KEY);
 }
 
 // ---------- larv.ai fetchers ----------
