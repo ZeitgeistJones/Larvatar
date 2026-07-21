@@ -606,7 +606,7 @@ async function inventNameFromProfile(
     ...(p.profile.quirks || []),
   ].join("\n");
 
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const takenList = [...used].slice(0, 300).join(", ");
       const raw = await haiku(
@@ -693,7 +693,7 @@ async function runRenameOnly(req: NextRequest): Promise<NextResponse> {
   const renamedThisRun: { wallet: string; name: string }[] = [];
   const failed: string[] = [];
 
-  while (queue.length > 0 && Date.now() - start < TIME_BUDGET_MS) {
+  while (queue.length > 0 && Date.now() - start < 35_000) {
     const wallet = queue.shift()!;
     try {
       const p = await getProfile(wallet);
