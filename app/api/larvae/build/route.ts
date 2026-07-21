@@ -90,12 +90,14 @@ Base everything on the actual responses. Be specific, not generic. If the larva 
 const RENAME_SYSTEM = `You invent a short specimen nickname for a "larva" — a personal AI governance agent in the $CLAWD ecosystem — based on its personality profile.
 
 Rules:
-- 1-2 words, character-name or title energy — role words like "Architect", "Pragmatist", "Purist", "Auditor" are fine and welcome.
-- Ground the name in this larva's SPECIFIC obsession, metaphor, or domain — what makes it different from the others.
-- Do NOT lead with generic intensity words like "Obsessive", "Obsessed", "Focused", "Dedicated", "Relentless" — describe WHAT it fixates on, not how hard.
-- Must be clearly DIFFERENT from every name in the taken list — not just a new second word tacked onto a repeated first word. If many names already share a word, avoid that word entirely.
+- Exactly 1-2 words. Character-name or title energy.
+- Role/title words are GOOD: Architect, Pragmatist, Purist, Auditor, Sentinel, Operator, Warden, Broker, Envoy, Curator, etc.
+- Or ground it in the larva's specific fixation: what domain, metaphor, or obsession sets it apart (e.g. "Burn Warden", "Rails Broker", "Proof Hawk", "Yield Monk").
+- NEVER start with a connector, adverb, or bare verb: whether, who, what, which, consistently, explicitly, retroactively, suspiciously, applies, filters, watches, tracks, dismisses, demands, sequences, shows, wants, uses, asks, always, never, often.
+- NEVER lead with generic intensity words: obsessive, obsessed, focused, dedicated, relentless.
+- Must be clearly different from every name in the taken list — not just a new second word after a repeated first word. If a word appears a lot in the taken list, avoid it.
 
-Respond with ONLY the nickname text. No quotes, no punctuation, no explanation.`;
+Respond with ONLY the nickname text — 1 or 2 real words, nothing else. No quotes, no punctuation, no explanation.`;
 
 const BANNED_STEMS = [
   "obsessive",
@@ -237,6 +239,40 @@ const STOPWORDS = new Set(
     "via",
     "per",
     "etc",
+    "whether",
+    "who",
+    "what",
+    "which",
+    "consistently",
+    "explicitly",
+    "retroactively",
+    "suspiciously",
+    "applies",
+    "filters",
+    "watches",
+    "tracks",
+    "dismisses",
+    "demands",
+    "sequences",
+    "vets",
+    "uses",
+    "asks",
+    "shows",
+    "wants",
+    "prefers",
+    "values",
+    "believes",
+    "prioritizes",
+    "favors",
+    "seeks",
+    "always",
+    "never",
+    "often",
+    "constantly",
+    "actively",
+    "clearly",
+    "simply",
+    "merely",
   ].map((w) => w.toLowerCase())
 );
 
@@ -606,15 +642,22 @@ async function inventNameFromProfile(
     ...(p.profile.quirks || []),
   ].join("\n");
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const takenList = [...used].slice(0, 300).join(", ");
       const raw = await haiku(
         RENAME_SYSTEM,
-        `Profile:\n${corpus}\n\nTaken names (pick something different): ${takenList || "(none yet)"}`,
+        `Profile:\n${corpus}\n\nTaken names (pick something clearly different): ${takenList || "(none yet)"}`,
         60
       );
-      const candidate = raw.trim().replace(/^["']|["']$/g, "").slice(0, 40);
+      const candidate = raw
+        .trim()
+        .replace(/^["'`]+|["'`.,!]+$/g, "")
+        .replace(/\s+/g, " ")
+        .split(" ")
+        .slice(0, 2)
+        .join(" ")
+        .slice(0, 40);
       if (isAcceptableName(candidate, used, usedSigs)) {
         return candidate;
       }
@@ -622,11 +665,29 @@ async function inventNameFromProfile(
       // try again
     }
   }
-  // last resort — append a number rather than a random word swap
-  const base = corpus ? "Larva" : "Larva";
-  let n = 2;
-  while (used.has(`${base} ${n}`.toLowerCase())) n++;
-  return `${base} ${n}`;
+  try {
+    const raw = await haiku(
+      RENAME_SYSTEM,
+      `Profile:\n${corpus}\n\nGive any fitting 1-2 word nickname.`,
+      60
+    );
+    let base = raw
+      .trim()
+      .replace(/^["'`]+|["'`.,!]+$/g, "")
+      .replace(/\s+/g, " ")
+      .split(" ")
+      .slice(0, 2)
+      .join(" ")
+      .slice(0, 34);
+    if (!base) base = "Larva";
+    let n = 2;
+    while (used.has(`${base} ${n}`.toLowerCase())) n++;
+    return `${base} ${n}`;
+  } catch {
+    let n = 2;
+    while (used.has(`Larva ${n}`.toLowerCase())) n++;
+    return `Larva ${n}`;
+  }
 }
 
 async function enforceUniqueNamesOnDone(
