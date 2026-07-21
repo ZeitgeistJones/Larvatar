@@ -89,12 +89,19 @@ Base everything on the actual responses. Be specific, not generic. If the larva 
 
 const RENAME_SYSTEM = `You invent a short specimen nickname for a "larva" — a personal AI governance agent in the $CLAWD ecosystem — based on its personality profile.
 
-1-2 words, character-name or title energy — role words like "Architect" or "Pragmatist" are fine.
-Must NOT exactly match any name in the taken list.
+Rules:
+- 1-2 words, character-name or title energy — role words like "Architect", "Pragmatist", "Purist", "Auditor" are fine and welcome.
+- Ground the name in this larva's SPECIFIC obsession, metaphor, or domain — what makes it different from the others.
+- Do NOT lead with generic intensity words like "Obsessive", "Obsessed", "Focused", "Dedicated", "Relentless" — describe WHAT it fixates on, not how hard.
+- Must be clearly DIFFERENT from every name in the taken list — not just a new second word tacked onto a repeated first word. If many names already share a word, avoid that word entirely.
 
 Respond with ONLY the nickname text. No quotes, no punctuation, no explanation.`;
 
 const BANNED_STEMS = [
+  "obsessive",
+  "obsessed",
+  "focused",
+  "dedicated",
   "maximalist",
   "purist",
   "architect",
@@ -608,8 +615,9 @@ async function inventNameFromProfile(
         60
       );
       const candidate = raw.trim().replace(/^["']|["']$/g, "").slice(0, 40);
-      const key = candidate.trim().replace(/\s+/g, " ").toLowerCase();
-      if (key && key.length >= 2 && !used.has(key)) return candidate;
+      if (isAcceptableName(candidate, used, usedSigs)) {
+        return candidate;
+      }
     } catch {
       // try again
     }
