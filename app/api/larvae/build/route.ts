@@ -642,52 +642,53 @@ async function inventNameFromProfile(
     ...(p.profile.quirks || []),
   ].join("\n");
 
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      const takenList = [...used].slice(0, 300).join(", ");
-      const raw = await haiku(
-        RENAME_SYSTEM,
-        `Profile:\n${corpus}\n\nTaken names (pick something clearly different): ${takenList || "(none yet)"}`,
-        60
-      );
-      const candidate = raw
-        .trim()
-        .replace(/^["'`]+|["'`.,!]+$/g, "")
-        .replace(/\s+/g, " ")
-        .split(" ")
-        .slice(0, 2)
-        .join(" ")
-        .slice(0, 40);
-      if (isAcceptableName(candidate, used, usedSigs)) {
-        return candidate;
-      }
-    } catch {
-      // try again
-    }
-  }
+  // ONE AI call — same creative naming as the original.
+  let aiName = "";
   try {
+    const takenList = [...used].slice(0, 300).join(", ");
     const raw = await haiku(
       RENAME_SYSTEM,
-      `Profile:\n${corpus}\n\nGive any fitting 1-2 word nickname.`,
+      `Profile:\n${corpus}\n\nAlready taken (avoid these): ${takenList || "(none yet)"}`,
       60
     );
-    let base = raw
+    aiName = raw
       .trim()
       .replace(/^["'`]+|["'`.,!]+$/g, "")
       .replace(/\s+/g, " ")
       .split(" ")
       .slice(0, 2)
       .join(" ")
-      .slice(0, 34);
-    if (!base) base = "Larva";
-    let n = 2;
-    while (used.has(`${base} ${n}`.toLowerCase())) n++;
-    return `${base} ${n}`;
+      .slice(0, 40);
   } catch {
-    let n = 2;
-    while (used.has(`Larva ${n}`.toLowerCase())) n++;
-    return `Larva ${n}`;
+    aiName = "";
   }
+
+  // If the AI name is good and free, use it as-is (the common case).
+  if (aiName && isAcceptableName(aiName, used, usedSigs)) {
+    return aiName;
+  }
+
+  // Collision or empty: keep the AI's name but disambiguate with a second
+  // word from the larva's own text, then a number — NO extra AI calls.
+  if (aiName) {
+    const extras = corpus
+      .split(/\s+/)
+      .map((w) => w.replace(/[^a-zA-Z]/g, ""))
+      .filter((w) => w.length > 3 && w.length < 12);
+    for (const ex of extras) {
+      const titled = ex.charAt(0).toUpperCase() + ex.slice(1).toLowerCase();
+      const combo = `${aiName.split(" ")[0]} ${titled}`.slice(0, 40);
+      if (isAcceptableName(combo, used, usedSigs)) return combo;
+    }
+    let n = 2;
+    while (used.has(`${aiName} ${n}`.toLowerCase())) n++;
+    return `${aiName} ${n}`;
+  }
+
+  // AI totally failed (rare): fall back to a plain unique placeholder.
+  let n = 2;
+  while (used.has(`Larva ${n}`.toLowerCase())) n++;
+  return `Larva ${n}`;
 }
 
 async function enforceUniqueNamesOnDone(
@@ -720,84 +721,75 @@ async function enforceUniqueNamesOnDone(
 }
 
 async function runRenameOnly(req: NextRequest): Promise<NextResponse> {
-  const reset = req.nextUrl.searchParams.get("reset") === "true";
-  if (reset) {
-    await clearRenameQueue();
-    await clearUsedNames();
-  }
-
-  const start = Date.now();
-  let queue = await getRenameQueue();
-
-  if (queue.length === 0) {
-    const index = await getIndex();
-    if (index.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        done: true,
-        renamed: 0,
-        message: "No profiles in index — run a full build first.",
-      });
-    }
-    await clearUsedNames();
-    queue = index.map((e) => e.wallet.toLowerCase());
-    await setRenameQueue(queue);
-  }
-
-  const usedNames = new Set((await getUsedNames()).map(normalizeName));
-  const usedSigs = new Set<string>();
-  for (const n of usedNames) {
-    const sig = nameSignature(n);
-    if (sig) usedSigs.add(sig);
-  }
-
-  const renamedThisRun: { wallet: string; name: string }[] = [];
-  const failed: string[] = [];
-
-  while (queue.length > 0 && Date.now() - start < 35_000) {
-    const wallet = queue.shift()!;
-    try {
-      const p = await getProfile(wallet);
-      if (!p) {
-        failed.push(wallet);
-      } else {
-        const name = await inventNameFromProfile(p, usedNames, usedSigs);
-        p.profile.name = name;
-        p.updatedAt = new Date().toISOString();
-        await saveProfile(p);
-        rememberName(name, usedNames, usedSigs);
-        await addUsedName(name);
-        renamedThisRun.push({ wallet, name });
-      }
-    } catch {
-      failed.push(wallet);
-    }
-    await setRenameQueue(queue);
-  }
-
-  if (queue.length === 0) {
-    await clearRenameQueue();
-    await clearUsedNames();
+  const index = await getIndex();
+  if (index.length === 0) {
     return NextResponse.json({
       ok: true,
       done: true,
-      mode: "renameOnly",
-      renamedThisRun: renamedThisRun.length,
-      sample: renamedThisRun.slice(0, 12),
-      failed,
-      message: "All profiles renamed with unique creative nicknames.",
+      renamed: 0,
+      message: "No profiles in index — run a full build first.",
     });
+  }
+
+  // Curated pool: evocative single words + role titles. Plenty for ~124 larvae.
+  const POOL = [
+    "Ember", "Glyph", "Drift", "Vane", "Cinder", "Prism", "Moss", "Rivet",
+    "Quill", "Slate", "Fathom", "Beacon", "Harbor", "Lattice", "Onyx", "Cobalt",
+    "Vessel", "Anchor", "Forge", "Talon", "Cipher", "Marrow", "Thorn", "Flint",
+    "Verdant", "Sable", "Halcyon", "Cairn", "Ledger", "Vector", "Axiom", "Helix",
+    "Orbit", "Zephyr", "Basalt", "Quartz", "Ridge", "Delta", "Summit", "Tidal",
+    "Warden", "Sentinel", "Auditor", "Curator", "Envoy", "Broker", "Herald", "Scribe",
+    "Architect", "Pragmatist", "Purist", "Operator", "Strategist", "Custodian",
+    "Almanac", "Compass", "Lantern", "Meridian", "Pilot", "Ranger", "Steward", "Vanguard",
+    "Kestrel", "Falcon", "Heron", "Raven", "Osprey", "Sparrow", "Wren", "Magpie",
+    "Cedar", "Birch", "Alder", "Rowan", "Hazel", "Juniper", "Willow", "Aspen",
+    "Nimbus", "Cumulus", "Vapor", "Aurora", "Solstice", "Equinox", "Zenith", "Apex",
+    "Bastion", "Citadel", "Rampart", "Keystone", "Cornerstone", "Foundry", "Crucible", "Anvil",
+    "Quasar", "Nebula", "Comet", "Meteor", "Pulsar", "Nova", "Cosmos", "Orion",
+    "Mercury", "Argent", "Copper", "Pewter", "Bronze", "Ivory", "Amber", "Jade",
+    "Beacon", "Signal", "Relay", "Conduit", "Circuit", "Nexus", "Vertex", "Node",
+    "Current", "Torrent", "Cascade", "Rapids", "Estuary", "Fjord", "Delta", "Shoal",
+    "Granite", "Marble", "Obsidian", "Basalt", "Shale", "Bedrock", "Boulder", "Pebble",
+  ];
+
+  const index2 = index.map((e) => e.wallet.toLowerCase());
+  const used = new Set<string>();
+  const renamed: { wallet: string; name: string }[] = [];
+  let poolIdx = 0;
+
+  for (const wallet of index2) {
+    const p = await getProfile(wallet);
+    if (!p) continue;
+
+    // pick next unused pool word; if exhausted, cycle with a numeric suffix
+    let name = "";
+    while (!name) {
+      if (poolIdx < POOL.length) {
+        const candidate = POOL[poolIdx++];
+        if (!used.has(candidate.toLowerCase())) name = candidate;
+      } else {
+        const base = POOL[poolIdx % POOL.length];
+        let n = 2;
+        while (used.has(`${base} ${n}`.toLowerCase())) n++;
+        name = `${base} ${n}`;
+        poolIdx++;
+      }
+    }
+
+    used.add(name.toLowerCase());
+    p.profile.name = name;
+    p.updatedAt = new Date().toISOString();
+    await saveProfile(p);
+    renamed.push({ wallet, name });
   }
 
   return NextResponse.json({
     ok: true,
-    done: false,
+    done: true,
     mode: "renameOnly",
-    renamedThisRun: renamedThisRun.length,
-    remaining: queue.length,
-    sample: renamedThisRun.slice(0, 8),
-    failed,
-    message: "Not finished — visit this same URL again to continue renaming.",
+    renamed: renamed.length,
+    sample: renamed.slice(0, 15),
+    message: "All profiles renamed — unique, one shot.",
   });
 }
 
