@@ -7,10 +7,14 @@
 //   - per-larva "win rate" (how often their stance matches the aggregate)
 //   - faction clusters (groups that vote together >70% of the time)
 //
-// Uses the same chunked-resumable build pattern as the profile and election builds.
-// Imports redis + haiku from lib/larvae.ts — everything else is self-contained.
+// RESUMABLE AT THE BATCH LEVEL. Posts here can have 150+ responses, which is
+// more sequential Haiku calls than fit in one Vercel invocation. So a post
+// carries its own progress (`cursor` + `partial`) and a run can stop mid-post,
+// save, and pick up exactly where it left off on the next visit.
+//
+// Imports only redis + haiku from lib/larvae.ts — nothing existing is modified.
 
-import { redis, haiku, parseJsonLoose } from "@/lib/larvae";
+import { redis, haiku } from "@/lib/larvae";
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -69,14 +73,24 @@ export type AlignmentResult = {
   computedAt: string;
 };
 
-// ─── Queue types (internal to the build process) ───────────────────
+// ─── Queue types ───────────────────────────────────────────────────
 
+/**
+ * A post waiting to be classified.
+ *
+ * `cursor` and `partial` carry mid-post progress: cursor is the index of the
+ * next response to classify, partial holds the stances resolved so far. A post
+ * with cursor > 0 was interrupted and resumes rather than restarting.
+ */
 export type AlignmentQueueItem = {
   postId: string;
   source: "forum" | "labs";
   title: string;
   aggregatedOpinion: string;
   responses: { wallet: string; text: string }[];
+  cursor: number;
+  partial: { wallet: string; stance: Stance }[];
+  aggregatedStance: Stance | null; // null until the aggregate call succeeds
 };
 
 export type ClassifiedPost = {
@@ -139,7 +153,7 @@ export async function clearAlignResult() {
   await redis.del(RESULT_KEY);
 }
 
-// ─── larv.ai fetchers (self-contained — doesn't touch lib/larvae.ts internals) ─
+// ─── larv.ai fetchers ──────────────────────────────────────────────
 
 const BASE = "https://larv.ai/api";
 
@@ -162,7 +176,12 @@ function extractResponses(detail: any): { wallet: string; text: string }[] {
     const text =
       r?.response || r?.content || r?.body || r?.text || r?.message || null;
     if (wallet && typeof text === "string" && text.trim().length > 0) {
-      out.push({ wallet: String(wallet).toLowerCase(), text: text.trim() });
+      // Trim at collection time — full response bodies blow up the Redis payload
+      // and only the first couple of sentences carry the stance anyway.
+      out.push({
+        wallet: String(wallet).toLowerCase(),
+        text: text.trim().slice(0, 400),
+      });
     }
   }
   return out;
@@ -186,60 +205,49 @@ async function fetchWithConcurrency<T, R>(
 }
 
 /**
- * Fetch all forum + labs posts and build a queue of posts to classify.
- * Each queue item has the post's responses and aggregated opinion.
- * Returns the number of posts queued.
+ * Fetch all forum + labs posts and build the classification queue.
+ * No LLM calls here — this is the fast phase.
  */
 export async function collectPostsIntoQueue(): Promise<number> {
   const queue: AlignmentQueueItem[] = [];
 
-  // Forum posts
+  const push = (detail: any, source: "forum" | "labs") => {
+    const responses = extractResponses(detail);
+    if (responses.length < 3) return; // too few voices to say anything about agreement
+    queue.push({
+      postId: String(detail.id ?? detail._id ?? ""),
+      source,
+      title: String(
+        detail.title || detail.subject || detail.question || detail.name || detail.idea || ""
+      ).slice(0, 200),
+      aggregatedOpinion: String(
+        detail.aggregated_opinion || detail.aggregatedOpinion || ""
+      ).slice(0, 1200),
+      responses,
+      cursor: 0,
+      partial: [],
+      aggregatedStance: null,
+    });
+  };
+
   const posts = await getJson(`${BASE}/forum`);
   if (Array.isArray(posts)) {
     const details = await fetchWithConcurrency(posts, 8, (p: any) =>
       p?.id != null ? getJson(`${BASE}/forum/${p.id}`) : Promise.resolve(null)
     );
-    for (const detail of details) {
-      if (!detail) continue;
-      const responses = extractResponses(detail);
-      if (responses.length < 3) continue; // skip posts with too few responses to matter
-      queue.push({
-        postId: String(detail.id ?? detail._id ?? ""),
-        source: "forum",
-        title: String(
-          detail.title || detail.subject || detail.question || ""
-        ).slice(0, 200),
-        aggregatedOpinion: String(
-          detail.aggregated_opinion || detail.aggregatedOpinion || ""
-        ).slice(0, 1500),
-        responses,
-      });
-    }
+    for (const detail of details) if (detail) push(detail, "forum");
   }
 
-  // Labs ideas
   const ideas = await getJson(`${BASE}/labs`);
   if (Array.isArray(ideas)) {
     const details = await fetchWithConcurrency(ideas, 8, (i: any) =>
       i?.id != null ? getJson(`${BASE}/labs/${i.id}`) : Promise.resolve(null)
     );
-    for (const detail of details) {
-      if (!detail) continue;
-      const responses = extractResponses(detail);
-      if (responses.length < 3) continue;
-      queue.push({
-        postId: String(detail.id ?? detail._id ?? ""),
-        source: "labs",
-        title: String(
-          detail.title || detail.name || detail.idea || ""
-        ).slice(0, 200),
-        aggregatedOpinion: String(
-          detail.aggregated_opinion || detail.aggregatedOpinion || ""
-        ).slice(0, 1500),
-        responses,
-      });
-    }
+    for (const detail of details) if (detail) push(detail, "labs");
   }
+
+  // Smallest posts first, so early visits clear many posts and progress is visible.
+  queue.sort((a, b) => a.responses.length - b.responses.length);
 
   await setAlignQueue(queue);
   return queue.length;
@@ -255,113 +263,104 @@ function isValidStance(s: unknown): s is Stance {
 
 const CLASSIFY_SYSTEM = `You classify governance agent responses into stances on a proposal or topic.
 
-For each response, classify as exactly one of:
+For each numbered response, classify as exactly one of:
 - approve — clearly supports the proposal/idea
 - conditional — supports with reservations, caveats, or conditions
 - disapprove — opposes or rejects the proposal/idea
-- neutral — doesn't take a clear position, off-topic, or purely procedural
+- neutral — no clear position, off-topic, or purely procedural
 
-Classify based on the actual position taken, regardless of language (responses may be in any language). If ambiguous, lean toward "conditional" over "approve" or "neutral" over "disapprove".
+Classify on the position actually taken, in any language. If ambiguous, prefer "conditional" over "approve", and "neutral" over "disapprove".
 
-Respond with ONLY a JSON array, no markdown, no preamble:
-[{"wallet":"0x...","stance":"approve"}, ...]`;
+Return one entry per response, in the same order, same count.
+
+Respond with ONLY a JSON array of stance strings, no markdown, no preamble:
+["approve","conditional","neutral", ...]`;
 
 const CLASSIFY_AGGREGATE_SYSTEM = `You classify the overall stance of an aggregated consensus opinion on a governance proposal.
 
 Classify as exactly one of: approve, conditional, disapprove, neutral.
-Most aggregated opinions synthesize multiple views, so "conditional" is common and correct.
+Aggregated opinions synthesize multiple views, so "conditional" is common and correct.
 
 Respond with ONLY the stance word, nothing else.`;
 
-/**
- * Classify a batch of responses for one post into stances.
- * Batches at 25 responses per Haiku call to stay within token limits.
- */
-export async function classifyPost(
-  item: AlignmentQueueItem
-): Promise<ClassifiedPost> {
-  // 1. Classify the aggregated opinion
-  let aggregatedStance: Stance = "neutral";
-  if (item.aggregatedOpinion.length > 10) {
-    try {
-      const raw = await haiku(
-        CLASSIFY_AGGREGATE_SYSTEM,
-        `Post: "${item.title}"\n\nAggregated opinion:\n${item.aggregatedOpinion}`,
-        20
-      );
-      const cleaned = raw.trim().toLowerCase().replace(/[^a-z]/g, "");
-      if (isValidStance(cleaned)) aggregatedStance = cleaned;
-    } catch {
-      // default stays neutral
-    }
-  }
+const BATCH_SIZE = 20;
 
-  // 2. Classify individual responses in batches of 25
-  const allStances: { wallet: string; stance: Stance }[] = [];
-  const BATCH_SIZE = 25;
-
-  for (let i = 0; i < item.responses.length; i += BATCH_SIZE) {
-    const batch = item.responses.slice(i, i + BATCH_SIZE);
-    const numbered = batch
-      .map(
-        (r, idx) =>
-          `${idx + 1}. [${r.wallet.slice(0, 8)}]: "${r.text.slice(0, 300)}"`
-      )
-      .join("\n");
-
-    try {
-      const raw = await haiku(
-        CLASSIFY_SYSTEM,
-        `Post: "${item.title}"\n\nResponses:\n${numbered}`,
-        batch.length * 50
-      );
-      const parsed = parseJsonArray(raw);
-
-      // Match parsed results back to the batch by position or wallet
-      for (let j = 0; j < batch.length; j++) {
-        const match = parsed[j];
-        const stance = match && isValidStance(match.stance) ? match.stance : "neutral";
-        allStances.push({ wallet: batch[j].wallet, stance });
-      }
-    } catch {
-      // If classification fails for this batch, default all to neutral
-      for (const r of batch) {
-        allStances.push({ wallet: r.wallet, stance: "neutral" });
-      }
-    }
-  }
-
-  return {
-    postId: item.postId,
-    source: item.source,
-    title: item.title,
-    aggregatedStance,
-    stances: allStances,
-  };
-}
-
-/** Parse a JSON array from LLM output, tolerant of markdown fences. */
-function parseJsonArray(text: string): any[] {
+/** Parse a JSON array of stance strings, tolerant of markdown fences. */
+function parseStanceArray(text: string): Stance[] {
   const clean = text.replace(/```json|```/g, "").trim();
   const start = clean.indexOf("[");
   const end = clean.lastIndexOf("]");
   if (start === -1 || end === -1) return [];
   try {
     const arr = JSON.parse(clean.slice(start, end + 1));
-    return Array.isArray(arr) ? arr : [];
+    if (!Array.isArray(arr)) return [];
+    return arr.map((s) => {
+      const v = String(s).toLowerCase().replace(/[^a-z]/g, "");
+      return isValidStance(v) ? v : "neutral";
+    });
   } catch {
     return [];
   }
 }
 
-// ─── Computation ───────────────────────────────────────────────────
+/** Classify the aggregated opinion for a post. One Haiku call. */
+export async function classifyAggregate(
+  item: AlignmentQueueItem
+): Promise<Stance> {
+  if (item.aggregatedOpinion.length <= 10) return "neutral";
+  try {
+    const raw = await haiku(
+      CLASSIFY_AGGREGATE_SYSTEM,
+      `Post: "${item.title}"\n\nAggregated opinion:\n${item.aggregatedOpinion}`,
+      20
+    );
+    const cleaned = raw.trim().toLowerCase().replace(/[^a-z]/g, "");
+    return isValidStance(cleaned) ? cleaned : "neutral";
+  } catch {
+    return "neutral";
+  }
+}
 
 /**
- * Build the full alignment result from classified posts.
- * Called once when the classification queue is empty.
+ * Classify ONE batch of responses starting at `cursor`.
+ * Returns the stances for that batch only — the caller advances the cursor.
  */
+export async function classifyBatch(
+  item: AlignmentQueueItem,
+  cursor: number
+): Promise<{ wallet: string; stance: Stance }[]> {
+  const batch = item.responses.slice(cursor, cursor + BATCH_SIZE);
+  if (batch.length === 0) return [];
+
+  const numbered = batch
+    .map((r, idx) => `${idx + 1}. ${r.text.slice(0, 280)}`)
+    .join("\n");
+
+  try {
+    const raw = await haiku(
+      CLASSIFY_SYSTEM,
+      `Post: "${item.title}"\n\nResponses:\n${numbered}`,
+      batch.length * 12 + 60
+    );
+    const stances = parseStanceArray(raw);
+    return batch.map((r, i) => ({
+      wallet: r.wallet,
+      stance: stances[i] ?? "neutral",
+    }));
+  } catch {
+    return batch.map((r) => ({ wallet: r.wallet, stance: "neutral" as Stance }));
+  }
+}
+
+/** How many batches a post still needs. Used for progress reporting. */
+export function batchesRemaining(item: AlignmentQueueItem): number {
+  return Math.ceil(Math.max(0, item.responses.length - item.cursor) / BATCH_SIZE);
+}
+
+// ─── Computation ───────────────────────────────────────────────────
+
+/** Build the full alignment result from classified posts. */
 export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult {
-  // Flatten all stance records
   const stances: StanceRecord[] = [];
   const posts: PostMeta[] = [];
 
@@ -383,16 +382,19 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
     }
   }
 
-  // Index: wallet → postId → stance
+  // Post keys are namespaced by source — forum/12 and labs/12 are different posts.
+  const postKey = (source: string, id: string) => `${source}/${id}`;
+
+  // wallet → postKey → stance
   const walletStances = new Map<string, Map<string, Stance>>();
   for (const s of stances) {
     if (!walletStances.has(s.wallet)) walletStances.set(s.wallet, new Map());
-    walletStances.get(s.wallet)!.set(s.postId, s.stance);
+    walletStances.get(s.wallet)!.set(postKey(s.source, s.postId), s.stance);
   }
 
   const wallets = [...walletStances.keys()];
 
-  // ── Pairwise agreement matrix ──
+  // ── Pairwise agreement ──
   const pairs: PairScore[] = [];
   for (let i = 0; i < wallets.length; i++) {
     const aMap = walletStances.get(wallets[i])!;
@@ -400,15 +402,16 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
       const bMap = walletStances.get(wallets[j])!;
       let agreed = 0;
       let total = 0;
-      for (const [postId, aStance] of aMap) {
-        const bStance = bMap.get(postId);
-        if (bStance !== undefined) {
+      // Iterate the smaller map — with 100+ wallets this matters.
+      const [small, large] = aMap.size <= bMap.size ? [aMap, bMap] : [bMap, aMap];
+      for (const [key, stance] of small) {
+        const other = large.get(key);
+        if (other !== undefined) {
           total++;
-          if (aStance === bStance) agreed++;
+          if (stance === other) agreed++;
         }
       }
       if (total >= 3) {
-        // Only include pairs with enough shared posts to be meaningful
         pairs.push({
           a: wallets[i],
           b: wallets[j],
@@ -420,9 +423,9 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
     }
   }
 
-  // ── Credibility (win rate vs aggregate) ──
-  const postAggStance = new Map<string, Stance>();
-  for (const p of posts) postAggStance.set(p.id, p.aggregatedStance);
+  // ── Credibility ──
+  const aggByPost = new Map<string, Stance>();
+  for (const p of posts) aggByPost.set(postKey(p.source, p.id), p.aggregatedStance);
 
   const credibility: CredibilityRecord[] = wallets.map((wallet) => {
     const wMap = walletStances.get(wallet)!;
@@ -433,26 +436,28 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
       disapprove: 0,
       neutral: 0,
     };
-    for (const [postId, stance] of wMap) {
+    for (const [key, stance] of wMap) {
       breakdown[stance]++;
-      const aggStance = postAggStance.get(postId);
-      if (aggStance === stance) wins++;
+      if (aggByPost.get(key) === stance) wins++;
     }
-    const posts = wMap.size;
+    const postCount = wMap.size;
     return {
       wallet,
-      posts,
+      posts: postCount,
       wins,
-      winRate: posts > 0 ? Math.round((wins / posts) * 1000) / 1000 : 0,
+      winRate: postCount > 0 ? Math.round((wins / postCount) * 1000) / 1000 : 0,
       breakdown,
     };
   });
 
-  // ── Faction detection (connected components at >70% agreement) ──
+  // ── Factions ──
   const FACTION_THRESHOLD = 0.7;
-  const MIN_OVERLAP = 5; // need at least 5 shared posts to consider a pair
+  const MIN_OVERLAP = 5;
 
-  // Build adjacency list
+  const pairIndex = new Map<string, PairScore>();
+  const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  for (const p of pairs) pairIndex.set(pairKey(p.a, p.b), p);
+
   const adj = new Map<string, Set<string>>();
   for (const w of wallets) adj.set(w, new Set());
   for (const p of pairs) {
@@ -462,15 +467,14 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
     }
   }
 
-  // BFS to find connected components
+  const credByWallet = new Map(credibility.map((c) => [c.wallet, c]));
   const visited = new Set<string>();
   const factions: Faction[] = [];
   let factionId = 0;
 
   for (const wallet of wallets) {
     if (visited.has(wallet)) continue;
-    const neighbors = adj.get(wallet)!;
-    if (neighbors.size === 0) continue; // solo wallets aren't factions
+    if (adj.get(wallet)!.size === 0) continue;
 
     const component: string[] = [];
     const queue = [wallet];
@@ -479,50 +483,38 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
       if (visited.has(w)) continue;
       visited.add(w);
       component.push(w);
-      for (const n of adj.get(w)!) {
-        if (!visited.has(n)) queue.push(n);
-      }
+      for (const n of adj.get(w)!) if (!visited.has(n)) queue.push(n);
     }
 
-    if (component.length < 2) continue; // need at least 2 to be a faction
+    if (component.length < 2) continue;
 
-    // Compute faction-level metrics
-    const memberCred = component.map(
-      (w) => credibility.find((c) => c.wallet === w)!
-    );
     const avgWinRate =
-      memberCred.reduce((sum, c) => sum + c.winRate, 0) / memberCred.length;
+      component.reduce((sum, w) => sum + (credByWallet.get(w)?.winRate ?? 0), 0) /
+      component.length;
 
-    // Avg pairwise agreement within faction
     let cohesionSum = 0;
     let cohesionCount = 0;
     for (let i = 0; i < component.length; i++) {
       for (let j = i + 1; j < component.length; j++) {
-        const pair = pairs.find(
-          (p) =>
-            (p.a === component[i] && p.b === component[j]) ||
-            (p.a === component[j] && p.b === component[i])
-        );
+        const pair = pairIndex.get(pairKey(component[i], component[j]));
         if (pair) {
           cohesionSum += pair.rate;
           cohesionCount++;
         }
       }
     }
-    const cohesion =
-      cohesionCount > 0
-        ? Math.round((cohesionSum / cohesionCount) * 1000) / 1000
-        : 0;
 
     factions.push({
       id: factionId++,
       members: component,
       avgWinRate: Math.round(avgWinRate * 1000) / 1000,
-      cohesion,
+      cohesion:
+        cohesionCount > 0
+          ? Math.round((cohesionSum / cohesionCount) * 1000) / 1000
+          : 0,
     });
   }
 
-  // Sort factions by size descending, then by win rate
   factions.sort(
     (a, b) => b.members.length - a.members.length || b.avgWinRate - a.avgWinRate
   );
