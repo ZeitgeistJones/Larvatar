@@ -204,49 +204,87 @@ async function fetchWithConcurrency<T, R>(
   return results;
 }
 
+/** Safely extract a string title from a field that might be an object. */
+function safeTitle(val: unknown): string {
+  if (typeof val === "string") return val.slice(0, 200);
+  if (val && typeof val === "object") {
+    // Labs titles can be objects — try common string subfields
+    const obj = val as Record<string, unknown>;
+    const str = obj.en || obj.text || obj.title || obj.name || obj.idea || "";
+    if (typeof str === "string") return str.slice(0, 200);
+    // Last resort: first string value in the object
+    for (const v of Object.values(obj)) {
+      if (typeof v === "string" && v.length > 5) return v.slice(0, 200);
+    }
+  }
+  return "";
+}
+
 /**
  * Fetch all forum + labs posts and build the classification queue.
  * No LLM calls here — this is the fast phase.
+ *
+ * Metadata (id, title, aggregated_opinion) comes from the LIST response.
+ * Detail is only used for larvaResponses.
  */
 export async function collectPostsIntoQueue(): Promise<number> {
   const queue: AlignmentQueueItem[] = [];
 
-  const push = (detail: any, source: "forum" | "labs") => {
-    const responses = extractResponses(detail);
-    if (responses.length < 3) return; // too few voices to say anything about agreement
-    queue.push({
-      postId: String(detail.id ?? detail._id ?? ""),
-      source,
-      title: String(
-        detail.title || detail.subject || detail.question || detail.name || detail.idea || ""
-      ).slice(0, 200),
-      aggregatedOpinion: String(
-        detail.aggregated_opinion || detail.aggregatedOpinion || ""
-      ).slice(0, 1200),
-      responses,
-      cursor: 0,
-      partial: [],
-      aggregatedStance: null,
-    });
-  };
-
+  // Forum posts
   const posts = await getJson(`${BASE}/forum`);
   if (Array.isArray(posts)) {
     const details = await fetchWithConcurrency(posts, 8, (p: any) =>
       p?.id != null ? getJson(`${BASE}/forum/${p.id}`) : Promise.resolve(null)
     );
-    for (const detail of details) if (detail) push(detail, "forum");
+    for (let i = 0; i < posts.length; i++) {
+      const p = posts[i]; // LIST item — has id, title, aggregated_opinion_short
+      const detail = details[i]; // DETAIL — only used for larvaResponses
+      if (!detail) continue;
+      const responses = extractResponses(detail);
+      if (responses.length < 3) continue;
+      queue.push({
+        postId: String(p.id ?? ""),
+        source: "forum",
+        title: safeTitle(p.title) || safeTitle(p.subject) || safeTitle(p.question) || "",
+        aggregatedOpinion: String(
+          p.aggregated_opinion_short || p.aggregated_opinion || ""
+        ).slice(0, 1200),
+        responses,
+        cursor: 0,
+        partial: [],
+        aggregatedStance: null,
+      });
+    }
   }
 
+  // Labs ideas
   const ideas = await getJson(`${BASE}/labs`);
   if (Array.isArray(ideas)) {
-    const details = await fetchWithConcurrency(ideas, 8, (i: any) =>
-      i?.id != null ? getJson(`${BASE}/labs/${i.id}`) : Promise.resolve(null)
+    const details = await fetchWithConcurrency(ideas, 8, (idea: any) =>
+      idea?.id != null ? getJson(`${BASE}/labs/${idea.id}`) : Promise.resolve(null)
     );
-    for (const detail of details) if (detail) push(detail, "labs");
+    for (let i = 0; i < ideas.length; i++) {
+      const idea = ideas[i]; // LIST item
+      const detail = details[i]; // DETAIL — only used for larvaResponses
+      if (!detail) continue;
+      const responses = extractResponses(detail);
+      if (responses.length < 3) continue;
+      queue.push({
+        postId: String(idea.id ?? ""),
+        source: "labs",
+        title: safeTitle(idea.title) || safeTitle(idea.name) || safeTitle(idea.idea) || "",
+        aggregatedOpinion: String(
+          idea.aggregated_opinion_short || idea.aggregated_opinion || ""
+        ).slice(0, 1200),
+        responses,
+        cursor: 0,
+        partial: [],
+        aggregatedStance: null,
+      });
+    }
   }
 
-  // Smallest posts first, so early visits clear many posts and progress is visible.
+  // Smallest posts first so early visits clear many and progress is visible
   queue.sort((a, b) => a.responses.length - b.responses.length);
 
   await setAlignQueue(queue);
