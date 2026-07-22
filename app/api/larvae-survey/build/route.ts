@@ -8,8 +8,8 @@
 // First visit: queues every question that doesn't have a board yet.
 // Every visit after: builds boards until the time budget runs out.
 //
-// One board = ~21 Haiku calls (20 surveys + 1 clustering), so expect roughly
-// one or two boards per visit.
+// One board = ~101 Haiku calls (100 surveys + 1 clustering), so expect roughly
+// one board per visit (sometimes none if the budget runs out mid-survey).
 //
 // &reset=true wipes all boards and rebuilds from scratch.
 // &only=q03 rebuilds a single question (useful when one board comes out flat).
@@ -30,7 +30,7 @@ import {
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const TIME_BUDGET_MS = 45_000;
+const TIME_BUDGET_MS = 50_000;
 
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");

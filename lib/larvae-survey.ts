@@ -316,7 +316,7 @@ async function clusterResponses(
 
 // ─── Board building ────────────────────────────────────────────────
 
-const RESPONDENT_COUNT = 20;
+const RESPONDENT_COUNT = 100;
 const MAX_BOARD_ANSWERS = 8;
 
 /**
@@ -331,7 +331,7 @@ export async function buildBoard(questionId: string): Promise<SurveyBoard | null
   const respondents = pickRespondents(index, questionId, RESPONDENT_COUNT);
   if (respondents.length === 0) return null;
 
-  const surveyed = await mapWithConcurrency(respondents, 5, (r) =>
+  const surveyed = await mapWithConcurrency(respondents, 8, (r) =>
     surveyOne(r.wallet, q.text)
   );
   const responses = surveyed.filter(Boolean) as SurveyResponse[];
