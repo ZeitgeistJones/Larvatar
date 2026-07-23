@@ -1,13 +1,7 @@
 // lib/survey-sfx.ts
 // Soft Family Feud–style cues for the survey game.
-// Web Audio only — no asset files, no harsh buzzers. Meanings stay clear:
-//   hit / flip  → bright soft ding
-//   strike      → muted low thud + brief dissonance
-//   tick        → quiet timer pulse (last 5s)
-//   reveal      → short ascending cascade
-//   fast money  → brighter two-note sting
-//   bonus       → warm major arpeggio
-//   fanfare     → soft game-start / results chime
+// Web Audio stings + optional speechSynthesis announcer + quiet bed music.
+// No copyrighted Family Feud samples.
 
 "use client";
 
@@ -27,6 +21,12 @@ type Cue =
 let ctx: AudioContext | null = null;
 let muted = false;
 
+/** Master gain for bed so we can duck under announcer. */
+let bedGain: GainNode | null = null;
+let bedNodes: AudioNode[] = [];
+let bedTimer: ReturnType<typeof setInterval> | null = null;
+let bedRunning = false;
+
 function getCtx(): AudioContext | null {
   if (typeof window === "undefined") return null;
   if (!ctx) {
@@ -43,12 +43,22 @@ function getCtx(): AudioContext | null {
 /** Call from a user gesture (Play / mute toggle) so browsers allow audio. */
 export function unlockSurveyAudio() {
   getCtx();
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    // Warm voices list on some browsers
+    window.speechSynthesis.getVoices();
+  }
 }
 
 export function setSurveyMuted(next: boolean) {
   muted = next;
   if (typeof window !== "undefined") {
     localStorage.setItem("larvae-survey-muted", next ? "1" : "0");
+  }
+  if (next) {
+    stopBedMusic();
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
   }
 }
 
@@ -100,7 +110,6 @@ function softFilter(ac: AudioContext) {
 function playHit(ac: AudioContext) {
   const t = ac.currentTime;
   const out = softFilter(ac);
-  // Soft “ding” — C6 → E6, short and clear
   tone(ac, 1046.5, t, 0.22, "triangle", 0.14, out);
   tone(ac, 1318.5, t + 0.05, 0.28, "sine", 0.11, out);
 }
@@ -108,7 +117,6 @@ function playHit(ac: AudioContext) {
 function playStrike(ac: AudioContext, out = false) {
   const t = ac.currentTime;
   const dest = softFilter(ac);
-  // Muted thud + mild dissonance — reads as “wrong” without a game-show buzzer
   tone(ac, out ? 110 : 130, t, 0.28, "triangle", 0.2, dest);
   tone(ac, out ? 116 : 138, t, 0.22, "sine", 0.1, dest);
   if (out) {
@@ -214,4 +222,104 @@ export function playSurveyCue(cue: Cue) {
   } catch {
     // Audio must never break gameplay
   }
+}
+
+/* ─── Announcer (browser TTS) ─────────────────────────────────────── */
+
+function pickVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  const prefer = voices.find(
+    (v) =>
+      /en(-|_)?(US|GB|AU)?/i.test(v.lang) &&
+      /male|daniel|david|alex|fred|google us english|microsoft (david|mark|guy)/i.test(v.name)
+  );
+  return prefer || voices.find((v) => v.lang.startsWith("en")) || voices[0];
+}
+
+function duckBed(duck: boolean) {
+  if (!bedGain || !ctx) return;
+  const t = ctx.currentTime;
+  bedGain.gain.cancelScheduledValues(t);
+  bedGain.gain.linearRampToValueAtTime(duck ? 0.02 : 0.055, t + 0.12);
+}
+
+/** Short game-show line. No-op when muted. */
+export function announce(line: string) {
+  if (muted || typeof window === "undefined" || !window.speechSynthesis) return;
+  try {
+    window.speechSynthesis.cancel();
+    duckBed(true);
+    const u = new SpeechSynthesisUtterance(line);
+    u.rate = 1.02;
+    u.pitch = 0.92;
+    u.volume = 0.9;
+    const voice = pickVoice();
+    if (voice) u.voice = voice;
+    u.onend = () => duckBed(false);
+    u.onerror = () => duckBed(false);
+    window.speechSynthesis.speak(u);
+  } catch {
+    duckBed(false);
+  }
+}
+
+/* ─── Soft bed music loop ─────────────────────────────────────────── */
+
+function playBedBar(ac: AudioContext, dest: AudioNode) {
+  const t = ac.currentTime + 0.02;
+  // Warm C major-ish ostinato — quiet, nostalgic without copying any theme
+  const pattern: [number, number, number][] = [
+    [261.63, 0, 0.35],
+    [329.63, 0.35, 0.3],
+    [392.0, 0.7, 0.35],
+    [329.63, 1.1, 0.3],
+    [293.66, 1.5, 0.4],
+    [349.23, 2.0, 0.35],
+    [392.0, 2.4, 0.45],
+  ];
+  for (const [freq, offset, dur] of pattern) {
+    tone(ac, freq, t + offset, dur, "triangle", 0.045, dest);
+    tone(ac, freq * 0.5, t + offset, dur * 1.1, "sine", 0.025, dest);
+  }
+}
+
+export function startBedMusic() {
+  if (muted) return;
+  const ac = getCtx();
+  if (!ac || bedRunning) return;
+  bedRunning = true;
+
+  bedGain = ac.createGain();
+  bedGain.gain.value = 0.055;
+  const filter = ac.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = 1800;
+  bedGain.connect(filter);
+  filter.connect(ac.destination);
+  bedNodes = [bedGain, filter];
+
+  playBedBar(ac, bedGain);
+  bedTimer = setInterval(() => {
+    if (!bedRunning || muted || !bedGain) return;
+    playBedBar(ac, bedGain);
+  }, 2900);
+}
+
+export function stopBedMusic() {
+  bedRunning = false;
+  if (bedTimer) {
+    clearInterval(bedTimer);
+    bedTimer = null;
+  }
+  for (const n of bedNodes) {
+    try {
+      n.disconnect();
+    } catch {
+      /* ignore */
+    }
+  }
+  bedNodes = [];
+  bedGain = null;
 }

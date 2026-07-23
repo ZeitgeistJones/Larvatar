@@ -7,9 +7,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import {
+  announce,
   getSurveyMuted,
   playSurveyCue,
   setSurveyMuted,
+  startBedMusic,
+  stopBedMusic,
   unlockSurveyAudio,
 } from "@/lib/survey-sfx";
 
@@ -48,6 +51,7 @@ type Phase =
   | "reveal"
   | "fastmoney"
   | "fm-reveal"
+  | "fm-locked"
   | "results"
   | "leaderboard-submit";
 
@@ -66,6 +70,7 @@ const MAX_STRIKES = 3;
 const ANSWER_TIMER = 20; // seconds per guess attempt
 const FM_QUESTIONS = 5;
 const FM_TIMER = 15; // seconds per FM question
+const FM_UNLOCK = 200; // need this many from the 3 main rounds to play Fast Money
 const FM_BONUS_THRESHOLD = 100;
 const FM_BONUS = 500;
 
@@ -102,6 +107,10 @@ export default function LarvaeSurveyPage() {
   const [strikes, setStrikes] = useState(0);
   const [roundScore, setRoundScore] = useState(0);
   const [sessionScore, setSessionScore] = useState(0);
+  /** Full board answers (for end-of-round one-by-one flips). */
+  const [boardAnswers, setBoardAnswers] = useState<Answer[]>([]);
+  /** Ranks still hidden after the round ends — flipped with "Reveal next". */
+  const [pendingReveal, setPendingReveal] = useState<number[]>([]);
 
   /* Fast Money */
   const [fmScore, setFmScore] = useState(0);
@@ -165,6 +174,8 @@ export default function LarvaeSurveyPage() {
     setRespondents(d.respondents);
     setSlots(d.slots || []);
     setRevealed([]);
+    setBoardAnswers([]);
+    setPendingReveal([]);
     setStrikes(0);
     setRoundScore(0);
     setGuess("");
@@ -174,14 +185,13 @@ export default function LarvaeSurveyPage() {
     return d;
   }, []);
 
-  const revealBoard = useCallback(async (id: string) => {
+  const fetchFullBoard = useCallback(async (id: string) => {
     const d = await fetch("/api/larvae-survey", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id }),
     }).then((r) => r.json());
-    if (d.answers) setRevealed(d.answers);
-    return d.answers as Answer[] | undefined;
+    return (d.answers || []) as Answer[];
   }, []);
 
   /* ─── Timer ─────────────────────────────────────────────────────── */
@@ -214,16 +224,42 @@ export default function LarvaeSurveyPage() {
     endingRef.current = true;
     setChecking(true);
     try {
-      await revealBoard(id);
+      const answers = await fetchFullBoard(id);
+      const known = new Set(revealedRef.current.map((r) => r.rank));
+      const pending = answers
+        .filter((a) => !known.has(a.rank))
+        .sort((a, b) => a.rank - b.rank)
+        .map((a) => a.rank);
+      setBoardAnswers(answers);
+      setPendingReveal(pending);
+      // Keep player's hits on the board; flip the rest one-by-one.
       setSessionScore((s) => s + roundScore);
-      playSurveyCue("reveal");
+      if (pending.length === 0) playSurveyCue("reveal");
+      else announce("Survey says…");
       setPhase("reveal");
     } finally {
       setChecking(false);
     }
-  // roundScore is read inside but we want the latest via closure
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealBoard]);
+  }, [fetchFullBoard]);
+
+  function stepBoardReveal() {
+    if (pendingReveal.length === 0) return;
+    const [rank, ...rest] = pendingReveal;
+    const answer = boardAnswers.find((a) => a.rank === rank);
+    if (answer) {
+      setRevealed((prev) => {
+        if (prev.some((p) => p.rank === rank)) return prev;
+        return [...prev, answer];
+      });
+      setLastFlipped(rank);
+      playSurveyCue("hit");
+    }
+    setPendingReveal(rest);
+    if (rest.length === 0) {
+      setTimeout(() => playSurveyCue("reveal"), 200);
+    }
+  }
 
   function handleStrike() {
     const next = strikes + 1;
@@ -231,6 +267,7 @@ export default function LarvaeSurveyPage() {
     setStrikeAnim(true);
     setFlash("miss");
     playSurveyCue(next >= MAX_STRIKES ? "strikeOut" : "strike");
+    announce(next >= MAX_STRIKES ? "Three strikes." : "Strike.");
     setTimeout(() => { setStrikeAnim(false); setFlash(null); }, 800);
     if (next >= MAX_STRIKES) {
       if (activeId) void finishMainRound(activeId);
@@ -270,6 +307,8 @@ export default function LarvaeSurveyPage() {
       await loadBoard(mains[0]);
       setSecondsLeft(ANSWER_TIMER);
       playSurveyCue("start");
+      startBedMusic();
+      announce("Let's play Larvae Survey!");
       setPhase("round");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load board");
@@ -338,13 +377,19 @@ export default function LarvaeSurveyPage() {
       }
       return;
     }
-    // Start Fast Money
+    // Final round done — Fast Money only if they cleared the unlock score.
+    if (sessionScore < FM_UNLOCK) {
+      announce("Not enough points for Fast Money.");
+      setPhase("fm-locked");
+      return;
+    }
     setChecking(true);
     try {
       await loadBoard(fmIds[0]);
       setFmIndex(0);
       setSecondsLeft(FM_TIMER);
       playSurveyCue("fastMoney");
+      announce("Fast Money!");
       setPhase("fastmoney");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load board");
@@ -462,19 +507,30 @@ export default function LarvaeSurveyPage() {
       setLeaderboard(d.leaderboard || []);
       setSubmittedRank(d.rank);
       playSurveyCue("results");
+      announce("That's the game!");
       setPhase("results");
     } catch {
       playSurveyCue("results");
+      announce("That's the game!");
       setPhase("results");
     }
   }
 
   function skipLeaderboard() {
     playSurveyCue("results");
+    announce("That's the game!");
     setPhase("results");
   }
 
+  function continueFromFmLocked() {
+    setPhase("leaderboard-submit");
+  }
+
   function backToTitle() {
+    stopBedMusic();
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
     setPhase("title");
     setActiveId(null);
     setRevealed([]);
@@ -487,7 +543,12 @@ export default function LarvaeSurveyPage() {
     const next = !soundMuted;
     setSoundMuted(next);
     setSurveyMuted(next);
-    if (!next) playSurveyCue("hit");
+    if (!next) {
+      playSurveyCue("hit");
+      if (phase !== "title") startBedMusic();
+    } else {
+      stopBedMusic();
+    }
   }
 
   /* ─── Derived ───────────────────────────────────────────────────── */
@@ -537,8 +598,9 @@ export default function LarvaeSurveyPage() {
           </div>
           {phase === "title" && (
             <p className="mt-2 max-w-xl text-sm opacity-75">
-              We surveyed the hive. Guess what they said. Three strikes ends the round,
-              then Fast Money — five questions, one guess each. Hit 100+ in Fast Money for a 500-point bonus.
+              We surveyed the hive. Guess what they said. Three strikes ends the round.
+              Score {FM_UNLOCK}+ across three rounds to unlock Fast Money — five questions,
+              one guess each. Hit 100+ in Fast Money for a 500-point bonus.
             </p>
           )}
         </header>
@@ -558,7 +620,7 @@ export default function LarvaeSurveyPage() {
                 <>
                   <div className="mb-5 space-y-2 font-mono text-[10px] uppercase tracking-widest opacity-55">
                     <p>{MAIN_ROUNDS} survey rounds · {ANSWER_TIMER}s per guess · 3 strikes</p>
-                    <p>Fast Money · {FM_QUESTIONS} questions · {FM_TIMER}s each</p>
+                    <p>Fast Money unlock · {FM_UNLOCK}+ from rounds · {FM_QUESTIONS} Q · {FM_TIMER}s each</p>
                     <p>{boards.length} boards ready</p>
                   </div>
                   {error && <p className="mb-3 text-sm" style={{ color: CORAL }}>{error}</p>}
@@ -737,39 +799,133 @@ export default function LarvaeSurveyPage() {
           </>
         )}
 
-        {/* ════════════════ ROUND REVEAL ════════════════ */}
+        {/* ════════════════ ROUND REVEAL (one-by-one like Family Feud) ════════════════ */}
         {phase === "reveal" && (
-          <section className="rounded-xl border p-5" style={{ borderColor: `${INK}22`, background: "#fff" }}>
-            <p className="font-mono text-xs uppercase tracking-widest opacity-60">
-              Round {roundIndex + 1} — survey says
-            </p>
-            <p className="mt-1 text-lg font-bold">{question}</p>
-            <p className="mt-2 text-2xl font-bold" style={{ color: GOLD }}>
-              +{roundScore} this round
-            </p>
-            <p className="font-mono text-xs uppercase tracking-widest opacity-50">
-              session total {sessionScore}
-            </p>
-
-            <div className="mt-4 space-y-3 border-t pt-4" style={{ borderColor: `${INK}15` }}>
-              {revealed.slice().sort((a, b) => a.rank - b.rank).map((a) => (
-                <div key={a.rank}>
-                  <p className="text-sm font-bold">
-                    {a.rank}. {a.label}{" "}
-                    <span className="font-mono text-xs font-normal opacity-50">{a.points} pts · ×{a.count}</span>
-                  </p>
-                  <p className="text-xs opacity-60">{a.voices.join(" · ")}</p>
+          <>
+            <section
+              className="mb-5 rounded-xl border p-5"
+              style={{ borderColor: `${INK}22`, background: "#fff" }}
+            >
+              <p className="font-mono text-xs uppercase tracking-widest opacity-60">
+                Round {roundIndex + 1} — survey says
+              </p>
+              <p className="mt-1 text-xl font-bold">{question}</p>
+              <div className="mt-3 flex items-center justify-between">
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">round</p>
+                  <p className="text-2xl font-bold" style={{ color: GOLD }}>+{roundScore}</p>
                 </div>
-              ))}
+                <div className="text-right">
+                  <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">total</p>
+                  <p className="text-2xl font-bold">{sessionScore}</p>
+                </div>
+              </div>
+            </section>
+
+            <div className="mb-5 space-y-2">
+              {slots.map((slot) => {
+                const answer = revealedByRank.get(slot.rank);
+                const justFlipped = lastFlipped === slot.rank;
+                return (
+                  <div
+                    key={slot.rank}
+                    className="flex items-center gap-3 rounded-lg border px-4 py-3"
+                    style={{
+                      borderColor: answer ? `${GOLD}66` : `${INK}18`,
+                      background: answer ? "#fff" : `${INK}08`,
+                      boxShadow: justFlipped ? `0 0 0 2px ${GOLD}55` : "none",
+                      transition: "all 200ms ease",
+                    }}
+                  >
+                    <span
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-xs font-bold"
+                      style={{
+                        background: answer ? GOLD : `${INK}18`,
+                        color: answer ? "#fff" : `${INK}66`,
+                      }}
+                    >
+                      {slot.rank}
+                    </span>
+                    {answer ? (
+                      <>
+                        <span className="min-w-0 flex-1 font-bold tracking-wide">{answer.label}</span>
+                        <span className="shrink-0 font-mono text-sm font-bold" style={{ color: CORAL }}>
+                          {answer.points}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex-1 font-mono text-sm tracking-[0.3em] opacity-25">▒▒▒▒▒▒▒▒</span>
+                        <span className="shrink-0 font-mono text-sm opacity-25">?</span>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
+            {pendingReveal.length === 0 && boardAnswers.length > 0 && (
+              <div className="mb-5 space-y-3 rounded-xl border p-4" style={{ borderColor: `${INK}15`, background: "#fff" }}>
+                <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">voices</p>
+                {boardAnswers
+                  .slice()
+                  .sort((a, b) => a.rank - b.rank)
+                  .map((a) => (
+                    <div key={a.rank}>
+                      <p className="text-sm font-bold">
+                        {a.rank}. {a.label}{" "}
+                        <span className="font-mono text-xs font-normal opacity-50">
+                          {a.points} pts · ×{a.count}
+                        </span>
+                      </p>
+                      <p className="text-xs opacity-60">{a.voices.join(" · ")}</p>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {pendingReveal.length > 0 ? (
+              <button
+                onClick={stepBoardReveal}
+                className="w-full rounded-lg px-5 py-3 text-sm font-semibold text-white"
+                style={{ background: GOLD }}
+              >
+                Reveal #{pendingReveal[0]}
+              </button>
+            ) : (
+              <button
+                onClick={advanceAfterReveal}
+                disabled={checking}
+                className="w-full rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
+                style={{ background: CORAL }}
+              >
+                {checking
+                  ? "…"
+                  : roundIndex + 1 < MAIN_ROUNDS
+                    ? `Next: Round ${roundIndex + 2}`
+                    : sessionScore >= FM_UNLOCK
+                      ? "Fast Money →"
+                      : "Continue →"}
+              </button>
+            )}
+          </>
+        )}
+
+        {/* ════════════════ FM LOCKED ════════════════ */}
+        {phase === "fm-locked" && (
+          <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: "#fff" }}>
+            <p className="font-mono text-xs uppercase tracking-widest opacity-60">fast money locked</p>
+            <p className="mt-1 text-4xl font-bold" style={{ color: CORAL }}>{sessionScore}</p>
+            <p className="mt-2 text-sm opacity-75">
+              You needed <strong style={{ color: GOLD }}>{FM_UNLOCK}</strong> from the three survey
+              rounds to unlock Fast Money. So close — or not. Either way, the hive remembers.
+            </p>
             <button
-              onClick={advanceAfterReveal}
-              disabled={checking}
-              className="mt-5 w-full rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              onClick={continueFromFmLocked}
+              className="mt-5 w-full rounded-lg px-5 py-3 text-sm font-semibold text-white"
               style={{ background: CORAL }}
             >
-              {checking ? "…" : roundIndex + 1 < MAIN_ROUNDS ? `Next: Round ${roundIndex + 2}` : "Fast Money →"}
+              Continue to results →
             </button>
           </section>
         )}
