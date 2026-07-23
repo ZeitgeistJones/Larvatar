@@ -25,6 +25,8 @@ type Stance = "approve" | "conditional" | "disapprove" | "neutral";
 
 type Author = {
   wallet: string;
+  /** Specimen name, when this author holds a larva. Null otherwise. */
+  name: string | null;
   posts: number;
   outcomes: Record<Stance, number>;
   approvalRate: number;
@@ -42,6 +44,13 @@ type Payload = {
 };
 
 const short = (w: string) => `${w.slice(0, 6)}…${w.slice(-4)}`;
+
+/**
+ * Authors are wallets; some hold a larva and some don't. Show the specimen
+ * name where one exists so this page reads like the rest of the site, and
+ * fall back to a shortened wallet rather than leaving a gap.
+ */
+const label = (a: { name: string | null; wallet: string }) => a.name || short(a.wallet);
 
 export default function ReceptionPage() {
   const { colors } = useTheme();
@@ -180,8 +189,15 @@ export default function ReceptionPage() {
                     const above = a.approvalRate >= data.meanApprovalRate;
                     return (
                       <div key={a.wallet} className="flex items-center gap-3">
-                        <span className="w-28 shrink-0 font-mono text-[10px] opacity-55">
-                          {short(a.wallet)}
+                        <span className="w-32 shrink-0 truncate">
+                          <span className="block truncate text-xs font-semibold">
+                            {label(a)}
+                          </span>
+                          {a.name && (
+                            <span className="block font-mono text-[9px] opacity-40">
+                              {short(a.wallet)}
+                            </span>
+                          )}
                         </span>
                         <span className="w-10 shrink-0 font-mono text-[10px] uppercase tracking-widest opacity-40">
                           {a.posts}p
@@ -236,8 +252,13 @@ export default function ReceptionPage() {
                   {qualifying.map((a) => (
                     <div key={a.wallet}>
                       <div className="mb-1 flex items-baseline justify-between">
-                        <span className="font-mono text-[10px] opacity-55">
-                          {short(a.wallet)}
+                        <span className="min-w-0 truncate">
+                          <span className="text-xs font-semibold">{label(a)}</span>
+                          {a.name && (
+                            <span className="ml-2 font-mono text-[9px] opacity-40">
+                              {short(a.wallet)}
+                            </span>
+                          )}
                         </span>
                         <span className="font-mono text-[10px] uppercase tracking-widest opacity-45">
                           {a.posts} posts
@@ -287,7 +308,7 @@ export default function ReceptionPage() {
                       className="rounded-md px-2 py-1 font-mono text-[10px] opacity-55"
                       style={{ background: `${INK}0d` }}
                     >
-                      {short(a.wallet)} · {a.posts}p
+                      {label(a)} · {a.posts}p
                     </span>
                   ))}
                 </div>

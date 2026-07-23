@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAlignResult } from "@/lib/alignment";
+import { getIndex, getProfile } from "@/lib/larvae";
 import {
   getAuthorMap,
   backfillAuthors,
@@ -57,6 +58,45 @@ export async function GET(req: NextRequest) {
 
   const report = computeReception(alignment, authors);
 
+  /* ── Resolve wallets to specimen names ──
+   *
+   * Every other page in the app shows names, so showing bare wallets here
+   * would be inconsistent. Authors and larvae are both looked up: an author
+   * may or may not hold a larva, so a missing profile falls back to a
+   * shortened wallet rather than an empty string.
+   */
+  const index = await getIndex();
+  const known = new Set(index.map((e) => e.wallet));
+
+  const needed = new Set<string>();
+  for (const a of report.authors) needed.add(a.wallet);
+  if (wantRelations) {
+    for (const r of report.relations) {
+      needed.add(r.larva);
+      needed.add(r.author);
+    }
+  }
+
+  // Batched so a large collection doesn't fire 100+ concurrent Redis reads.
+  const nameByWallet: Record<string, string> = {};
+  const wallets = [...needed];
+  const BATCH = 20;
+  for (let i = 0; i < wallets.length; i += BATCH) {
+    const slice = wallets.slice(i, i + BATCH);
+    const got = await Promise.all(
+      slice.map((w) => (known.has(w) ? getProfile(w) : Promise.resolve(null)))
+    );
+    slice.forEach((w, j) => {
+      const n = got[j]?.profile.name;
+      if (n) nameByWallet[w] = n;
+    });
+  }
+
+  const named = <T extends { wallet: string }>(x: T) => ({
+    ...x,
+    name: nameByWallet[x.wallet] || null,
+  });
+
   const body: Record<string, unknown> = {
     computedAt: alignment.computedAt,
     thresholds: {
@@ -69,14 +109,18 @@ export async function GET(req: NextRequest) {
       postsTotal: report.postsTotal,
     },
     meanApprovalRate: report.meanApprovalRate,
-    authors: report.authors,
+    authors: report.authors.map(named),
     relationCount: report.relations.length,
   };
 
   if (backfilled) body.backfilled = backfilled;
 
   if (wantRelations) {
-    body.relations = report.relations;
+    body.relations = report.relations.map((r) => ({
+      ...r,
+      larvaName: nameByWallet[r.larva] || null,
+      authorName: nameByWallet[r.author] || null,
+    }));
     body.note =
       "Deviation is relative to each larva's own overall approval rate, not to the swarm. A positive value means this larva approves this author more often than it approves anyone. It does not establish why.";
   }
