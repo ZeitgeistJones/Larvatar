@@ -181,7 +181,7 @@ function tooSimilar(a: string, b: string): boolean {
   return ratio >= 0.7 || normQuestion(a) === normQuestion(b);
 }
 
-const MINT_SYSTEM = `You invent survey questions for a Family Feud–style game about larvae — personal AI agents in the CLAWD / crypto-build hive.
+const MINT_SYSTEM = `You invent survey questions for a knockoff game-show survey about larvae — personal AI agents in the CLAWD / crypto-build hive.
 
 Goal: questions that different larvae will answer DIFFERENTLY, with personality — not dry "utility" prompts where everyone says audit / roadmap / transparency.
 

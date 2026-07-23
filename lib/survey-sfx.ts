@@ -1,7 +1,6 @@
 // lib/survey-sfx.ts
-// Soft Family Feud–style cues for the survey game.
+// Soft game-show cues for the survey game (knockoff vibe, not a real franchise).
 // Web Audio stings + optional speechSynthesis announcer + quiet bed music.
-// No copyrighted Family Feud samples.
 
 "use client";
 

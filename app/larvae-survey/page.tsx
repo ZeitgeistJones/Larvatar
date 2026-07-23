@@ -1,6 +1,6 @@
 // app/larvae-survey/page.tsx
-// Larvae Survey Game — TV-show style flow.
-// 3 rounds with strikes + per-answer timer → Fast Money → dramatic reveal → leaderboard.
+// Larvae Survey Game — TV-show style knockoff flow.
+// 3 rounds with strikes + per-answer timer → Swarm Rush → dramatic reveal → leaderboard.
 
 "use client";
 
@@ -63,9 +63,9 @@ type Phase =
 const MAIN_ROUNDS = 3;
 const MAX_STRIKES = 3;
 const ANSWER_TIMER = 20; // seconds per guess attempt
-const FM_QUESTIONS = 5;
-const FM_TIMER = 15; // seconds per FM question
-const FM_UNLOCK = 200; // need this many from the 3 main rounds to play Fast Money
+const FM_QUESTIONS = 5; // max Swarm Rush questions (uses however many boards remain)
+const FM_TIMER = 15;
+const FM_UNLOCK = 200; // points from main rounds to unlock Swarm Rush
 const FM_BONUS_THRESHOLD = 100;
 const FM_BONUS = 500;
 
@@ -233,7 +233,7 @@ export default function LarvaeSurveyPage() {
       // Keep player's hits on the board; flip the rest one-by-one.
       setSessionScore((s) => s + roundScore);
       if (pending.length === 0) playSurveyCue("reveal");
-      else announce("Survey says…");
+      else announce("Hive says…");
       setPhase("reveal");
     } finally {
       setChecking(false);
@@ -281,14 +281,14 @@ export default function LarvaeSurveyPage() {
   async function startGame() {
     unlockSurveyAudio();
     setError(null);
-    const need = MAIN_ROUNDS + FM_QUESTIONS;
-    if (boards.length < need) {
-      setError(`Need at least ${need} boards (have ${boards.length}). Run the survey build.`);
+    if (boards.length < MAIN_ROUNDS) {
+      setError(`Need at least ${MAIN_ROUNDS} boards (have ${boards.length}). Run the survey build.`);
       return;
     }
-    const picked = shuffle(boards).slice(0, need);
+    const picked = shuffle(boards);
     const mains = picked.slice(0, MAIN_ROUNDS).map((b) => b.id);
-    const fms = picked.slice(MAIN_ROUNDS).map((b) => b.id);
+    // Swarm Rush uses leftover boards (up to FM_QUESTIONS) — don't block Play for it.
+    const fms = picked.slice(MAIN_ROUNDS, MAIN_ROUNDS + FM_QUESTIONS).map((b) => b.id);
     setMainIds(mains);
     setFmIds(fms);
     setRoundIndex(0);
@@ -375,9 +375,14 @@ export default function LarvaeSurveyPage() {
       }
       return;
     }
-    // Final round done — Fast Money only if they cleared the unlock score.
+    // Final round done — Swarm Rush only if score + leftover boards allow it.
     if (sessionScore < FM_UNLOCK) {
-      announce("Not enough points for Fast Money.");
+      announce("Not enough points for Swarm Rush.");
+      setPhase("fm-locked");
+      return;
+    }
+    if (fmIds.length === 0) {
+      announce("Not enough boards for Swarm Rush.");
       setPhase("fm-locked");
       return;
     }
@@ -387,7 +392,7 @@ export default function LarvaeSurveyPage() {
       setFmIndex(0);
       setSecondsLeft(FM_TIMER);
       playSurveyCue("fastMoney");
-      announce("Fast Money!");
+      announce("Swarm Rush!");
       setPhase("fastmoney");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load board");
@@ -445,7 +450,7 @@ export default function LarvaeSurveyPage() {
     setFmScore((s) => s + points);
 
     const nextIdx = currentFm + 1;
-    if (nextIdx < FM_QUESTIONS) {
+    if (nextIdx < fmIdsRef.current.length) {
       try {
         await loadBoard(fmIdsRef.current[nextIdx]);
         setFmIndex(nextIdx);
@@ -457,7 +462,7 @@ export default function LarvaeSurveyPage() {
         setPhase("results");
       }
     } else {
-      // All FM questions done — go to dramatic reveal
+      // All Swarm Rush questions done — go to dramatic reveal
       setFmRevealIndex(-1);
       setPhase("fm-reveal");
     }
@@ -505,18 +510,18 @@ export default function LarvaeSurveyPage() {
       setLeaderboard(d.leaderboard || []);
       setSubmittedRank(d.rank);
       playSurveyCue("results");
-      announce("That's the game!");
+      announce("That's the hive!");
       setPhase("results");
     } catch {
       playSurveyCue("results");
-      announce("That's the game!");
+      announce("That's the hive!");
       setPhase("results");
     }
   }
 
   function skipLeaderboard() {
     playSurveyCue("results");
-    announce("That's the game!");
+    announce("That's the hive!");
     setPhase("results");
   }
 
@@ -552,8 +557,9 @@ export default function LarvaeSurveyPage() {
   /* ─── Derived ───────────────────────────────────────────────────── */
 
   const revealedByRank = new Map(revealed.map((a) => [a.rank, a]));
-  const canPlay = boards.length >= MAIN_ROUNDS + FM_QUESTIONS;
+  const canPlay = boards.length >= MAIN_ROUNDS;
   const fmRunningTotal = fmAnswers.slice(0, fmRevealIndex + 1).reduce((s, a) => s + a.points, 0);
+  const swarmRushCount = fmIds.length;
 
   /* ─── Render ────────────────────────────────────────────────────── */
 
@@ -597,8 +603,8 @@ export default function LarvaeSurveyPage() {
           {phase === "title" && (
             <p className="mt-2 max-w-xl text-sm opacity-75">
               We surveyed the hive. Guess what they said. Three strikes ends the round.
-              Score {FM_UNLOCK}+ across three rounds to unlock Fast Money — five questions,
-              one guess each. Hit 100+ in Fast Money for a 500-point bonus.
+              Score {FM_UNLOCK}+ across three rounds to unlock Swarm Rush — up to five lightning
+              questions. Hit 100+ in Swarm Rush for a 500-point bonus.
             </p>
           )}
         </header>
@@ -618,13 +624,20 @@ export default function LarvaeSurveyPage() {
                 <>
                   <div className="mb-5 space-y-2 font-mono text-[10px] uppercase tracking-widest opacity-55">
                     <p>{MAIN_ROUNDS} survey rounds · {ANSWER_TIMER}s per guess · 3 strikes</p>
-                    <p>Fast Money unlock · {FM_UNLOCK}+ from rounds · {FM_QUESTIONS} Q · {FM_TIMER}s each</p>
+                    <p>
+                      Swarm Rush unlock · {FM_UNLOCK}+ · up to {FM_QUESTIONS} Q · {FM_TIMER}s each
+                    </p>
                     <p>{boards.length} boards ready</p>
+                    {boards.length < MAIN_ROUNDS + FM_QUESTIONS && boards.length >= MAIN_ROUNDS && (
+                      <p className="normal-case tracking-normal opacity-80">
+                        Tip: build more boards for a full Swarm Rush ({MAIN_ROUNDS + FM_QUESTIONS} ideal).
+                      </p>
+                    )}
                   </div>
                   {error && <p className="mb-3 text-sm" style={{ color: CORAL }}>{error}</p>}
                   {!canPlay && (
                     <p className="mb-3 text-sm opacity-60">
-                      Need {MAIN_ROUNDS + FM_QUESTIONS} boards (have {boards.length}).
+                      Need {MAIN_ROUNDS} boards to play (have {boards.length}).
                     </p>
                   )}
                   <button
@@ -805,7 +818,7 @@ export default function LarvaeSurveyPage() {
               style={{ borderColor: `${INK}22`, background: CARD }}
             >
               <p className="font-mono text-xs uppercase tracking-widest opacity-60">
-                Round {roundIndex + 1} — survey says
+                Round {roundIndex + 1} — hive says
               </p>
               <p className="mt-1 text-xl font-bold">{question}</p>
               <div className="mt-3 flex items-center justify-between">
@@ -901,22 +914,31 @@ export default function LarvaeSurveyPage() {
                   ? "…"
                   : roundIndex + 1 < MAIN_ROUNDS
                     ? `Next: Round ${roundIndex + 2}`
-                    : sessionScore >= FM_UNLOCK
-                      ? "Fast Money →"
+                    : sessionScore >= FM_UNLOCK && swarmRushCount > 0
+                      ? "Swarm Rush →"
                       : "Continue →"}
               </button>
             )}
           </>
         )}
 
-        {/* ════════════════ FM LOCKED ════════════════ */}
+        {/* ════════════════ SWARM RUSH LOCKED ════════════════ */}
         {phase === "fm-locked" && (
           <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: CARD }}>
-            <p className="font-mono text-xs uppercase tracking-widest opacity-60">fast money locked</p>
+            <p className="font-mono text-xs uppercase tracking-widest opacity-60">swarm rush locked</p>
             <p className="mt-1 text-4xl font-bold" style={{ color: CORAL }}>{sessionScore}</p>
             <p className="mt-2 text-sm opacity-75">
-              You needed <strong style={{ color: GOLD }}>{FM_UNLOCK}</strong> from the three survey
-              rounds to unlock Fast Money. So close — or not. Either way, the hive remembers.
+              {sessionScore < FM_UNLOCK ? (
+                <>
+                  You needed <strong style={{ color: GOLD }}>{FM_UNLOCK}</strong> from the three survey
+                  rounds to unlock Swarm Rush. So close — or not. Either way, the hive remembers.
+                </>
+              ) : (
+                <>
+                  You scored enough, but there weren’t enough leftover boards for Swarm Rush.
+                  Build more survey boards, then try again.
+                </>
+              )}
             </p>
             <button
               onClick={continueFromFmLocked}
@@ -928,7 +950,7 @@ export default function LarvaeSurveyPage() {
           </section>
         )}
 
-        {/* ════════════════ FAST MONEY ════════════════ */}
+        {/* ════════════════ SWARM RUSH ════════════════ */}
         {phase === "fastmoney" && activeId && (
           <>
             <section
@@ -942,7 +964,7 @@ export default function LarvaeSurveyPage() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
-                    ⚡ Fast Money · {fmIndex + 1} of {FM_QUESTIONS}
+                    ⚡ Swarm Rush · {fmIndex + 1} of {swarmRushCount}
                   </p>
                   <p className="mt-1 text-xl font-bold">{question}</p>
                   <p className="mt-1 text-sm opacity-60">One guess. Go with your gut.</p>
@@ -986,7 +1008,7 @@ export default function LarvaeSurveyPage() {
         {phase === "fm-reveal" && (
           <section className="rounded-xl border p-5" style={{ borderColor: `${GOLD}44`, borderWidth: 2, background: CARD }}>
             <p className="font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
-              ⚡ Fast Money — reveal
+              ⚡ Swarm Rush — reveal
             </p>
             <p className="mt-1 text-3xl font-bold tabular-nums" style={{ color: GOLD }}>
               {fmRunningTotal}
@@ -1060,7 +1082,7 @@ export default function LarvaeSurveyPage() {
             <p className="mt-1 text-4xl font-bold" style={{ color: GOLD }}>{grandTotal}</p>
             <div className="mt-3 space-y-1 font-mono text-xs uppercase tracking-widest opacity-60">
               <p>Survey rounds · {sessionScore}</p>
-              <p>Fast Money · {fmScore}</p>
+              <p>Swarm Rush · {fmScore}</p>
               {fmBonus > 0 && <p>Bonus · {fmBonus}</p>}
             </div>
 
@@ -1107,7 +1129,7 @@ export default function LarvaeSurveyPage() {
             )}
             <div className="mt-3 space-y-1 font-mono text-xs uppercase tracking-widest opacity-60">
               <p>Survey rounds · {sessionScore}</p>
-              <p>Fast Money · {fmScore}</p>
+              <p>Swarm Rush · {fmScore}</p>
               {fmBonus > 0 && <p>Bonus · {fmBonus}</p>}
             </div>
 
