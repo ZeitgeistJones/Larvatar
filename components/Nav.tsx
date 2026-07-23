@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/larvae", label: "Specimens" },
   { href: "/map", label: "Map" },
   { href: "/credibility", label: "Track Record" },
+  { href: "/reception", label: "Reception" },
   { href: "/election", label: "Election" },
   { href: "/larvae-survey", label: "Survey Game" },
 ];
