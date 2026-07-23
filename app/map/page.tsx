@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
+import { useTheme } from "@/components/ThemeProvider";
 import type { LarvatarTraits } from "@/lib/avatar";
 
 type Breakdown = {
@@ -60,12 +61,6 @@ type Payload = {
   hive: Hive;
 };
 
-const INK = "#1e2a3a";
-const CORAL = "#e8604c";
-const SHEET = "#eef4f1";
-const GOLD = "#d4a017";
-const SEA = "#3d8b8b";
-
 // Minimum posts for a larva to be plotted — below this the rates are noise.
 const MIN_POSTS = 5;
 
@@ -74,6 +69,13 @@ const W = 760;
 const H = 520;
 
 export default function MapPage() {
+  const { colors } = useTheme();
+  const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD, sea: SEA } = colors;
+
+  function factionColor(id: number | null) {
+    return id === null ? INK : id === 0 ? CORAL : id === 1 ? SEA : GOLD;
+  }
+
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -158,7 +160,7 @@ export default function MapPage() {
     }
 
     return links;
-  }, [data, selected, showClusters, byWallet]);
+  }, [data, selected, showClusters, byWallet, INK, CORAL, SEA, GOLD]);
 
   const focusSet = useMemo(() => {
     if (!selected) return null as Set<string> | null;
@@ -240,7 +242,7 @@ export default function MapPage() {
             {/* ── Plot first — the visual is the hero ── */}
             <section
               className="mb-6 rounded-xl border p-4"
-              style={{ borderColor: `${INK}22`, background: "#fff" }}
+              style={{ borderColor: `${INK}22`, background: CARD }}
             >
               <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -466,7 +468,7 @@ export default function MapPage() {
                             ? INK
                             : l.faction !== null
                               ? factionColor(l.faction)
-                              : "#fff"
+                              : CARD
                         }
                         strokeWidth={isSel ? 2.5 : l.faction !== null ? 1.75 : 1}
                         opacity={selected ? (inFocus ? 0.95 : 0.12) : 0.88}
@@ -524,7 +526,7 @@ export default function MapPage() {
               {selected && (
                 <section
                   className="mb-6 rounded-xl border p-5"
-                  style={{ borderColor: `${INK}22`, background: "#fff" }}
+                  style={{ borderColor: `${INK}22`, background: CARD }}
                 >
                   <div className="flex items-start gap-4">
                     {selected.avatar && (
@@ -607,7 +609,7 @@ export default function MapPage() {
             {/* ── Hive summary ── */}
             <section
               className="mb-6 grid grid-cols-2 gap-4 rounded-xl border p-5 sm:grid-cols-4"
-              style={{ borderColor: `${INK}22`, background: "#fff" }}
+              style={{ borderColor: `${INK}22`, background: CARD }}
             >
               <Stat label="larvae" value={String(data.larvaeCount)} />
               <Stat label="posts analyzed" value={String(data.postCount)} />
@@ -624,7 +626,7 @@ export default function MapPage() {
             {/* ── The finding ── */}
             <section
               className="mb-6 rounded-xl border p-5"
-              style={{ borderColor: `${GOLD}55`, background: "#fff" }}
+              style={{ borderColor: `${GOLD}55`, background: CARD }}
             >
               <p className="font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
                 what the data says
@@ -644,7 +646,7 @@ export default function MapPage() {
             {data.factions.length > 0 && (
               <section
                 className="rounded-xl border p-5"
-                style={{ borderColor: `${INK}22`, background: "#fff" }}
+                style={{ borderColor: `${INK}22`, background: CARD }}
               >
                 <p className="font-mono text-xs uppercase tracking-widest opacity-60">
                   clusters
@@ -683,10 +685,6 @@ export default function MapPage() {
   );
 }
 
-function factionColor(id: number | null) {
-  return id === null ? INK : id === 0 ? CORAL : id === 1 ? SEA : GOLD;
-}
-
 /* ─── Small pieces ─────────────────────────────────────────────────── */
 
 function Stat({
@@ -715,9 +713,11 @@ function StanceBar({
   breakdown: Breakdown;
   total: number;
 }) {
+  const { colors } = useTheme();
+  const { ink: INK, coral: CORAL, gold: GOLD, green: GREEN } = colors;
   const t = total || 1;
   const seg = [
-    { key: "approve", n: breakdown.approve, color: "#2d8a56", label: "approve" },
+    { key: "approve", n: breakdown.approve, color: GREEN, label: "approve" },
     { key: "conditional", n: breakdown.conditional, color: GOLD, label: "conditional" },
     { key: "disapprove", n: breakdown.disapprove, color: CORAL, label: "disapprove" },
     { key: "neutral", n: breakdown.neutral, color: `${INK}44`, label: "neutral" },

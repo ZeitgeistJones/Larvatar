@@ -6,9 +6,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-const INK = "#1e2a3a";
-const CORAL = "#e8604c";
+import { useTheme } from "@/components/ThemeProvider";
 
 const LINKS = [
   { href: "/larvae", label: "Specimens" },
@@ -20,8 +18,11 @@ const LINKS = [
 
 export default function Nav() {
   const path = usePathname();
+  const { dark, toggle, colors } = useTheme();
+  const { ink, coral } = colors;
+
   return (
-    <nav className="mb-8 flex flex-wrap gap-1 border-b pb-3" style={{ borderColor: `${INK}15` }}>
+    <nav className="mb-8 flex flex-wrap items-center gap-1 border-b pb-3" style={{ borderColor: `${ink}15` }}>
       {LINKS.map((l) => {
         const active = path === l.href;
         return (
@@ -30,8 +31,8 @@ export default function Nav() {
             href={l.href}
             className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest transition-opacity"
             style={{
-              color: active ? CORAL : INK,
-              background: active ? `${CORAL}12` : "transparent",
+              color: active ? coral : ink,
+              background: active ? `${coral}12` : "transparent",
               opacity: active ? 1 : 0.55,
             }}
           >
@@ -39,6 +40,20 @@ export default function Nav() {
           </Link>
         );
       })}
+      <button
+        type="button"
+        onClick={toggle}
+        className="ml-auto rounded-md border px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest transition-opacity hover:opacity-100"
+        style={{
+          borderColor: `${ink}22`,
+          color: ink,
+          opacity: 0.65,
+          background: "transparent",
+        }}
+        aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+      >
+        {dark ? "Light" : "Dark"}
+      </button>
     </nav>
   );
 }

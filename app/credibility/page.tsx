@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
+import { useTheme } from "@/components/ThemeProvider";
 import type { LarvatarTraits } from "@/lib/avatar";
 
 type Breakdown = {
@@ -49,33 +50,29 @@ type Payload = {
   };
 };
 
-const INK = "#1e2a3a";
-const CORAL = "#e8604c";
-const SHEET = "#eef4f1";
-const GOLD = "#d4a017";
-const GREEN = "#2d8a56";
-const SEA = "#3d8b8b";
-
 const MIN_POSTS = 5;
 
 type SortKey = "winRate" | "conviction" | "posts" | "name";
 
-/**
- * Archetype from the two measured traits, relative to the hive.
- * Deliberately descriptive rather than evaluative — none of these is "best".
- */
-function archetype(l: Larva, avgWin: number, avgConv: number) {
-  const passive = l.breakdown.neutral / (l.posts || 1) > 0.45;
-  if (passive) return { label: "Tracker", color: `${INK}77`, note: "mostly abstains; scores by following the room" };
-  const hiWin = l.winRate >= avgWin;
-  const hiConv = l.conviction >= avgConv;
-  if (hiWin && hiConv) return { label: "Bellwether", color: GOLD, note: "commits hard and still lands with the swarm" };
-  if (hiWin && !hiConv) return { label: "Diplomat", color: SEA, note: "hedges, and the hedge is usually where consensus lands" };
-  if (!hiWin && hiConv) return { label: "Dissenter", color: CORAL, note: "takes strong positions the swarm doesn't follow" };
-  return { label: "Drifter", color: `${INK}88`, note: "neither commits nor converges" };
-}
-
 export default function CredibilityPage() {
+  const { colors } = useTheme();
+  const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD, sea: SEA } = colors;
+
+  /**
+   * Archetype from the two measured traits, relative to the hive.
+   * Deliberately descriptive rather than evaluative — none of these is "best".
+   */
+  function archetype(l: Larva, avgWin: number, avgConv: number) {
+    const passive = l.breakdown.neutral / (l.posts || 1) > 0.45;
+    if (passive) return { label: "Tracker", color: `${INK}77`, note: "mostly abstains; scores by following the room" };
+    const hiWin = l.winRate >= avgWin;
+    const hiConv = l.conviction >= avgConv;
+    if (hiWin && hiConv) return { label: "Bellwether", color: GOLD, note: "commits hard and still lands with the swarm" };
+    if (hiWin && !hiConv) return { label: "Diplomat", color: SEA, note: "hedges, and the hedge is usually where consensus lands" };
+    if (!hiWin && hiConv) return { label: "Dissenter", color: CORAL, note: "takes strong positions the swarm doesn't follow" };
+    return { label: "Drifter", color: `${INK}88`, note: "neither commits nor converges" };
+  }
+
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -137,7 +134,7 @@ export default function CredibilityPage() {
             {/* ── The caveat, stated up front ── */}
             <section
               className="mb-6 rounded-xl border p-5"
-              style={{ borderColor: `${GOLD}55`, background: "#fff" }}
+              style={{ borderColor: `${GOLD}55`, background: CARD }}
             >
               <p className="font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
                 read this first
@@ -156,7 +153,7 @@ export default function CredibilityPage() {
             {/* ── Distribution ── */}
             <section
               className="mb-6 rounded-xl border p-5"
-              style={{ borderColor: `${INK}22`, background: "#fff" }}
+              style={{ borderColor: `${INK}22`, background: CARD }}
             >
               <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Stat label="larvae ranked" value={String(rows.length)} />
@@ -181,7 +178,7 @@ export default function CredibilityPage() {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="find a larva…"
                 className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
-                style={{ borderColor: `${INK}25`, background: "#fff" }}
+                style={{ borderColor: `${INK}25`, background: CARD }}
               />
               {(["winRate", "conviction", "posts", "name"] as SortKey[]).map((k) => (
                 <button
@@ -190,7 +187,7 @@ export default function CredibilityPage() {
                   className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity"
                   style={{
                     borderColor: sort === k ? CORAL : `${INK}22`,
-                    background: sort === k ? `${CORAL}12` : "#fff",
+                    background: sort === k ? `${CORAL}12` : CARD,
                     color: sort === k ? CORAL : INK,
                     opacity: sort === k ? 1 : 0.65,
                   }}
@@ -201,7 +198,7 @@ export default function CredibilityPage() {
               <button
                 onClick={() => setShowAll((s) => !s)}
                 className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest opacity-65 transition-opacity hover:opacity-100"
-                style={{ borderColor: `${INK}22`, background: "#fff" }}
+                style={{ borderColor: `${INK}22`, background: CARD }}
               >
                 {showAll ? "all" : `${MIN_POSTS}+ posts`}
               </button>
@@ -210,7 +207,7 @@ export default function CredibilityPage() {
             {/* ── Table ── */}
             <section
               className="overflow-hidden rounded-xl border"
-              style={{ borderColor: `${INK}22`, background: "#fff" }}
+              style={{ borderColor: `${INK}22`, background: CARD }}
             >
               {rows.map((l, i) => {
                 const arch = archetype(l, data.hive.avgWinRate, data.hive.avgConviction);
@@ -328,6 +325,8 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 
 /** Distribution of alignment scores — shows how tight the pack really is. */
 function Histogram({ larvae, avg }: { larvae: { winRate: number }[]; avg: number }) {
+  const { colors } = useTheme();
+  const { gold: GOLD, sea: SEA } = colors;
   const BUCKETS = 14;
   const rates = larvae.map((l) => l.winRate);
   if (rates.length === 0) return null;
@@ -368,6 +367,8 @@ function Histogram({ larvae, avg }: { larvae: { winRate: number }[]; avg: number
 }
 
 function StanceBar({ breakdown, total }: { breakdown: Breakdown; total: number }) {
+  const { colors } = useTheme();
+  const { ink: INK, coral: CORAL, gold: GOLD, green: GREEN } = colors;
   const t = total || 1;
   const seg = [
     { key: "approve", n: breakdown.approve, color: GREEN, label: "approve" },

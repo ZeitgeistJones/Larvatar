@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Nav from "@/components/Nav";
+import { useTheme } from "@/components/ThemeProvider";
 import {
   announce,
   getSurveyMuted,
@@ -55,13 +56,7 @@ type Phase =
   | "results"
   | "leaderboard-submit";
 
-/* ─── Design tokens ───────────────────────────────────────────────── */
-
-const INK = "#1e2a3a";
-const CORAL = "#e8604c";
-const SHEET = "#eef4f1";
-const GOLD = "#d4a017";
-const GREEN = "#2d8a56";
+/* ─── Design tokens come from useTheme() ───────────────────────────── */
 
 /* ─── Game constants ──────────────────────────────────────────────── */
 
@@ -86,6 +81,9 @@ function shuffle<T>(arr: T[]): T[] {
 /* ─── Component ───────────────────────────────────────────────────── */
 
 export default function LarvaeSurveyPage() {
+  const { colors } = useTheme();
+  const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD, green: GREEN } = colors;
+
   /* Board data */
   const [boards, setBoards] = useState<BoardStub[]>([]);
   const [loading, setLoading] = useState(true);
@@ -577,7 +575,7 @@ export default function LarvaeSurveyPage() {
               aria-checked={!soundMuted}
               onClick={toggleSound}
               className="flex shrink-0 items-center gap-2 rounded-md border px-3 py-2"
-              style={{ borderColor: `${INK}22`, background: "#fff" }}
+              style={{ borderColor: `${INK}22`, background: CARD }}
             >
               <span className="font-mono text-[10px] uppercase tracking-widest opacity-55">
                 Sound
@@ -610,7 +608,7 @@ export default function LarvaeSurveyPage() {
           <>
             <section
               className="rounded-xl border p-6"
-              style={{ borderColor: `${INK}22`, background: "#fff" }}
+              style={{ borderColor: `${INK}22`, background: CARD }}
             >
               {loading ? (
                 <p className="text-sm opacity-60">loading…</p>
@@ -645,7 +643,7 @@ export default function LarvaeSurveyPage() {
             {leaderboard.length > 0 && (
               <section
                 className="mt-5 rounded-xl border p-5"
-                style={{ borderColor: `${INK}22`, background: "#fff" }}
+                style={{ borderColor: `${INK}22`, background: CARD }}
               >
                 <p className="font-mono text-xs uppercase tracking-widest opacity-60">
                   leaderboard
@@ -692,7 +690,7 @@ export default function LarvaeSurveyPage() {
               style={{
                 borderColor: flash === "hit" ? GOLD : flash === "miss" ? CORAL : `${INK}22`,
                 borderWidth: flash ? 2 : 1,
-                background: "#fff",
+                background: CARD,
                 transition: "border-color 150ms ease",
               }}
             >
@@ -746,7 +744,7 @@ export default function LarvaeSurveyPage() {
                     className="flex items-center gap-3 rounded-lg border px-4 py-3"
                     style={{
                       borderColor: answer ? `${GOLD}66` : `${INK}18`,
-                      background: answer ? "#fff" : `${INK}08`,
+                      background: answer ? CARD : `${INK}08`,
                       boxShadow: justFlipped ? `0 0 0 2px ${GOLD}55` : "none",
                       transition: "all 200ms ease",
                     }}
@@ -804,7 +802,7 @@ export default function LarvaeSurveyPage() {
           <>
             <section
               className="mb-5 rounded-xl border p-5"
-              style={{ borderColor: `${INK}22`, background: "#fff" }}
+              style={{ borderColor: `${INK}22`, background: CARD }}
             >
               <p className="font-mono text-xs uppercase tracking-widest opacity-60">
                 Round {roundIndex + 1} — survey says
@@ -832,7 +830,7 @@ export default function LarvaeSurveyPage() {
                     className="flex items-center gap-3 rounded-lg border px-4 py-3"
                     style={{
                       borderColor: answer ? `${GOLD}66` : `${INK}18`,
-                      background: answer ? "#fff" : `${INK}08`,
+                      background: answer ? CARD : `${INK}08`,
                       boxShadow: justFlipped ? `0 0 0 2px ${GOLD}55` : "none",
                       transition: "all 200ms ease",
                     }}
@@ -865,7 +863,7 @@ export default function LarvaeSurveyPage() {
             </div>
 
             {pendingReveal.length === 0 && boardAnswers.length > 0 && (
-              <div className="mb-5 space-y-3 rounded-xl border p-4" style={{ borderColor: `${INK}15`, background: "#fff" }}>
+              <div className="mb-5 space-y-3 rounded-xl border p-4" style={{ borderColor: `${INK}15`, background: CARD }}>
                 <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">voices</p>
                 {boardAnswers
                   .slice()
@@ -913,7 +911,7 @@ export default function LarvaeSurveyPage() {
 
         {/* ════════════════ FM LOCKED ════════════════ */}
         {phase === "fm-locked" && (
-          <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: "#fff" }}>
+          <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: CARD }}>
             <p className="font-mono text-xs uppercase tracking-widest opacity-60">fast money locked</p>
             <p className="mt-1 text-4xl font-bold" style={{ color: CORAL }}>{sessionScore}</p>
             <p className="mt-2 text-sm opacity-75">
@@ -938,7 +936,7 @@ export default function LarvaeSurveyPage() {
               style={{
                 borderColor: `${GOLD}44`,
                 borderWidth: 2,
-                background: "#fff",
+                background: CARD,
               }}
             >
               <div className="flex items-start justify-between gap-4">
@@ -986,7 +984,7 @@ export default function LarvaeSurveyPage() {
 
         {/* ════════════════ FM DRAMATIC REVEAL ════════════════ */}
         {phase === "fm-reveal" && (
-          <section className="rounded-xl border p-5" style={{ borderColor: `${GOLD}44`, borderWidth: 2, background: "#fff" }}>
+          <section className="rounded-xl border p-5" style={{ borderColor: `${GOLD}44`, borderWidth: 2, background: CARD }}>
             <p className="font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
               ⚡ Fast Money — reveal
             </p>
@@ -1009,7 +1007,7 @@ export default function LarvaeSurveyPage() {
                     className="rounded-lg border p-3 transition-all duration-300"
                     style={{
                       borderColor: isActive ? GOLD : isRevealed ? `${INK}18` : `${INK}10`,
-                      background: isRevealed ? "#fff" : `${INK}05`,
+                      background: isRevealed ? CARD : `${INK}05`,
                       opacity: isRevealed ? 1 : 0.4,
                     }}
                   >
@@ -1057,7 +1055,7 @@ export default function LarvaeSurveyPage() {
 
         {/* ════════════════ LEADERBOARD SUBMIT ════════════════ */}
         {phase === "leaderboard-submit" && (
-          <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: "#fff" }}>
+          <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: CARD }}>
             <p className="font-mono text-xs uppercase tracking-widest opacity-60">game over</p>
             <p className="mt-1 text-4xl font-bold" style={{ color: GOLD }}>{grandTotal}</p>
             <div className="mt-3 space-y-1 font-mono text-xs uppercase tracking-widest opacity-60">
@@ -1099,7 +1097,7 @@ export default function LarvaeSurveyPage() {
 
         {/* ════════════════ FINAL RESULTS ════════════════ */}
         {phase === "results" && (
-          <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: "#fff" }}>
+          <section className="rounded-xl border p-6" style={{ borderColor: `${INK}22`, background: CARD }}>
             <p className="font-mono text-xs uppercase tracking-widest opacity-60">final score</p>
             <p className="mt-1 text-4xl font-bold" style={{ color: GOLD }}>{grandTotal}</p>
             {submittedRank && (

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
+import { useTheme } from "@/components/ThemeProvider";
 import type { LarvatarTraits } from "@/lib/avatar";
 
 type Larva = {
@@ -29,11 +30,10 @@ type Answer = {
   answer: string;
 };
 
-const INK = "#1e2a3a";
-const CORAL = "#e8604c";
-const SHEET = "#eef4f1";
-
 export default function LarvaePage() {
+  const { colors } = useTheme();
+  const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL } = colors;
+
   const [larvae, setLarvae] = useState<Larva[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -94,7 +94,7 @@ export default function LarvaePage() {
 
         <section
           className="mb-12 rounded-xl border p-5"
-          style={{ borderColor: `${INK}22`, background: "#fff" }}
+          style={{ borderColor: `${INK}22`, background: CARD }}
         >
           <p className="font-mono text-xs uppercase tracking-widest opacity-60">ask the hive</p>
           <div className="mt-3 flex gap-2">
@@ -176,7 +176,7 @@ export default function LarvaePage() {
                   key={l.wallet}
                   onClick={() => setExpanded(open ? null : l.wallet)}
                   className="rounded-xl border p-5 text-left transition-shadow hover:shadow-md"
-                  style={{ borderColor: `${INK}22`, background: "#fff" }}
+                  style={{ borderColor: `${INK}22`, background: CARD }}
                 >
                   <div className="flex items-center gap-4">
                     <LarvaAvatar

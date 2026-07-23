@@ -3,17 +3,16 @@
 
 import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
+import { useTheme } from "@/components/ThemeProvider";
 
 type Candidate = { wallet: string; name: string; pitch: string | null };
 type Vote = { voter: string; voterName: string; votedFor: string; votedForName: string; reasoning: string };
 type Tally = { counts: Record<string, number>; winner: string | null; winnerName: string | null; totalVotes: number };
 
-const INK = "#1e2a3a";
-const CORAL = "#e8604c";
-const SHEET = "#eef4f1";
-const GOLD = "#d4a017";
-
 export default function ElectionPage() {
+  const { colors } = useTheme();
+  const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD } = colors;
+
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [tally, setTally] = useState<Tally | null>(null);
   const [votes, setVotes] = useState<Vote[]>([]);
@@ -63,7 +62,7 @@ export default function ElectionPage() {
             {tally && (
               <section
                 className="mb-8 rounded-xl border p-5"
-                style={{ borderColor: `${INK}22`, background: "#fff" }}
+                style={{ borderColor: `${INK}22`, background: CARD }}
               >
                 <p className="font-mono text-xs uppercase tracking-widest opacity-60">winner</p>
                 <p className="mt-1 text-2xl font-bold" style={{ color: GOLD }}>
@@ -90,7 +89,7 @@ export default function ElectionPage() {
                     className="w-full rounded-xl border p-4 text-left transition-shadow hover:shadow-md"
                     style={{
                       borderColor: isWinner ? GOLD : `${INK}22`,
-                      background: "#fff",
+                      background: CARD,
                       borderWidth: isWinner ? 2 : 1,
                     }}
                   >
