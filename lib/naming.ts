@@ -269,7 +269,11 @@ export function isAcceptable(
   used: Set<string>,
   usedSigs: Set<string>
 ): boolean {
-  return isWellFormed(name) && !isTaken(name, used, usedSigs);
+  return (
+    isWellFormed(name) &&
+    !looksLikeFragment(name) &&
+    !isTaken(name, used, usedSigs)
+  );
 }
 
 export function remember(name: string, used: Set<string>, usedSigs: Set<string>) {
@@ -335,6 +339,8 @@ RULES:
 - Never a name from the taken list, and never a near-copy — no reordering two taken words, no appending a number.
 - No trailing digits, ever.
 - Funny is welcome when earned; crude is not. Nothing sexual. Never mock the human holder — the joke is always about the agent.
+- Use the evidence as INFORMATION, not as raw material to copy. Do not lift usernames, handles, ticker symbols, code identifiers, or truncated tokens out of the evidence and use them as the name. If the evidence says the larva obsesses over audit receipts, "Receipt Keeper" is right and "AUDIT-RCPT" is wrong.
+- Write the name in Title Case. Never all-caps.
 
 Respond with ONLY the name. No quotes, no punctuation, no explanation.`;
 
@@ -442,14 +448,66 @@ function cleanNameOutput(raw: string): string {
   const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
   for (const line of lines) {
     const stripped = line.replace(/^(name|answer|nickname)\s*[:\-]\s*/i, "");
-    const cleaned = stripped
-      .replace(/^["'`*\s]+|["'`*.,!\s]+$/g, "")
-      .replace(/\s+/g, " ")
-      .slice(0, 32);
+    const cleaned = normalizeCase(
+      stripped
+        .replace(/^["'`*\s]+|["'`*.,!\s]+$/g, "")
+        .replace(/\s+/g, " ")
+        .slice(0, 32)
+    );
     if (!cleaned) continue;
     if (cleaned.split(/\s+/).length <= 3) return cleaned;
   }
   return "";
+}
+
+/**
+ * The model sometimes echoes shouty corpus text straight into the name
+ * ("RIGHTCLAW HERALD", "CAPITAL THESIS"). Names render as Title Case, so
+ * normalize rather than rejecting an otherwise good candidate.
+ */
+function normalizeCase(name: string): string {
+  const words = name.split(/\s+/).filter(Boolean);
+  return words
+    .map((w, i) => {
+      // Keep a lowercase "the" when it isn't leading.
+      if (i > 0 && w.toLowerCase() === "the") return "the";
+      // Preserve deliberate internal capitals (McCoy, VaultID) but fix ALLCAPS.
+      const isAllCaps = w === w.toUpperCase() && /[A-Z]{2,}/.test(w);
+      const base = isAllCaps ? w.toLowerCase() : w;
+      return base
+        .split("-")
+        .map((p) =>
+          p ? p[0].toUpperCase() + p.slice(1) : p
+        )
+        .join("-");
+    })
+    .join(" ");
+}
+
+/**
+ * Reject candidates that are clearly raw corpus fragments rather than names:
+ * chopped tokens ("VE-MODEL"), mangled handles ("Kittanj"), and strings with
+ * digits or stray punctuation the model lifted verbatim.
+ */
+function looksLikeFragment(name: string): boolean {
+  const words = name.split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    const bare = w.replace(/[^a-zA-Z'-]/g, "");
+    if (/\d/.test(w)) return true;              // contains digits
+    if (/^[a-z]{1,3}-/i.test(bare)) return true; // VE-MODEL, ZK-THING
+    if (bare.length > 3 && !/[aeiouy]/i.test(bare)) return true; // no vowels
+
+    // Mangled handles ("Kittanj") end in an implausible consonant cluster.
+    // Checking the ENDING rather than any internal run keeps real compounds
+    // like "Rightclaw" — English tolerates "ghtcl" mid-word but not "nj" final.
+    if (/[bcdfgjklmnpqstvwxz]{2,}$/i.test(bare) && bare.length > 4) {
+      // Allow common legitimate endings.
+      if (!/(ck|ng|nk|rd|rt|rk|rn|rm|rl|st|sk|sp|ft|pt|ct|lt|ld|lf|lk|mp|nt|nd|sh|ch|th|ss|ll|ff|zz)$/i.test(bare)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /** Title-case a single word, preserving internal hyphens. */
