@@ -137,7 +137,9 @@ export default function MapPage() {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Larva | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const detailRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch("/api/larvae/alignment/enriched")
@@ -197,14 +199,38 @@ export default function MapPage() {
 
   const posOf = (l: Larva) => positions.get(l.wallet) || { x: px(l.conviction), y: py(l.winRate) };
 
-  // Paint large dots first so small ones sit on top and stay readable.
-  const paintOrder = useMemo(
-    () => [...plotted].sort((a, b) => b.posts - a.posts),
-    [plotted]
-  );
+  const qNorm = query.trim().toLowerCase();
+
+  const searchHits = useMemo(() => {
+    if (!qNorm) return [] as Larva[];
+    return plotted.filter(
+      (l) =>
+        l.name.toLowerCase().includes(qNorm) ||
+        (l.tagline || "").toLowerCase().includes(qNorm) ||
+        l.wallet.toLowerCase().includes(qNorm)
+    );
+  }, [plotted, qNorm]);
+
+  const searchSet = useMemo(() => {
+    if (!qNorm) return null as Set<string> | null;
+    return new Set(searchHits.map((l) => l.wallet));
+  }, [qNorm, searchHits]);
+
+  // When searching: matches on top. Otherwise: large dots under small ones.
+  const paintOrder = useMemo(() => {
+    const list = [...plotted].sort((a, b) => b.posts - a.posts);
+    if (!searchSet) return list;
+    return list.sort((a, b) => {
+      const am = searchSet.has(a.wallet) ? 1 : 0;
+      const bm = searchSet.has(b.wallet) ? 1 : 0;
+      if (am !== bm) return am - bm; // matches last = on top
+      return b.posts - a.posts;
+    });
+  }, [plotted, searchSet]);
 
   /** Star edges from the selected larva only — no global hairball. */
   const clusterLinks = useMemo(() => {
+    if (searchSet) return [] as { a: Larva; b: Larva; color: string }[];
     if (!data || !selected || selected.faction === null || selected.faction === undefined) {
       return [] as { a: Larva; b: Larva; color: string }[];
     }
@@ -219,7 +245,7 @@ export default function MapPage() {
       links.push({ a: selected, b: other, color });
     }
     return links;
-  }, [data, selected, byWallet, INK, CORAL, SEA, GOLD]);
+  }, [data, selected, byWallet, searchSet, INK, CORAL, SEA, GOLD]);
 
   const focusSet = useMemo(() => {
     if (!selected) return null as Set<string> | null;
@@ -236,6 +262,20 @@ export default function MapPage() {
     setSelected(l);
     setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
   }
+
+  function isolate(l: Larva) {
+    setQuery(l.name);
+    pick(l);
+  }
+
+  // Unique search hit → isolate it automatically.
+  useEffect(() => {
+    if (!qNorm) return;
+    if (searchHits.length !== 1) return;
+    const hit = searchHits[0];
+    if (selected?.wallet !== hit.wallet) pick(hit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qNorm, searchHits]);
 
   const avgX = data?.hive.avgConviction ?? 0.5;
   const avgY = data?.hive.avgWinRate ?? 0.5;
@@ -302,13 +342,75 @@ export default function MapPage() {
               className="mb-6 rounded-xl border p-4"
               style={{ borderColor: `${INK}22`, background: CARD }}
             >
-              <div className="mb-3">
-                <p className="font-mono text-xs uppercase tracking-widest opacity-60">
-                  where each larva sits
-                </p>
-                <p className="mt-1 max-w-xl text-sm opacity-70">
-                  Left → more hedging · Right → more hard yes/no · Up → matches the swarm more often
-                </p>
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-mono text-xs uppercase tracking-widest opacity-60">
+                    where each larva sits
+                  </p>
+                  <p className="mt-1 max-w-xl text-sm opacity-70">
+                    Left → more hedging · Right → more hard yes/no · Up → matches the swarm more often
+                  </p>
+                </div>
+                <div className="relative w-full sm:w-64">
+                  <input
+                    ref={searchRef}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="find a larva…"
+                    className="w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
+                    style={{ borderColor: `${INK}25`, background: SHEET }}
+                  />
+                  {qNorm && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuery("");
+                        setSelected(null);
+                        searchRef.current?.focus();
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] uppercase tracking-widest opacity-45 hover:opacity-90"
+                    >
+                      clear
+                    </button>
+                  )}
+                  {qNorm && searchHits.length > 1 && (
+                    <div
+                      className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-auto rounded-lg border shadow-sm"
+                      style={{ borderColor: `${INK}22`, background: CARD }}
+                    >
+                      {searchHits.slice(0, 10).map((l) => (
+                        <button
+                          key={l.wallet}
+                          type="button"
+                          onClick={() => isolate(l)}
+                          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:opacity-80"
+                          style={{
+                            background:
+                              selected?.wallet === l.wallet ? `${GOLD}18` : "transparent",
+                          }}
+                        >
+                          <span className="truncate font-semibold">{l.name}</span>
+                          <span className="shrink-0 font-mono text-[10px] opacity-45">
+                            {Math.round(l.winRate * 100)}%
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {qNorm && searchHits.length === 0 && (
+                    <p className="mt-1 text-xs opacity-50">No larva matched “{query.trim()}”.</p>
+                  )}
+                  {qNorm && searchHits.length === 1 && (
+                    <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-45">
+                      isolating {searchHits[0].name}
+                    </p>
+                  )}
+                  {qNorm && searchHits.length > 1 && (
+                    <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-45">
+                      {searchHits.length} matches — pick one
+                    </p>
+                  )}
+                </div>
               </div>
 
               <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 540 }}>
@@ -483,34 +585,50 @@ export default function MapPage() {
                 {paintOrder.map((l) => {
                   const isSel = selected?.wallet === l.wallet;
                   const isHov = hovered === l.wallet;
+                  const isMatch = !searchSet || searchSet.has(l.wallet);
                   const inFocus = !focusSet || focusSet.has(l.wallet);
+                  const isolated = Boolean(searchSet);
+                  const visible = isolated ? isMatch : !selected || inFocus;
                   const r = dotRadius(l.posts);
                   const { x, y } = posOf(l);
-                  const showLabel = isHov || isSel;
+                  const showLabel = isMatch && (isHov || isSel || (isolated && searchHits.length <= 3));
                   return (
-                    <g key={l.wallet}>
+                    <g
+                      key={l.wallet}
+                      style={{ pointerEvents: visible ? "auto" : "none" }}
+                    >
                       <circle
                         cx={x}
                         cy={y}
-                        r={isSel || isHov ? r + 2.5 : r}
+                        r={isSel || isHov || (isolated && isMatch) ? r + 2.5 : r}
                         fill={
                           l.avatar
                             ? `hsl(${l.avatar.hue} 62% 58%)`
                             : `${INK}66`
                         }
                         stroke={
-                          isSel
+                          isSel || (isolated && isMatch)
                             ? INK
                             : l.faction !== null
                               ? factionColor(l.faction)
                               : CARD
                         }
-                        strokeWidth={isSel ? 2.5 : l.faction !== null ? 1.5 : 1}
-                        opacity={selected ? (inFocus ? 0.95 : 0.14) : 0.9}
-                        style={{ cursor: "pointer", transition: "opacity 140ms ease" }}
-                        onMouseEnter={() => setHovered(l.wallet)}
+                        strokeWidth={isSel || (isolated && isMatch) ? 2.5 : l.faction !== null ? 1.5 : 1}
+                        opacity={
+                          isolated
+                            ? isMatch
+                              ? 1
+                              : 0.04
+                            : selected
+                              ? inFocus
+                                ? 0.95
+                                : 0.14
+                              : 0.9
+                        }
+                        style={{ cursor: visible ? "pointer" : "default", transition: "opacity 140ms ease" }}
+                        onMouseEnter={() => visible && setHovered(l.wallet)}
                         onMouseLeave={() => setHovered(null)}
-                        onClick={() => pick(l)}
+                        onClick={() => visible && pick(l)}
                       />
                       {showLabel && (
                         <g style={{ pointerEvents: "none" }}>
@@ -549,8 +667,14 @@ export default function MapPage() {
                 <span>nearby dots nudged apart so they don&apos;t stack</span>
               </div>
               <p className="mt-2 text-xs opacity-50">
-                Click a larva to see its place in the swarm
-                {selected && selected.faction !== null ? " — lines show who it tends to agree with." : "."}
+                {qNorm
+                  ? "Search isolates matches — everyone else fades out."
+                  : "Click a larva to see its place in the swarm"}
+                {!qNorm && selected && selected.faction !== null
+                  ? " — lines show who it tends to agree with."
+                  : !qNorm
+                    ? "."
+                    : ""}
               </p>
             </section>
 
