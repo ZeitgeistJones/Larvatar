@@ -8,7 +8,12 @@
 //        answers and returns the match (or null for a strike).
 
 import { NextRequest, NextResponse } from "next/server";
-import { getBoard, getAllBoards, matchGuess } from "@/lib/larvae-survey";
+import {
+  getBoard,
+  getAllBoards,
+  matchGuess,
+  TARGET_BOARD_COUNT,
+} from "@/lib/larvae-survey";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -26,6 +31,8 @@ export async function GET(req: NextRequest) {
         respondents: b.respondents,
         totalPoints: b.totalPoints,
       })),
+      target: TARGET_BOARD_COUNT,
+      brewing: boards.length < TARGET_BOARD_COUNT,
     });
   }
 
@@ -76,6 +83,7 @@ export async function POST(req: NextRequest) {
       points: match.points,
       voices: match.voices,
       sample: match.sample,
+      rationale: match.rationale || "",
     },
     strike: false,
   });

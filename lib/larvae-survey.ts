@@ -27,6 +27,8 @@ export type BoardAnswer = {
   voices: string[];
   /** One representative quote, for the reveal. */
   sample: string;
+  /** One sentence on why the hive clustered here. */
+  rationale: string;
 };
 
 /** A complete playable board. */
@@ -91,6 +93,9 @@ export const SURVEY_QUESTIONS: { id: string; text: string }[] = [
 export const MAX_SURVEY_QUESTIONS = 60;
 
 const QUESTIONS_KEY = "lpp:survey:questions";
+const MAX_BOARD_ANSWERS = 8;
+/** Ideal playable pool (3 main + 5 Swarm Rush). Auto-brew fills toward this. */
+export const TARGET_BOARD_COUNT = 8;
 
 function seedAsQuestions(): SurveyQuestion[] {
   const stamp = "2026-01-01";
@@ -288,10 +293,118 @@ export async function saveBoard(board: SurveyBoard) {
   }
 }
 
+/** Decorative fluff models love to prepend — strip for dedupe keys. */
+const LABEL_ARTICLES = new Set(["a", "an", "the", "my", "our", "some", "any"]);
+const LABEL_DECORATIVE = new Set([
+  "fierce", "chaotic", "crazy", "wild", "sassy", "spicy", "cursed", "based",
+  "epic", "legendary", "ultimate", "absolute", "total", "giant", "tiny",
+  "little", "big", "angry", "sleepy", "feral", "deranged", "holy", "lowkey",
+  "literally", "basically", "probably", "definitely", "obviously", "kinda",
+  "super", "mega", "ultra", "random", "weird", "goofy", "silly", "smug",
+]);
+const LABEL_FILLER = new Set([...LABEL_ARTICLES, ...LABEL_DECORATIVE]);
+
+function labelCore(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w && !LABEL_FILLER.has(w))
+    .join(" ")
+    .trim();
+}
+
+/** Board label: drop decorative adjectives, keep articles/titles intact. */
+function plainLabel(label: string): string {
+  const words = label
+    .trim()
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const kept = words.filter((w) => !LABEL_DECORATIVE.has(w.toLowerCase()));
+  return (kept.length > 0 ? kept : words).join(" ").toUpperCase().slice(0, 40);
+}
+
+function fallbackRationale(a: { count: number; sample?: string; label: string }): string {
+  return `${a.count} larva${a.count === 1 ? "" : "e"} landed here — e.g. "${(a.sample || a.label).slice(0, 80)}".`;
+}
+
+/**
+ * Fix already-cached boards without a rebuild: strip decorative adjectives,
+ * merge near-duplicate rows, backfill rationale.
+ */
+function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boolean } {
+  const raw = board.answers || [];
+  const merged: BoardAnswer[] = [];
+
+  for (const a of raw) {
+    const label = plainLabel(a.label || "");
+    if (!label) continue;
+    const next: BoardAnswer = {
+      rank: a.rank,
+      label,
+      count: a.count,
+      points: a.points ?? a.count,
+      voices: [...(a.voices || [])],
+      sample: a.sample || label,
+      rationale: (a.rationale || "").trim() || fallbackRationale(a),
+    };
+    const core = labelCore(next.label);
+    const hit = merged.find((o) => {
+      const oc = labelCore(o.label);
+      if (!oc || !core) return false;
+      if (oc === core) return true;
+      return oc.includes(core) || core.includes(oc);
+    });
+    if (!hit) {
+      merged.push(next);
+      continue;
+    }
+    hit.count += next.count;
+    hit.points += next.points;
+    hit.voices.push(...next.voices);
+    if (next.label.replace(/\s+/g, "").length < hit.label.replace(/\s+/g, "").length) {
+      hit.label = next.label;
+    }
+    if (!hit.sample || next.sample.length < hit.sample.length) hit.sample = next.sample;
+    if (next.rationale.length > hit.rationale.length) hit.rationale = next.rationale;
+  }
+
+  const ranked = merged
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, MAX_BOARD_ANSWERS)
+    .map((a, i) => ({ ...a, rank: i + 1, points: a.count }));
+
+  const totalPoints = ranked.reduce((s, a) => s + a.points, 0);
+  const changed =
+    ranked.length !== raw.length ||
+    totalPoints !== board.totalPoints ||
+    ranked.some((a, i) => {
+      const b = raw[i];
+      return (
+        !b ||
+        a.label !== plainLabel(b.label || "") ||
+        a.count !== b.count ||
+        !(b.rationale || "").trim()
+      );
+    });
+
+  return {
+    board: { ...board, answers: ranked, totalPoints },
+    changed,
+  };
+}
+
 export async function getBoard(id: string): Promise<SurveyBoard | null> {
   const raw = await redis.get<string | SurveyBoard>(BOARD_KEY(id));
   if (!raw) return null;
-  return typeof raw === "string" ? JSON.parse(raw) : raw;
+  const board: SurveyBoard = typeof raw === "string" ? JSON.parse(raw) : raw;
+  const { board: cleaned, changed } = sanitizeBoard(board);
+  if (changed) {
+    // Persist cleaned labels / merged dupes so players never need a manual rebuild.
+    await saveBoard(cleaned);
+  }
+  return cleaned;
 }
 
 export async function getBoardIndex(): Promise<string[]> {
@@ -325,6 +438,91 @@ export async function clearAllBoards() {
   for (const id of index) await redis.del(BOARD_KEY(id));
   await redis.del(BOARD_INDEX_KEY);
   await redis.del(BUILD_QUEUE_KEY);
+}
+
+const ENSURE_LOCK_KEY = "lpp:survey:ensure-lock";
+
+/**
+ * Public-safe progress tick: build missing boards toward TARGET_BOARD_COUNT.
+ * No wipe, no secret. Rate-limited so page polls can't stampede Redis/LLM.
+ * Safe to call from the play page — advances one chunk per call.
+ */
+export async function tickMissingBoardBuild(
+  budgetMs = 45_000
+): Promise<{
+  builtThisRun: { id: string; answers: number; respondents: number }[];
+  remaining: number;
+  brewing: boolean;
+  skipped?: string;
+}> {
+  const lock = await redis.set(ENSURE_LOCK_KEY, "1", { nx: true, ex: 90 });
+  if (lock !== "OK") {
+    const existing = await getBoardIndex();
+    const queue = await getBuildQueue();
+    return {
+      builtThisRun: [],
+      remaining: queue.length,
+      brewing: existing.length < TARGET_BOARD_COUNT || queue.length > 0,
+      skipped: "busy",
+    };
+  }
+
+  try {
+    await ensureQuestionBank();
+    const start = Date.now();
+    let queue = await getBuildQueue();
+    const existing = await getBoardIndex();
+    const bank = await getQuestionBank();
+
+    if (queue.length === 0) {
+      const missing = bank
+        .filter((q) => !existing.includes(q.id))
+        .map((q) => q.id)
+        .slice(0, Math.max(0, TARGET_BOARD_COUNT - existing.length));
+      if (missing.length === 0) {
+        return {
+          builtThisRun: [],
+          remaining: 0,
+          brewing: false,
+          skipped: "full",
+        };
+      }
+      queue = missing;
+      await setBuildQueue(queue);
+    }
+
+    const builtThisRun: { id: string; answers: number; respondents: number }[] = [];
+
+    while (queue.length > 0 && Date.now() - start < budgetMs) {
+      const id = queue.shift()!;
+      try {
+        const board = await buildBoard(id);
+        if (board) {
+          await saveBoard(board);
+          builtThisRun.push({
+            id: board.id,
+            answers: board.answers.length,
+            respondents: board.respondents,
+          });
+        }
+      } catch {
+        // leave failed id out of queue — don't spin forever
+      }
+      await setBuildQueue(queue);
+      // One board per tick is enough for public ensure; keep latency predictable.
+      if (builtThisRun.length >= 1) break;
+    }
+
+    if (queue.length === 0) await clearBuildQueue();
+    const finalIndex = await getBoardIndex();
+    return {
+      builtThisRun,
+      remaining: queue.length,
+      brewing: finalIndex.length < TARGET_BOARD_COUNT || queue.length > 0,
+    };
+  } finally {
+    await redis.del(ENSURE_LOCK_KEY);
+  }
 }
 
 // ─── Respondent selection ──────────────────────────────────────────
@@ -380,12 +578,17 @@ function pickRespondents(
 
 const SURVEY_SYSTEM = `You are a larva — a personal AI governance agent in the $CLAWD ecosystem — answering a survey question in character.
 
-Answer with a SHORT phrase: 2-6 words when possible (movie titles, animal names, song names, and proper nouns are fine even if a bit longer). Not a sentence. Not an explanation. Just the answer itself.
+Answer with a SHORT phrase: usually 1-4 words (movie titles, animal names, song names, and proper nouns are fine). Not a sentence. Not an explanation. Just the answer itself.
 
-Good: "The Social Network" / "racoon with a spreadsheet" / "unaudited contracts"
-Bad: "I think the thing larvae distrust most would be vague roadmaps because..."
+Rules:
+- Name the thing itself. Do NOT pad with random adjectives ("fierce honey badger", "chaotic raccoon") — say "honey badger" / "raccoon".
+- No filler like "definitely", "probably", "obviously", "lowkey".
+- If the question asks for an animal / movie / song / show / food / emoji, answer with that noun (or proper title) only.
 
-Answer from YOUR personality, not the obvious general answer. If your fixation is unusual, give the unusual answer — that is what makes the survey interesting. Lean into humor and analogy when the question invites it.
+Good: "The Social Network" / "honey badger" / "raccoon" / "unaudited contracts"
+Bad: "fierce honey badger" / "a chaotic raccoon with vibes" / "I think the thing larvae distrust most would be..."
+
+Answer from YOUR personality, not the obvious general answer. Unusual picks are fine — decorative wording is not.
 
 Respond with ONLY the phrase, nothing else. No quotes, no punctuation at the end.`;
 
@@ -412,7 +615,11 @@ About you: ${p.profile.summary}`;
       .replace(/\s+/g, " ")
       .slice(0, 60);
     if (!answer) return null;
-    return { wallet: p.wallet, name: p.profile.name, answer };
+    // Drop decorative adjectives ("fierce honey badger" → "honey badger").
+    const words = answer.split(/\s+/);
+    const kept = words.filter((w) => !LABEL_DECORATIVE.has(w.toLowerCase()));
+    const cleaned = (kept.length > 0 ? kept : words).join(" ").slice(0, 60);
+    return { wallet: p.wallet, name: p.profile.name, answer: cleaned };
   } catch {
     return null;
   }
@@ -442,16 +649,21 @@ const CLUSTER_SYSTEM = `You are building a survey board for a "guess the top ans
 You will receive a question and a numbered list of short answers from different respondents. Group answers that mean the SAME THING into clusters, even when worded differently ("vague roadmap" and "promises with no timeline" are the same cluster).
 
 Rules:
-- Merge aggressively on meaning, but never merge two genuinely different ideas to inflate a count.
+- Merge aggressively on meaning. Especially merge adjective variants of the SAME thing into ONE cluster:
+  "honey badger" + "fierce honey badger" + "crazy honey badger" = one cluster labeled HONEY BADGER.
+  "raccoon" + "chaotic raccoon" + "trash panda" = one cluster (pick the plainest shared label).
+- Never invent adjectives or words that are not in the answers. Labels must come from what people said.
+- Prefer the PLAINEST shared noun/phrase for the label — strip decorative adjectives.
 - Give each cluster a SHORT board label: 1-4 words, UPPERCASE, punchy, like a real game show board.
+- For each cluster, write a "rationale": exactly ONE sentence explaining why these respondents converged on that answer. Ground it in what they actually said — witty, specific, no fluff. Example: "The hive kept circling vaporware promises with no ship date."
 - Return clusters sorted by size, largest first.
 - Include every respondent number exactly once, in exactly one cluster.
-- Singleton clusters are fine and expected — do not force them together.
+- Singleton clusters are fine — do not invent a second near-duplicate row for the same idea.
 
 Respond with ONLY a JSON array, no markdown, no preamble:
-[{"label":"VAGUE ROADMAPS","members":[1,4,9]}, ...]`;
+[{"label":"HONEY BADGER","rationale":"Half the hive picked the same stubborn animal, adjectives optional.","members":[1,4,9]}, ...]`;
 
-type Cluster = { label: string; members: number[] };
+type Cluster = { label: string; rationale: string; members: number[] };
 
 async function clusterResponses(
   question: string,
@@ -464,7 +676,7 @@ async function clusterResponses(
   const raw = await haiku(
     CLUSTER_SYSTEM,
     `Question: ${question}\n\nAnswers:\n${numbered}`,
-    1200
+    1800
   );
 
   const clean = raw.replace(/```json|```/g, "").trim();
@@ -487,6 +699,10 @@ async function clusterResponses(
 
   for (const c of parsed) {
     const label = String(c?.label || "").trim().toUpperCase().slice(0, 40);
+    const rationale = String(c?.rationale || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 180);
     const membersRaw = Array.isArray(c?.members) ? c.members : [];
     const members: number[] = [];
     for (const m of membersRaw) {
@@ -497,15 +713,17 @@ async function clusterResponses(
       seen.add(n);
       members.push(n);
     }
-    if (label && members.length > 0) clusters.push({ label, members });
+    if (label && members.length > 0) clusters.push({ label, rationale, members });
   }
 
   // Any respondent the model dropped becomes its own cluster, so counts still
   // add up to the number surveyed.
   for (let i = 1; i <= responses.length; i++) {
     if (!seen.has(i)) {
+      const answer = responses[i - 1].answer;
       clusters.push({
-        label: responses[i - 1].answer.toUpperCase().slice(0, 40),
+        label: answer.toUpperCase().slice(0, 40),
+        rationale: `One larva put it plainly: "${answer.slice(0, 80)}".`,
         members: [i],
       });
     }
@@ -514,10 +732,41 @@ async function clusterResponses(
   return clusters;
 }
 
+/** Collapse adjective variants the model left as separate rows (HONEY BADGER vs FIERCE HONEY BADGER). */
+function mergeNearDuplicateClusters(clusters: Cluster[]): Cluster[] {
+  const out: Cluster[] = [];
+  for (const c of clusters) {
+    const core = labelCore(c.label);
+    if (!core) {
+      out.push(c);
+      continue;
+    }
+    const hit = out.find((o) => {
+      const oc = labelCore(o.label);
+      if (!oc) return false;
+      if (oc === core) return true;
+      // one core contains the other as a whole-phrase subset
+      return oc.includes(core) || core.includes(oc);
+    });
+    if (!hit) {
+      out.push({ ...c, members: [...c.members] });
+      continue;
+    }
+    hit.members.push(...c.members);
+    // Prefer the shorter / plainer label
+    if (c.label.replace(/\s+/g, "").length < hit.label.replace(/\s+/g, "").length) {
+      hit.label = c.label;
+    }
+    if ((c.rationale?.length || 0) > (hit.rationale?.length || 0)) {
+      hit.rationale = c.rationale;
+    }
+  }
+  return out;
+}
+
 // ─── Board building ────────────────────────────────────────────────
 
 const RESPONDENT_COUNT = 100;
-const MAX_BOARD_ANSWERS = 8;
 
 /**
  * Build one complete board: survey N larvae, cluster their answers, rank them.
@@ -537,8 +786,9 @@ export async function buildBoard(questionId: string): Promise<SurveyBoard | null
   const responses = surveyed.filter(Boolean) as SurveyResponse[];
   if (responses.length < 3) return null;
 
-  const clusters = await clusterResponses(q.text, responses);
-  if (clusters.length === 0) return null;
+  const clustered = await clusterResponses(q.text, responses);
+  if (clustered.length === 0) return null;
+  const clusters = mergeNearDuplicateClusters(clustered);
 
   const ranked = clusters
     .sort((a, b) => b.members.length - a.members.length)
@@ -546,13 +796,18 @@ export async function buildBoard(questionId: string): Promise<SurveyBoard | null
 
   const answers: BoardAnswer[] = ranked.map((c, i) => {
     const members = c.members.map((n) => responses[n - 1]).filter(Boolean);
+    const sample = members[0]?.answer || c.label;
+    const rationale =
+      c.rationale ||
+      `${members.length} larva${members.length === 1 ? "" : "e"} landed here — e.g. "${sample.slice(0, 80)}".`;
     return {
       rank: i + 1,
       label: c.label,
       count: members.length,
       points: members.length,
       voices: members.map((m) => m.name),
-      sample: members[0]?.answer || c.label,
+      sample,
+      rationale,
     };
   });
 

@@ -36,6 +36,7 @@ type Answer = {
   points: number;
   voices: string[];
   sample: string;
+  rationale?: string;
 };
 
 type LeaderboardEntry = {
@@ -86,6 +87,7 @@ export default function LarvaeSurveyPage() {
 
   /* Board data */
   const [boards, setBoards] = useState<BoardStub[]>([]);
+  const [brewing, setBrewing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
 
@@ -151,15 +153,66 @@ export default function LarvaeSurveyPage() {
   useEffect(() => { fmIndexRef.current = fmIndex; }, [fmIndex]);
   useEffect(() => { fmIdsRef.current = fmIds; }, [fmIds]);
 
-  /* Load boards + leaderboard */
+  /* Load boards + leaderboard; auto-brew missing boards (no secret URL). */
   useEffect(() => {
-    Promise.all([
-      fetch("/api/larvae-survey").then((r) => r.json()),
-      fetch("/api/larvae-survey/leaderboard").then((r) => r.json()).catch(() => ({ leaderboard: [] })),
-    ]).then(([bd, lb]) => {
+    let cancelled = false;
+    let pollId: ReturnType<typeof setInterval> | null = null;
+
+    function stopPoll() {
+      if (pollId) {
+        clearInterval(pollId);
+        pollId = null;
+      }
+    }
+
+    function startPoll() {
+      if (pollId || cancelled) return;
+      pollId = setInterval(() => {
+        fetch("/api/larvae-survey/ensure")
+          .then((r) => r.json())
+          .then((ens) => {
+            if (cancelled) return;
+            if (ens.boards) setBoards(ens.boards);
+            const still = Boolean(ens.brewing);
+            setBrewing(still);
+            if (!still) stopPoll();
+          })
+          .catch(() => {});
+      }, 20_000);
+    }
+
+    async function refresh() {
+      const [bd, lb] = await Promise.all([
+        fetch("/api/larvae-survey").then((r) => r.json()),
+        fetch("/api/larvae-survey/leaderboard").then((r) => r.json()).catch(() => ({ leaderboard: [] })),
+      ]);
+      if (cancelled) return;
       setBoards(bd.boards || []);
+      setBrewing(Boolean(bd.brewing));
       setLeaderboard(lb.leaderboard || []);
-    }).finally(() => setLoading(false));
+      setLoading(false);
+
+      const count = (bd.boards || []).length;
+      const needsBrew = Boolean(bd.brewing) || count < MAIN_ROUNDS + FM_QUESTIONS;
+      if (!needsBrew) return;
+
+      try {
+        const ens = await fetch("/api/larvae-survey/ensure").then((r) => r.json());
+        if (cancelled) return;
+        if (ens.boards) setBoards(ens.boards);
+        const still = Boolean(ens.brewing);
+        setBrewing(still);
+        if (still) startPoll();
+      } catch {
+        startPoll();
+      }
+    }
+
+    refresh();
+    return () => {
+      cancelled = true;
+      stopPoll();
+    };
   }, []);
 
   /* ─── Board loading ─────────────────────────────────────────────── */
@@ -282,7 +335,7 @@ export default function LarvaeSurveyPage() {
     unlockSurveyAudio();
     setError(null);
     if (boards.length < MAIN_ROUNDS) {
-      setError(`Need at least ${MAIN_ROUNDS} boards (have ${boards.length}). Run the survey build.`);
+      setError(`Hive still brewing — need ${MAIN_ROUNDS} boards (have ${boards.length}). Hang tight.`);
       return;
     }
     const picked = shuffle(boards);
@@ -618,8 +671,6 @@ export default function LarvaeSurveyPage() {
             >
               {loading ? (
                 <p className="text-sm opacity-60">loading…</p>
-              ) : boards.length === 0 ? (
-                <p className="text-sm opacity-60">No boards built yet. Run the survey build endpoint.</p>
               ) : (
                 <>
                   <div className="mb-5 space-y-2 font-mono text-[10px] uppercase tracking-widest opacity-55">
@@ -628,9 +679,11 @@ export default function LarvaeSurveyPage() {
                       Swarm Rush unlock · {FM_UNLOCK}+ · up to {FM_QUESTIONS} Q · {FM_TIMER}s each
                     </p>
                     <p>{boards.length} boards ready</p>
-                    {boards.length < MAIN_ROUNDS + FM_QUESTIONS && boards.length >= MAIN_ROUNDS && (
+                    {(brewing || boards.length < MAIN_ROUNDS + FM_QUESTIONS) && (
                       <p className="normal-case tracking-normal opacity-80">
-                        Tip: build more boards for a full Swarm Rush ({MAIN_ROUNDS + FM_QUESTIONS} ideal).
+                        {boards.length < MAIN_ROUNDS
+                          ? "Hive is brewing boards — Play unlocks at 3. Leave this page open."
+                          : "Brewing more boards in the background for a fuller Swarm Rush."}
                       </p>
                     )}
                   </div>
@@ -646,7 +699,7 @@ export default function LarvaeSurveyPage() {
                     className="w-full rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
                     style={{ background: CORAL }}
                   >
-                    {checking ? "…" : "Play"}
+                    {checking ? "…" : canPlay ? "Play" : brewing ? "Brewing…" : "Play"}
                   </button>
                 </>
               )}
@@ -770,7 +823,12 @@ export default function LarvaeSurveyPage() {
                     </span>
                     {answer ? (
                       <>
-                        <span className="min-w-0 flex-1 font-bold tracking-wide">{answer.label}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="font-bold tracking-wide">{answer.label}</span>
+                          {answer.rationale && (
+                            <p className="mt-0.5 text-xs leading-snug opacity-55">{answer.rationale}</p>
+                          )}
+                        </div>
                         <span className="shrink-0 font-mono text-sm font-bold" style={{ color: CORAL }}>
                           {answer.points}
                         </span>
@@ -859,7 +917,12 @@ export default function LarvaeSurveyPage() {
                     </span>
                     {answer ? (
                       <>
-                        <span className="min-w-0 flex-1 font-bold tracking-wide">{answer.label}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="font-bold tracking-wide">{answer.label}</span>
+                          {answer.rationale && (
+                            <p className="mt-0.5 text-xs leading-snug opacity-55">{answer.rationale}</p>
+                          )}
+                        </div>
                         <span className="shrink-0 font-mono text-sm font-bold" style={{ color: CORAL }}>
                           {answer.points}
                         </span>
@@ -889,7 +952,8 @@ export default function LarvaeSurveyPage() {
                           {a.points} pts · ×{a.count}
                         </span>
                       </p>
-                      <p className="text-xs opacity-60">{a.voices.join(" · ")}</p>
+                      {a.rationale && <p className="text-xs opacity-60">{a.rationale}</p>}
+                      <p className="text-xs opacity-45">{a.voices.join(" · ")}</p>
                     </div>
                   ))}
               </div>
@@ -936,7 +1000,7 @@ export default function LarvaeSurveyPage() {
               ) : (
                 <>
                   You scored enough, but there weren’t enough leftover boards for Swarm Rush.
-                  Build more survey boards, then try again.
+                  The hive is still brewing — try again in a bit.
                 </>
               )}
             </p>
