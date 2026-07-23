@@ -293,7 +293,7 @@ export async function saveBoard(board: SurveyBoard) {
   }
 }
 
-/** Decorative fluff models love to prepend — strip for dedupe keys. */
+/** Decorative fluff + state modifiers models bolt onto the same answer. */
 const LABEL_ARTICLES = new Set(["a", "an", "the", "my", "our", "some", "any"]);
 const LABEL_DECORATIVE = new Set([
   "fierce", "chaotic", "crazy", "wild", "sassy", "spicy", "cursed", "based",
@@ -301,27 +301,57 @@ const LABEL_DECORATIVE = new Set([
   "little", "big", "angry", "sleepy", "feral", "deranged", "holy", "lowkey",
   "literally", "basically", "probably", "definitely", "obviously", "kinda",
   "super", "mega", "ultra", "random", "weird", "goofy", "silly", "smug",
+  // state / quality padding that creates fake duplicate board rows
+  "overcooked", "undercooked", "uncooked", "overripe", "underripe", "raw",
+  "burnt", "burned", "cold", "hot", "broken", "failed", "failing", "collapsing",
+  "collapse", "collapsed", "decay", "decaying", "rotting", "rotten", "variant",
+  "versions", "version", "style", "vibes", "energy", "core", "mode",
 ]);
 const LABEL_FILLER = new Set([...LABEL_ARTICLES, ...LABEL_DECORATIVE]);
 
-function labelCore(label: string): string {
-  return label
+function foldText(s: string): string {
+  return s
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w && !LABEL_FILLER.has(w))
-    .join(" ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-/** Board label: drop decorative adjectives, keep articles/titles intact. */
+function contentTokens(label: string): string[] {
+  return foldText(label)
+    .split(" ")
+    .filter((w) => w.length > 1 && !LABEL_FILLER.has(w));
+}
+
+function labelCore(label: string): string {
+  return contentTokens(label).join(" ");
+}
+
+/** True when two board labels are the same idea with different padding. */
+function sameAnswerFamily(a: string, b: string): boolean {
+  const ta = contentTokens(a);
+  const tb = contentTokens(b);
+  if (ta.length === 0 || tb.length === 0) return false;
+  const ca = ta.join(" ");
+  const cb = tb.join(" ");
+  if (ca === cb) return true;
+  if (ca.includes(cb) || cb.includes(ca)) return true;
+  const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (short.every((t) => long.includes(t))) return true;
+  // Shared distinctive noun (e.g. all the SOUFFLÉ / OVERCOOKED SOUFFLÉ rows)
+  const nouns = (toks: string[]) => toks.filter((t) => t.length >= 4);
+  const na = nouns(ta);
+  const nb = nouns(tb);
+  return na.some((n) => nb.includes(n));
+}
+
+/** Board label: drop decorative/state fluff, keep the plain noun/title. */
 function plainLabel(label: string): string {
-  const words = label
-    .trim()
-    .replace(/[^a-zA-Z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-  const kept = words.filter((w) => !LABEL_DECORATIVE.has(w.toLowerCase()));
+  const folded = foldText(label);
+  const words = folded.split(" ").filter(Boolean);
+  const kept = words.filter((w) => !LABEL_DECORATIVE.has(w));
   return (kept.length > 0 ? kept : words).join(" ").toUpperCase().slice(0, 40);
 }
 
@@ -349,13 +379,7 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
       sample: a.sample || label,
       rationale: (a.rationale || "").trim() || fallbackRationale(a),
     };
-    const core = labelCore(next.label);
-    const hit = merged.find((o) => {
-      const oc = labelCore(o.label);
-      if (!oc || !core) return false;
-      if (oc === core) return true;
-      return oc.includes(core) || core.includes(oc);
-    });
+    const hit = merged.find((o) => sameAnswerFamily(o.label, next.label));
     if (!hit) {
       merged.push(next);
       continue;
@@ -363,6 +387,7 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
     hit.count += next.count;
     hit.points += next.points;
     hit.voices.push(...next.voices);
+    // Prefer the shortest plain label (SOUFFLÉ beats OVERCOOKED SOUFFLÉ)
     if (next.label.replace(/\s+/g, "").length < hit.label.replace(/\s+/g, "").length) {
       hit.label = next.label;
     }
@@ -581,12 +606,12 @@ const SURVEY_SYSTEM = `You are a larva — a personal AI governance agent in the
 Answer with a SHORT phrase: usually 1-4 words (movie titles, animal names, song names, and proper nouns are fine). Not a sentence. Not an explanation. Just the answer itself.
 
 Rules:
-- Name the thing itself. Do NOT pad with random adjectives ("fierce honey badger", "chaotic raccoon") — say "honey badger" / "raccoon".
-- No filler like "definitely", "probably", "obviously", "lowkey".
-- If the question asks for an animal / movie / song / show / food / emoji, answer with that noun (or proper title) only.
+- Name the thing itself. Do NOT pad with state/adjective fluff ("overcooked soufflé", "fierce honey badger") — say "soufflé" / "honey badger".
+- No filler like "definitely", "probably", "obviously", "lowkey", "collapse", "variant", "broken".
+- Answer must actually fit the question category (toy → a real toy; food → a real food).
 
-Good: "The Social Network" / "honey badger" / "raccoon" / "unaudited contracts"
-Bad: "fierce honey badger" / "a chaotic raccoon with vibes" / "I think the thing larvae distrust most would be..."
+Good: "The Social Network" / "honey badger" / "soufflé" / "Tamagotchi"
+Bad: "overcooked soufflé" / "soufflé collapse" / "fierce honey badger" / "ponzi pyramid scheme" (not a toy)
 
 Answer from YOUR personality, not the obvious general answer. Unusual picks are fine — decorative wording is not.
 
@@ -646,22 +671,24 @@ async function mapWithConcurrency<T, R>(
 
 const CLUSTER_SYSTEM = `You are building a survey board for a "guess the top answers" style survey game.
 
-You will receive a question and a numbered list of short answers from different respondents. Group answers that mean the SAME THING into clusters, even when worded differently ("vague roadmap" and "promises with no timeline" are the same cluster).
+You will receive a question and a numbered list of short answers from different respondents. Group answers that mean the SAME THING into clusters, even when worded differently.
+
+CRITICAL — do NOT leave state/adjective variants as separate rows. These are ONE cluster each:
+- "soufflé" + "overcooked soufflé" + "undercooked soufflé" + "soufflé collapse" + "uncooked soufflé" → SOUFFLÉ
+- "overripe fruit salad" + "overripe fruit decay" → OVERRIPE FRUIT
+- "honey badger" + "fierce honey badger" → HONEY BADGER
+- "lego with no instructions" + "lego mindstorms" → LEGO (same toy family when the question is about toys)
 
 Rules:
-- Merge aggressively on meaning. Especially merge adjective variants of the SAME thing into ONE cluster:
-  "honey badger" + "fierce honey badger" + "crazy honey badger" = one cluster labeled HONEY BADGER.
-  "raccoon" + "chaotic raccoon" + "trash panda" = one cluster (pick the plainest shared label).
-- Never invent adjectives or words that are not in the answers. Labels must come from what people said.
-- Prefer the PLAINEST shared noun/phrase for the label — strip decorative adjectives.
-- Give each cluster a SHORT board label: 1-4 words, UPPERCASE, punchy, like a real game show board.
-- For each cluster, write a "rationale": exactly ONE sentence explaining why these respondents converged on that answer. Ground it in what they actually said — witty, specific, no fluff. Example: "The hive kept circling vaporware promises with no ship date."
+- Merge aggressively on meaning and on shared head noun.
+- Never invent adjectives. Prefer the PLAINEST shared noun/phrase for the label (1-3 words, UPPERCASE).
+- For each cluster, write a "rationale": exactly ONE sentence grounded in what they said.
 - Return clusters sorted by size, largest first.
 - Include every respondent number exactly once, in exactly one cluster.
-- Singleton clusters are fine — do not invent a second near-duplicate row for the same idea.
+- Answers that are NOT what the question asked for (e.g. "ponzi scheme" for a childhood-toy question) may stay as their own row — do not invent toys for them.
 
 Respond with ONLY a JSON array, no markdown, no preamble:
-[{"label":"HONEY BADGER","rationale":"Half the hive picked the same stubborn animal, adjectives optional.","members":[1,4,9]}, ...]`;
+[{"label":"SOUFFLÉ","rationale":"The hive kept describing governance as a soufflé that falls the second you look at it.","members":[1,4,9]}, ...]`;
 
 type Cluster = { label: string; rationale: string; members: number[] };
 
@@ -732,28 +759,16 @@ async function clusterResponses(
   return clusters;
 }
 
-/** Collapse adjective variants the model left as separate rows (HONEY BADGER vs FIERCE HONEY BADGER). */
+/** Collapse adjective / state variants the model left as separate rows. */
 function mergeNearDuplicateClusters(clusters: Cluster[]): Cluster[] {
   const out: Cluster[] = [];
   for (const c of clusters) {
-    const core = labelCore(c.label);
-    if (!core) {
-      out.push(c);
-      continue;
-    }
-    const hit = out.find((o) => {
-      const oc = labelCore(o.label);
-      if (!oc) return false;
-      if (oc === core) return true;
-      // one core contains the other as a whole-phrase subset
-      return oc.includes(core) || core.includes(oc);
-    });
+    const hit = out.find((o) => sameAnswerFamily(o.label, c.label));
     if (!hit) {
       out.push({ ...c, members: [...c.members] });
       continue;
     }
     hit.members.push(...c.members);
-    // Prefer the shorter / plainer label
     if (c.label.replace(/\s+/g, "").length < hit.label.replace(/\s+/g, "").length) {
       hit.label = c.label;
     }
