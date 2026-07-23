@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import LarvaAvatar from "@/components/LarvaAvatar";
+import Nav from "@/components/Nav";
 import type { LarvatarTraits } from "@/lib/avatar";
 
 type Larva = {
@@ -79,6 +80,7 @@ export default function LarvaePage() {
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
       <div className="mx-auto max-w-5xl">
+        <Nav />
         <header className="mb-10">
           <p className="font-mono text-xs tracking-widest uppercase" style={{ color: CORAL }}>
             larv.ai field guide

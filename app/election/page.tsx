@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Nav from "@/components/Nav";
 
 type Candidate = { wallet: string; name: string; pitch: string | null };
 type Vote = { voter: string; voterName: string; votedFor: string; votedForName: string; reasoning: string };
@@ -41,6 +42,7 @@ export default function ElectionPage() {
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
       <div className="mx-auto max-w-3xl">
+        <Nav />
         <header className="mb-8">
           <p className="font-mono text-xs tracking-widest uppercase" style={{ color: CORAL }}>
             larv.ai field guide
