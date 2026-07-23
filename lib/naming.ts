@@ -288,18 +288,14 @@ export type NameRegistry = {
  * How many times any single descriptive word may appear across the whole
  * collection. Structural words (UNCOUNTED_WORDS) are exempt.
  *
- * Three rather than two, deliberately. Simulation across a realistic
- * (Zipf-distributed) naming vocabulary showed a cap of 2 leaving roughly a
- * third of specimens unable to use any name they proposed — the model reaches
- * for the same role nouns, so the tight cap exhausts them and forces the
- * derivation fallback. Three still prevents any word from becoming the house
- * style while leaving enough room that most larvae keep a name they actually
- * wanted.
+ * Two, not three. A cap of 3 was tried across 124 specimens and still produced
+ * visible repetition — "Skeptic" and "Instinct" each landed four times, which
+ * reads as a house style even though no single word dominated. Two is tight
+ * enough that the model has to keep reaching for fresh vocabulary.
  *
- * Overridable per-run so this can be tuned against real output rather than a
- * model of it.
+ * Overridable per-run via &cap= so this can be tuned against real output.
  */
-export const DEFAULT_MAX_WORD_USES = 3;
+export const DEFAULT_MAX_WORD_USES = 2;
 
 /**
  * Build a registry.
@@ -411,27 +407,48 @@ async function pacedHaiku(system: string, user: string, maxTokens: number): Prom
 
 const NAMING_SYSTEM = `You name a "larva" — a personal AI governance agent in the $CLAWD ecosystem. Each larva was trained by a different token holder, so each has its own voice and fixations.
 
-You'll get evidence pulled from what this larva ACTUALLY wrote, plus a short personality read. Name it from the evidence.
+You'll get evidence pulled from what this larva ACTUALLY wrote, plus a short personality read.
 
-THE BAR — read this carefully, it's the whole job:
+WHAT MAKES A GOOD NAME:
 
-Most larvae are serious participants and deserve a clean, dignified name. A few have something genuinely strange going on. Name accordingly. Do NOT manufacture a quirk that isn't there.
+A name should say what a larva is LIKE, not what job it does. "Yield Evangelist" and "Burn Accountant" are job titles — they tell you a topic and nothing else. Every larva in this collection could be given a title like that, which is exactly why they're the wrong target.
 
-Earn the quirk. If the evidence shows something actually odd — it calls its holder "daddy", it answers in Morse code, it writes in raw HTML, it repeats one phrase in every response — lean into it. That's the funniest and truest kind of name and it should land hard. If the evidence shows a thoughtful larva that cares about audits and shipping, name it something clean and solid. A manufactured quirk is worse than a plain name.
+Aim for one of these three shapes. Vary between them — a collection where every name has the same shape reads as machine-generated no matter how good the individual names are.
 
-Adjectives only when they carry information. "Manic" is right for a larva that never stops shipping. "Thoughtful" is empty — every larva is thoughtful. If the adjective could apply to any larva, drop it.
+1. A TRAIT — one word, usually. What this larva is, distilled.
+   "The Precisionist" · "Pyro" · "The Understudy" · "Bellwether"
+   Best when the personality is strong and singular. These are often the
+   best names in a collection precisely because they're short.
+
+2. A RELATIONSHIP — how it behaves toward others in the room.
+   "Austin Echo" · "Second Opinion" · "The Dissent" · "Quorum Ghost"
+   Best when the evidence shows a stance toward the group: always agreeing,
+   always contrarian, always arriving late, always seconding someone.
+
+3. A GROUNDED QUIRK — built from something specific it actually did.
+   "Reddaddy Skeptic" · "The Morse Prophet" · "Lowercase Oracle"
+   Best when the evidence contains something genuinely odd. Rare, and it
+   should stay rare — a manufactured quirk is worse than a plain name.
+
+If none of the three fits, a clean and dignified name is the right answer. Most larvae are serious participants. Do not invent strangeness that isn't in the evidence.
+
+SHAPE VARIETY — this matters as much as the words:
+- One-word names are GOOD and currently rare. Reach for them.
+- Two words is the default and therefore the least interesting choice.
+- Three words occasionally, when the rhythm earns it ("Moon Man Dream").
+If you find yourself writing [Adjective] + [Job Title], stop and try again.
 
 THE TEST: could this exact name have been given to a different larva without changing a word? If yes, it's too generic. Go back to the evidence.
 
 RULES:
-- 1-3 words ("Pyro", "Tollgate Cynic", "Moon Man Dream"). Never more than 3.
-- Role and title words are GOOD when earned: Archivist, Warden, Broker, Envoy, Curator, Sentinel, Skeptic, Prophet, Scribe, Steward. "The Architect" is a fine name for a larva that actually designs systems.
+- 1-3 words. Never more.
+- Avoid generic role nouns (Warden, Scribe, Sentinel, Analyst, Architect, Steward, Prophet, Skeptic, Keeper, Broker, Evangelist, Arbiter). They're not banned, but they are heavily overused in this collection — if you reach for one, you almost certainly have a better option.
 - Never start with a connector, question word, adverb, or bare verb.
 - Never a name from the taken list, and never a near-copy — no reordering two taken words, no appending a number.
 - No trailing digits, ever.
 - Funny is welcome when earned; crude is not. Nothing sexual. Never mock the human holder — the joke is always about the agent.
-- Vocabulary is scarce: every word you use is spent. Any single word may appear in only a handful of names across the whole collection, so reaching for the same role nouns repeatedly will exhaust them and force a worse name later. Prefer a fresh, specific word over a familiar one.
-- Use the evidence as INFORMATION, not as raw material to copy. Do not lift usernames, handles, ticker symbols, code identifiers, or truncated tokens out of the evidence and use them as the name. If the evidence says the larva obsesses over audit receipts, "Receipt Keeper" is right and "AUDIT-RCPT" is wrong.
+- Vocabulary is scarce: any single word may appear in only one or two names across the whole collection. Reaching for a familiar word will exhaust it and force a worse name later. Prefer the fresh, specific option.
+- Use the evidence as INFORMATION, not as raw material to copy. Do not lift usernames, handles, ticker symbols, code identifiers, or truncated tokens. If the evidence says the larva obsesses over audit receipts, "Receipt Keeper" is right and "AUDIT-RCPT" is wrong.
 - Write the name in Title Case. Never all-caps.
 
 Respond with ONLY the name. No quotes, no punctuation, no explanation.`;
@@ -627,16 +644,19 @@ function deriveFromEvidence(
   input: NamingInput,
   reg: NameRegistry
 ): string {
-  // Wide list on purpose. With a cap of 2 uses per word, 14 roles would cover
-  // only 28 derived names — thin if the model falls through often. This gives
-  // room before the run degrades to wallet-hex names.
+  // Not job titles. The prompt steers away from role nouns because they made
+  // every name read as [Adjective] + [Occupation]; the fallback shouldn't
+  // reintroduce the pattern it's meant to avoid. These are traits and stances —
+  // they pair with a corpus word to make a character, not a post.
   const ROLES = [
-    "Warden", "Scribe", "Envoy", "Curator", "Sentinel", "Broker", "Steward",
-    "Prophet", "Herald", "Keeper", "Marshal", "Chronicler", "Arbiter", "Courier",
-    "Sceptic", "Oracle", "Auditor", "Witness", "Tinker", "Ranger", "Cipher",
-    "Beacon", "Anchor", "Compass", "Lantern", "Forge", "Almanac", "Ledger",
-    "Sifter", "Watcher", "Runner", "Tender", "Weaver", "Mason", "Pilot",
+    "Echo", "Ghost", "Signal", "Instinct", "Habit", "Reflex", "Nerve",
+    "Pulse", "Drift", "Anchor", "Ember", "Cinder", "Static", "Current",
+    "Compass", "Lantern", "Tally", "Margin", "Remainder", "Footnote",
+    "Undertow", "Appetite", "Patience", "Doubt", "Certainty", "Grudge",
+    "Whisper", "Verdict", "Hunch", "Refrain", "Interval", "Threshold",
+    "Aftermath", "Premise", "Consequence",
   ];
+
 
   // Candidate words from evidence, best signal first. The filter here has to
   // be strict: an earlier version accepted any long-enough word and produced
@@ -663,7 +683,10 @@ function deriveFromEvidence(
     const w = words[i];
     for (let j = 0; j < ROLES.length; j++) {
       const role = ROLES[(seed + j) % ROLES.length];
-      for (const candidate of [`${w} ${role}`, `The ${w}`, w]) {
+      // One-word forms first. Two-word names are the default everywhere else,
+      // so the fallback shouldn't add to the pile — and single words like
+      // "The Precisionist" are often the strongest names in the set.
+      for (const candidate of [`The ${w}`, w, `${w} ${role}`]) {
         if (isAcceptable(candidate, reg)) return candidate;
       }
     }
