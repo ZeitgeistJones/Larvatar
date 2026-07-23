@@ -207,14 +207,73 @@ export async function collectIntoQueue(): Promise<number> {
   return queue.length;
 }
 
-// ---------- anthropic (haiku) ----------
+// ---------- llm (gemini primary, anthropic fallback) ----------
+// Kept named `haiku` so every call site (survey / alignment / ask / election)
+// picks up the routing without changes. Gemini first to cut cost; Haiku only
+// if Gemini is missing, errors, or returns empty.
 
-export async function haiku(system: string, user: string, maxTokens = 700): Promise<string> {
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+
+async function callGemini(
+  system: string,
+  user: string,
+  maxTokens: number
+): Promise<string> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY not set");
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+  const baseBody = {
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: user }] }],
+  };
+
+  // Prefer no-thinking config for short survey/profile calls. If the model
+  // rejects thinkingConfig, retry once without it before failing over.
+  const configs = [
+    { maxOutputTokens: maxTokens, temperature: 0.7, thinkingConfig: { thinkingBudget: 0 } },
+    { maxOutputTokens: maxTokens, temperature: 0.7 },
+  ];
+
+  let lastErr = "";
+  for (const generationConfig of configs) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...baseBody, generationConfig }),
+    });
+    if (!res.ok) {
+      lastErr = `gemini ${res.status}: ${await res.text()}`;
+      continue;
+    }
+    const data = await res.json();
+    const text = (data.candidates || [])
+      .flatMap((c: any) => c.content?.parts || [])
+      .map((p: any) => p.text || "")
+      .join("")
+      .trim();
+    if (!text) {
+      lastErr = "gemini returned empty";
+      continue;
+    }
+    return text;
+  }
+  throw new Error(lastErr || "gemini failed");
+}
+
+async function callAnthropic(
+  system: string,
+  user: string,
+  maxTokens: number
+): Promise<string> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY not set");
+
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
+      "x-api-key": key,
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
@@ -230,6 +289,17 @@ export async function haiku(system: string, user: string, maxTokens = 700): Prom
     .filter((b: any) => b.type === "text")
     .map((b: any) => b.text)
     .join("\n");
+}
+
+export async function haiku(system: string, user: string, maxTokens = 700): Promise<string> {
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      return await callGemini(system, user, maxTokens);
+    } catch {
+      // fall through to Anthropic
+    }
+  }
+  return callAnthropic(system, user, maxTokens);
 }
 
 export function parseJsonLoose(text: string): any {

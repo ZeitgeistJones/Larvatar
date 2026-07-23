@@ -6,6 +6,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Nav from "@/components/Nav";
+import {
+  getSurveyMuted,
+  playSurveyCue,
+  setSurveyMuted,
+  unlockSurveyAudio,
+} from "@/lib/survey-sfx";
 
 /* ─── Types ───────────────────────────────────────────────────────── */
 
@@ -114,6 +120,7 @@ export default function LarvaeSurveyPage() {
   const [strikeAnim, setStrikeAnim] = useState(false);
   const [playerName, setPlayerName] = useState("");
   const [submittedRank, setSubmittedRank] = useState<number | null>(null);
+  const [soundMuted, setSoundMuted] = useState(false);
 
   /* Refs for async callbacks */
   const endingRef = useRef(false);
@@ -124,6 +131,11 @@ export default function LarvaeSurveyPage() {
   const fmIndexRef = useRef(0);
   const fmIdsRef = useRef<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const bonusPlayedRef = useRef(false);
+
+  useEffect(() => {
+    setSoundMuted(getSurveyMuted());
+  }, []);
 
   useEffect(() => { revealedRef.current = revealed; }, [revealed]);
   useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
@@ -177,6 +189,7 @@ export default function LarvaeSurveyPage() {
   useEffect(() => {
     if (phase !== "round" && phase !== "fastmoney") return;
     if (secondsLeft <= 0) return;
+    if (secondsLeft <= 5) playSurveyCue("tick");
     const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(t);
   }, [phase, secondsLeft]);
@@ -203,6 +216,7 @@ export default function LarvaeSurveyPage() {
     try {
       await revealBoard(id);
       setSessionScore((s) => s + roundScore);
+      playSurveyCue("reveal");
       setPhase("reveal");
     } finally {
       setChecking(false);
@@ -216,6 +230,7 @@ export default function LarvaeSurveyPage() {
     setStrikes(next);
     setStrikeAnim(true);
     setFlash("miss");
+    playSurveyCue(next >= MAX_STRIKES ? "strikeOut" : "strike");
     setTimeout(() => { setStrikeAnim(false); setFlash(null); }, 800);
     if (next >= MAX_STRIKES) {
       if (activeId) void finishMainRound(activeId);
@@ -229,6 +244,7 @@ export default function LarvaeSurveyPage() {
   /* ─── Game start ────────────────────────────────────────────────── */
 
   async function startGame() {
+    unlockSurveyAudio();
     setError(null);
     const need = MAIN_ROUNDS + FM_QUESTIONS;
     if (boards.length < need) {
@@ -248,10 +264,12 @@ export default function LarvaeSurveyPage() {
     setFmRevealIndex(-1);
     setSubmittedRank(null);
     setPlayerName("");
+    bonusPlayedRef.current = false;
     setChecking(true);
     try {
       await loadBoard(mains[0]);
       setSecondsLeft(ANSWER_TIMER);
+      playSurveyCue("start");
       setPhase("round");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load board");
@@ -283,6 +301,7 @@ export default function LarvaeSurveyPage() {
         setRoundScore((s) => s + d.match.points);
         setFlash("hit");
         setLastFlipped(d.match.rank);
+        playSurveyCue("hit");
         setGuess("");
         setSecondsLeft(ANSWER_TIMER); // reset timer
         if (next.length === slots.length) {
@@ -325,6 +344,7 @@ export default function LarvaeSurveyPage() {
       await loadBoard(fmIds[0]);
       setFmIndex(0);
       setSecondsLeft(FM_TIMER);
+      playSurveyCue("fastMoney");
       setPhase("fastmoney");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load board");
@@ -415,6 +435,13 @@ export default function LarvaeSurveyPage() {
     if (next >= fmAnswers.length) {
       setPhase("leaderboard-submit");
     } else {
+      const a = fmAnswers[next];
+      playSurveyCue(a.points > 0 ? "fmHit" : "fmMiss");
+      const running = fmAnswers.slice(0, next + 1).reduce((s, x) => s + x.points, 0);
+      if (!bonusPlayedRef.current && running >= FM_BONUS_THRESHOLD) {
+        bonusPlayedRef.current = true;
+        setTimeout(() => playSurveyCue("bonus"), 280);
+      }
       setFmRevealIndex(next);
     }
   }
@@ -434,13 +461,16 @@ export default function LarvaeSurveyPage() {
       }).then((r) => r.json());
       setLeaderboard(d.leaderboard || []);
       setSubmittedRank(d.rank);
+      playSurveyCue("results");
       setPhase("results");
     } catch {
+      playSurveyCue("results");
       setPhase("results");
     }
   }
 
   function skipLeaderboard() {
+    playSurveyCue("results");
     setPhase("results");
   }
 
@@ -450,6 +480,14 @@ export default function LarvaeSurveyPage() {
     setRevealed([]);
     setGuess("");
     endingRef.current = false;
+  }
+
+  function toggleSound() {
+    unlockSurveyAudio();
+    const next = !soundMuted;
+    setSoundMuted(next);
+    setSurveyMuted(next);
+    if (!next) playSurveyCue("hit");
   }
 
   /* ─── Derived ───────────────────────────────────────────────────── */
@@ -465,10 +503,38 @@ export default function LarvaeSurveyPage() {
       <div className="mx-auto max-w-2xl">
         <Nav />
         <header className="mb-8">
-          <p className="font-mono text-xs tracking-widest uppercase" style={{ color: CORAL }}>
-            larv.ai field guide
-          </p>
-          <h1 className="mt-1 text-4xl font-bold tracking-tight">Larvae Survey Game</h1>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-mono text-xs tracking-widest uppercase" style={{ color: CORAL }}>
+                larv.ai field guide
+              </p>
+              <h1 className="mt-1 text-4xl font-bold tracking-tight">Larvae Survey Game</h1>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!soundMuted}
+              onClick={toggleSound}
+              className="flex shrink-0 items-center gap-2 rounded-md border px-3 py-2"
+              style={{ borderColor: `${INK}22`, background: "#fff" }}
+            >
+              <span className="font-mono text-[10px] uppercase tracking-widest opacity-55">
+                Sound
+              </span>
+              <span
+                className="relative h-5 w-9 rounded-full transition-colors"
+                style={{ background: soundMuted ? `${INK}22` : GREEN }}
+              >
+                <span
+                  className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
+                  style={{ left: soundMuted ? 2 : 18 }}
+                />
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-widest" style={{ color: soundMuted ? `${INK}66` : GREEN }}>
+                {soundMuted ? "Off" : "On"}
+              </span>
+            </button>
+          </div>
           {phase === "title" && (
             <p className="mt-2 max-w-xl text-sm opacity-75">
               We surveyed the hive. Guess what they said. Three strikes ends the round,
@@ -501,6 +567,32 @@ export default function LarvaeSurveyPage() {
                       Need {MAIN_ROUNDS + FM_QUESTIONS} boards (have {boards.length}).
                     </p>
                   )}
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!soundMuted}
+                      onClick={toggleSound}
+                      className="flex items-center gap-2 rounded-md border px-3 py-2"
+                      style={{ borderColor: `${INK}22`, background: `${INK}04` }}
+                    >
+                      <span className="font-mono text-[10px] uppercase tracking-widest opacity-55">
+                        Sound
+                      </span>
+                      <span
+                        className="relative h-5 w-9 rounded-full transition-colors"
+                        style={{ background: soundMuted ? `${INK}22` : GREEN }}
+                      >
+                        <span
+                          className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
+                          style={{ left: soundMuted ? 2 : 18 }}
+                        />
+                      </span>
+                      <span className="font-mono text-[10px] uppercase tracking-widest" style={{ color: soundMuted ? `${INK}66` : GREEN }}>
+                        {soundMuted ? "Off" : "On"}
+                      </span>
+                    </button>
+                  </div>
                   <button
                     onClick={startGame}
                     disabled={checking || !canPlay}
