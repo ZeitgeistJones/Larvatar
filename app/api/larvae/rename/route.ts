@@ -30,7 +30,9 @@ import { nameLarva, remember } from "@/lib/naming";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const TIME_BUDGET_MS = 40_000;
+// A paced naming call is ~7s and a 429 backoff can add ~20s, so stop
+// early enough that an in-flight call still finishes inside Vercel's 60s.
+const TIME_BUDGET_MS = 25_000;
 
 const CORPUS_KEY = (w: string) => `lpp:rename:corpus:${w.toLowerCase()}`;
 const RENAME_QUEUE_KEY = "lpp:rename:queue";
@@ -211,7 +213,8 @@ export async function GET(req: NextRequest) {
     error?: string;
   }[] = [];
   const failed: string[] = [];
-  const previewLimit = preview ? 8 : Infinity;
+  // Paced calls mean ~5 larvae per request; preview stops early on purpose.
+  const previewLimit = preview ? 5 : Infinity;
 
   while (
     queue.length > 0 &&
@@ -311,8 +314,15 @@ export async function GET(req: NextRequest) {
     done: false,
     renamedThisRun: renamed.length,
     remaining: queue.length,
+    bySource: renamed.reduce(
+      (acc, r) => {
+        acc[r.source] = (acc[r.source] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    ),
     sample: renamed.slice(0, 10),
-    failed: failed.length ? failed : undefined,
+    failed: failed.length ? failed.slice(0, 3) : undefined,
     message: "Not finished — visit this same URL again to continue.",
   });
 }

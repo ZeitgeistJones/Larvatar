@@ -278,6 +278,40 @@ export function remember(name: string, used: Set<string>, usedSigs: Set<string>)
   if (sig) usedSigs.add(sig);
 }
 
+/* ─── Rate limiting ────────────────────────────────────────────────── */
+
+// Gemini's free tier allows 10 requests/minute. Without pacing, a rename run
+// 429s on nearly every call and every larva silently falls through to the
+// derivation fallback — which is exactly what happened on the first run.
+const MIN_CALL_GAP_MS = 6_500;
+let lastCallAt = 0;
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Serialized, paced call. Retries once on 429 using the server's own delay. */
+async function pacedHaiku(system: string, user: string, maxTokens: number): Promise<string> {
+  const wait = lastCallAt + MIN_CALL_GAP_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt = Date.now();
+
+  try {
+    return await haiku(system, user, maxTokens);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("429")) throw e;
+
+    // Honour the retryDelay the API reports, capped so one call can't eat the
+    // whole request budget.
+    const m = msg.match(/"retryDelay":\s*"(\d+)s"/);
+    const delay = Math.min(m ? Number(m[1]) * 1000 + 500 : 20_000, 25_000);
+    await sleep(delay);
+    lastCallAt = Date.now();
+    return await haiku(system, user, maxTokens);
+  }
+}
+
 /* ─── The naming prompt ────────────────────────────────────────────── */
 
 const NAMING_SYSTEM = `You name a "larva" — a personal AI governance agent in the $CLAWD ecosystem. Each larva was trained by a different token holder, so each has its own voice and fixations.
@@ -354,7 +388,9 @@ export async function nameLarva(
   if (input.hint) rejected.push(input.hint.trim());
   let lastError = "";
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Two attempts, not three: at ~7s per paced call a third rarely fits in
+  // the request budget, and the retry prompt does most of its work on attempt 2.
+  for (let attempt = 0; attempt < 2; attempt++) {
     const rejectionNote =
       rejected.length > 0
         ? `\n\nAlready rejected (taken or malformed) — do NOT offer these or variations of them: ${rejected.join(", ")}`
@@ -373,7 +409,7 @@ ${takenSample}${rejectionNote}`;
       // Gemini counts overhead against maxOutputTokens and returns empty text
       // if the ceiling is too tight, so this needs real headroom even though
       // the answer itself is only a word or two.
-      const raw = await haiku(NAMING_SYSTEM, user, 200);
+      const raw = await pacedHaiku(NAMING_SYSTEM, user, 200);
       const candidate = cleanNameOutput(raw);
 
       if (isAcceptable(candidate, used, usedSigs)) {
@@ -391,7 +427,7 @@ ${takenSample}${rejectionNote}`;
   return {
     name: deriveFromEvidence(evidence, input, used, usedSigs),
     source: "derived",
-    attempts: 3,
+    attempts: 2,
     error: lastError,
   };
 }
@@ -407,7 +443,7 @@ function cleanNameOutput(raw: string): string {
   for (const line of lines) {
     const stripped = line.replace(/^(name|answer|nickname)\s*[:\-]\s*/i, "");
     const cleaned = stripped
-      .replace(/^["\'`*\s]+|["\'`*.,!\s]+$/g, "")
+      .replace(/^["'`*\s]+|["'`*.,!\s]+$/g, "")
       .replace(/\s+/g, " ")
       .slice(0, 32);
     if (!cleaned) continue;
@@ -440,20 +476,22 @@ function deriveFromEvidence(
     "Prophet", "Herald", "Keeper", "Marshal", "Chronicler", "Arbiter", "Courier",
   ];
 
-  // Candidate words from evidence, best signal first.
+  // Candidate words from evidence, best signal first. The filter here has to
+  // be strict: an earlier version accepted any long-enough word and produced
+  // "The Exactly", "They'd Scribe", "Came Courier" — adverbs, contractions and
+  // past-tense verbs read as broken, not quirky.
   const words: string[] = [];
+  const pushIfUsable = (raw: string) => {
+    const w = raw.trim();
+    if (isUsableNameWord(w)) words.push(titleWord(w));
+  };
+
   for (const e of evidence) {
     const quoted = e.detail.match(/"([^"]+)"/);
-    if (quoted) {
-      for (const w of quoted[1].split(/\s+/)) {
-        if (w.length >= 4 && !SWARM_COMMON.has(w.toLowerCase())) words.push(titleWord(w));
-      }
-    }
+    if (quoted) for (const w of quoted[1].split(/\s+/)) pushIfUsable(w);
   }
   for (const q of input.quirks || []) {
-    for (const w of q.split(/[^a-zA-Z-]+/)) {
-      if (w.length >= 5 && !SWARM_COMMON.has(w.toLowerCase())) words.push(titleWord(w));
-    }
+    for (const w of q.split(/[^a-zA-Z-]+/)) pushIfUsable(w);
   }
 
   const seed =
@@ -478,3 +516,53 @@ function deriveFromEvidence(
   }
   return `Specimen ${hex}`;
 }
+
+/**
+ * Whether a corpus word can stand as part of a name.
+ *
+ * Names need concrete nouns and adjectives. Function words, contractions,
+ * adverbs and inflected verbs all read as fragments — "The Exactly" and
+ * "They'd Scribe" are what happens without this check.
+ */
+function isUsableNameWord(raw: string): boolean {
+  const w = raw.toLowerCase().replace(/[^a-z'-]/g, "");
+  if (w.length < 4 || w.length > 14) return false;
+  if (w.includes("'")) return false;            // they'd, don't, holder's
+  if (SWARM_COMMON.has(w)) return false;
+  if (NON_NAME_WORDS.has(w)) return false;
+  if (w.endsWith("ly")) return false;           // exactly, really, quickly
+  if (w.endsWith("ed")) return false;           // came->fine, but shipped/asked read as verbs
+  if (w.endsWith("ing") && w.length <= 7) return false; // going, doing, being
+  if (w.endsWith("n't")) return false;
+  return true;
+}
+
+/**
+ * Function words, common verbs and connectives that survive the length filter
+ * but never work in a name.
+ */
+const NON_NAME_WORDS = new Set([
+  // pronouns / determiners
+  "they", "them", "their", "theirs", "these", "those", "this", "that", "with",
+  "from", "into", "onto", "upon", "over", "under", "about", "above", "below",
+  "your", "yours", "mine", "ours", "hers", "him", "her", "its", "itself",
+  "some", "such", "each", "every", "both", "either", "neither", "other",
+  // common verbs and auxiliaries
+  "came", "come", "comes", "went", "goes", "gone", "said", "says", "tell",
+  "told", "made", "make", "makes", "take", "takes", "took", "give", "gives",
+  "gave", "have", "has", "had", "does", "did", "done", "will", "would",
+  "shall", "should", "could", "might", "must", "can", "may", "want", "wants",
+  "need", "needs", "know", "knows", "knew", "think", "thinks", "seem", "seems",
+  "look", "looks", "feel", "feels", "keep", "keeps", "kept", "left", "leave",
+  "put", "puts", "get", "gets", "got", "let", "lets",
+  // adverbs / intensifiers
+  "very", "really", "quite", "just", "even", "also", "only", "still", "yet",
+  "already", "always", "never", "often", "again", "here", "there", "when",
+  "then", "than", "well", "much", "more", "most", "less", "least", "many",
+  "exactly", "actually", "simply", "clearly", "probably", "maybe", "perhaps",
+  // discourse
+  "because", "though", "although", "however", "while", "since", "unless",
+  "whether", "instead", "rather", "therefore", "thus", "hence", "anyway",
+  "okay", "yeah", "yes", "no", "not", "sure", "like", "something", "anything",
+  "everything", "nothing", "someone", "anyone", "everyone", "nobody",
+]);
