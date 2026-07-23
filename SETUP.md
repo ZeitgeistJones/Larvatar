@@ -103,7 +103,7 @@ Then hit the build URL again to survey 100 larvae for each new question.
 https://yourapp.vercel.app/api/larvae-survey/build?secret=YOUR_SECRET&mint=3
 ```
 
-**Automatic:** `vercel.json` schedules Monday 14:00 UTC → `/api/larvae-survey/cron` (mints 3 + builds what it can). Set `CRON_SECRET` in Vercel so cron auth works (Vercel injects `Authorization: Bearer …`).
+**Automatic:** `vercel.json` schedules daily 14:00 UTC → `/api/larvae-survey/cron` (mints 3 + builds what it can). Set `CRON_SECRET` in Vercel so cron auth works (Vercel injects `Authorization: Bearer …`). Hobby allows at most one cron run per day.
 
 
 
