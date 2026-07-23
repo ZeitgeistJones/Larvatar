@@ -567,32 +567,6 @@ export default function LarvaeSurveyPage() {
                       Need {MAIN_ROUNDS + FM_QUESTIONS} boards (have {boards.length}).
                     </p>
                   )}
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={!soundMuted}
-                      onClick={toggleSound}
-                      className="flex items-center gap-2 rounded-md border px-3 py-2"
-                      style={{ borderColor: `${INK}22`, background: `${INK}04` }}
-                    >
-                      <span className="font-mono text-[10px] uppercase tracking-widest opacity-55">
-                        Sound
-                      </span>
-                      <span
-                        className="relative h-5 w-9 rounded-full transition-colors"
-                        style={{ background: soundMuted ? `${INK}22` : GREEN }}
-                      >
-                        <span
-                          className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
-                          style={{ left: soundMuted ? 2 : 18 }}
-                        />
-                      </span>
-                      <span className="font-mono text-[10px] uppercase tracking-widest" style={{ color: soundMuted ? `${INK}66` : GREEN }}>
-                        {soundMuted ? "Off" : "On"}
-                      </span>
-                    </button>
-                  </div>
                   <button
                     onClick={startGame}
                     disabled={checking || !canPlay}
