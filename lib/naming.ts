@@ -335,7 +335,12 @@ export async function nameLarva(
   input: NamingInput,
   used: Set<string>,
   usedSigs: Set<string>
-): Promise<{ name: string; source: "hint" | "llm" | "derived"; attempts: number }> {
+): Promise<{
+  name: string;
+  source: "hint" | "llm" | "derived";
+  attempts: number;
+  error?: string;
+}> {
   // 1. Trust the profile pass when it already produced something good.
   if (input.hint && isAcceptable(input.hint, used, usedSigs)) {
     return { name: input.hint.trim(), source: "hint", attempts: 0 };
@@ -347,6 +352,7 @@ export async function nameLarva(
 
   const rejected: string[] = [];
   if (input.hint) rejected.push(input.hint.trim());
+  let lastError = "";
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const rejectionNote =
@@ -364,19 +370,19 @@ Names already taken by other larvae (avoid these and near-copies):
 ${takenSample}${rejectionNote}`;
 
     try {
-      const raw = await haiku(NAMING_SYSTEM, user, 24);
-      const candidate = raw
-        .trim()
-        .replace(/^["'`\s]+|["'`.,!\s]+$/g, "")
-        .replace(/\s+/g, " ")
-        .slice(0, 32);
+      // Gemini counts overhead against maxOutputTokens and returns empty text
+      // if the ceiling is too tight, so this needs real headroom even though
+      // the answer itself is only a word or two.
+      const raw = await haiku(NAMING_SYSTEM, user, 200);
+      const candidate = cleanNameOutput(raw);
 
       if (isAcceptable(candidate, used, usedSigs)) {
         return { name: candidate, source: "llm", attempts: attempt + 1 };
       }
       if (candidate) rejected.push(candidate);
-    } catch {
-      // Network or parse failure — try again, then fall through.
+      else lastError = "model returned no usable name";
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -386,7 +392,28 @@ ${takenSample}${rejectionNote}`;
     name: deriveFromEvidence(evidence, input, used, usedSigs),
     source: "derived",
     attempts: 3,
+    error: lastError,
   };
+}
+
+/**
+ * Extract a name from model output. The instruction asks for the bare name,
+ * but with a real token budget the model sometimes adds a preamble or wraps
+ * the answer in quotes, so take the first plausible short line rather than
+ * trusting the whole response.
+ */
+function cleanNameOutput(raw: string): string {
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const stripped = line.replace(/^(name|answer|nickname)\s*[:\-]\s*/i, "");
+    const cleaned = stripped
+      .replace(/^["\'`*\s]+|["\'`*.,!\s]+$/g, "")
+      .replace(/\s+/g, " ")
+      .slice(0, 32);
+    if (!cleaned) continue;
+    if (cleaned.split(/\s+/).length <= 3) return cleaned;
+  }
+  return "";
 }
 
 /** Title-case a single word, preserving internal hyphens. */

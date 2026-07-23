@@ -203,7 +203,13 @@ export async function GET(req: NextRequest) {
   const usedSigs = new Set<string>();
   for (const n of assigned) remember(n, used, usedSigs);
 
-  const renamed: { wallet: string; from: string; to: string; source: string }[] = [];
+  const renamed: {
+    wallet: string;
+    from: string;
+    to: string;
+    source: string;
+    error?: string;
+  }[] = [];
   const failed: string[] = [];
   const previewLimit = preview ? 8 : Infinity;
 
@@ -240,6 +246,7 @@ export async function GET(req: NextRequest) {
         from: p.profile.name,
         to: result.name,
         source: result.source,
+        ...(result.error ? { error: result.error } : {}),
       });
 
       remember(result.name, used, usedSigs);
@@ -255,8 +262,10 @@ export async function GET(req: NextRequest) {
         // Preview mustn't consume the queue.
         queue = queue.slice(1);
       }
-    } catch {
-      failed.push(item.wallet);
+    } catch (e) {
+      failed.push(
+        `${item.wallet.slice(0, 10)}: ${e instanceof Error ? e.message : String(e)}`
+      );
       if (!preview) {
         queue.shift();
         await setRenameQueue(queue);
@@ -272,7 +281,9 @@ export async function GET(req: NextRequest) {
       done: true,
       preview: true,
       note: "Nothing saved. Drop &preview=true to apply.",
+      queueLength: queue.length,
       sample: renamed,
+      failed,
     });
   }
 
