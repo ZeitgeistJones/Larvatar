@@ -141,6 +141,7 @@ export default function LarvaeSurveyPage() {
   const fmIdsRef = useRef<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const bonusPlayedRef = useRef(false);
+  const boardAnswersRef = useRef<Answer[]>([]);
 
   useEffect(() => {
     setSoundMuted(getSurveyMuted());
@@ -152,6 +153,7 @@ export default function LarvaeSurveyPage() {
   useEffect(() => { questionRef.current = question; }, [question]);
   useEffect(() => { fmIndexRef.current = fmIndex; }, [fmIndex]);
   useEffect(() => { fmIdsRef.current = fmIds; }, [fmIds]);
+  useEffect(() => { boardAnswersRef.current = boardAnswers; }, [boardAnswers]);
 
   /* Load boards + leaderboard; auto-brew missing boards (no secret URL). */
   useEffect(() => {
@@ -295,22 +297,33 @@ export default function LarvaeSurveyPage() {
   }, [fetchFullBoard]);
 
   function stepBoardReveal() {
-    if (pendingReveal.length === 0) return;
-    const [rank, ...rest] = pendingReveal;
-    const answer = boardAnswers.find((a) => a.rank === rank);
-    if (answer) {
-      setRevealed((prev) => {
-        if (prev.some((p) => p.rank === rank)) return prev;
-        return [...prev, answer];
-      });
-      setLastFlipped(rank);
-      playSurveyCue("hit");
-    }
-    setPendingReveal(rest);
-    if (rest.length === 0) {
-      setTimeout(() => playSurveyCue("reveal"), 200);
-    }
+    setPendingReveal((prev) => {
+      if (prev.length === 0) return prev;
+      const [rank, ...rest] = prev;
+      const answer = boardAnswersRef.current.find((a) => a.rank === rank);
+      if (answer) {
+        setRevealed((r) => {
+          if (r.some((p) => p.rank === rank)) return r;
+          return [...r, answer];
+        });
+        setLastFlipped(rank);
+        playSurveyCue("hit");
+      }
+      if (rest.length === 0) {
+        setTimeout(() => playSurveyCue("reveal"), 200);
+      }
+      return rest;
+    });
   }
+
+  /* Auto flip unrevealed answers one-at-a-time (no click). */
+  useEffect(() => {
+    if (phase !== "reveal") return;
+    if (pendingReveal.length === 0) return;
+    const t = setTimeout(() => stepBoardReveal(), 1250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, pendingReveal]);
 
   function handleStrike() {
     const next = strikes + 1;
@@ -546,6 +559,16 @@ export default function LarvaeSurveyPage() {
       setFmRevealIndex(next);
     }
   }
+
+  /* Auto Swarm Rush reveal one-at-a-time. */
+  useEffect(() => {
+    if (phase !== "fm-reveal") return;
+    if (fmAnswers.length === 0) return;
+    const delay = fmRevealIndex < 0 ? 800 : 1400;
+    const t = setTimeout(() => stepFmReveal(), delay);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, fmRevealIndex, fmAnswers.length]);
 
   /* ─── Leaderboard submit ────────────────────────────────────────── */
 
@@ -823,12 +846,7 @@ export default function LarvaeSurveyPage() {
                     </span>
                     {answer ? (
                       <>
-                        <div className="min-w-0 flex-1">
-                          <span className="font-bold tracking-wide">{answer.label}</span>
-                          {answer.rationale && (
-                            <p className="mt-0.5 text-xs leading-snug opacity-55">{answer.rationale}</p>
-                          )}
-                        </div>
+                        <span className="min-w-0 flex-1 font-bold tracking-wide">{answer.label}</span>
                         <span className="shrink-0 font-mono text-sm font-bold" style={{ color: CORAL }}>
                           {answer.points}
                         </span>
@@ -917,12 +935,7 @@ export default function LarvaeSurveyPage() {
                     </span>
                     {answer ? (
                       <>
-                        <div className="min-w-0 flex-1">
-                          <span className="font-bold tracking-wide">{answer.label}</span>
-                          {answer.rationale && (
-                            <p className="mt-0.5 text-xs leading-snug opacity-55">{answer.rationale}</p>
-                          )}
-                        </div>
+                        <span className="min-w-0 flex-1 font-bold tracking-wide">{answer.label}</span>
                         <span className="shrink-0 font-mono text-sm font-bold" style={{ color: CORAL }}>
                           {answer.points}
                         </span>
@@ -939,34 +952,39 @@ export default function LarvaeSurveyPage() {
             </div>
 
             {pendingReveal.length === 0 && boardAnswers.length > 0 && (
-              <div className="mb-5 space-y-3 rounded-xl border p-4" style={{ borderColor: `${INK}15`, background: CARD }}>
-                <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">voices</p>
+              <div className="mb-5 space-y-4 rounded-xl border p-4" style={{ borderColor: `${GOLD}33`, background: CARD }}>
+                <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: GOLD }}>
+                  why the hive
+                </p>
                 {boardAnswers
                   .slice()
                   .sort((a, b) => a.rank - b.rank)
-                  .map((a) => (
-                    <div key={a.rank}>
-                      <p className="text-sm font-bold">
-                        {a.rank}. {a.label}{" "}
-                        <span className="font-mono text-xs font-normal opacity-50">
-                          {a.points} pts · ×{a.count}
-                        </span>
-                      </p>
-                      {a.rationale && <p className="text-xs opacity-60">{a.rationale}</p>}
-                      <p className="text-xs opacity-45">{a.voices.join(" · ")}</p>
-                    </div>
-                  ))}
+                  .map((a) => {
+                    const why =
+                      (a.rationale || "").trim() ||
+                      `${a.count} larva${a.count === 1 ? "" : "e"} landed here — e.g. "${(a.sample || a.label).slice(0, 80)}"`;
+                    return (
+                      <div key={a.rank} className="border-t pt-3 first:border-t-0 first:pt-0" style={{ borderColor: `${INK}12` }}>
+                        <p className="text-sm font-bold">
+                          {a.rank}. {a.label}{" "}
+                          <span className="font-mono text-xs font-normal opacity-50">
+                            {a.points} pts · ×{a.count}
+                          </span>
+                        </p>
+                        <p className="mt-1 text-sm leading-snug opacity-75">{why}</p>
+                        {a.voices?.length > 0 && (
+                          <p className="mt-1 text-[11px] opacity-40">{a.voices.join(" · ")}</p>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             )}
 
             {pendingReveal.length > 0 ? (
-              <button
-                onClick={stepBoardReveal}
-                className="w-full rounded-lg px-5 py-3 text-sm font-semibold text-white"
-                style={{ background: GOLD }}
-              >
-                Reveal #{pendingReveal[0]}
-              </button>
+              <p className="text-center font-mono text-xs uppercase tracking-widest opacity-50">
+                revealing #{pendingReveal[0]}…
+              </p>
             ) : (
               <button
                 onClick={advanceAfterReveal}
@@ -1129,13 +1147,13 @@ export default function LarvaeSurveyPage() {
               })}
             </div>
 
-            <button
-              onClick={stepFmReveal}
-              className="mt-5 w-full rounded-lg px-5 py-3 text-sm font-semibold text-white"
-              style={{ background: GOLD }}
-            >
-              {fmRevealIndex + 1 >= fmAnswers.length ? "See final score →" : "Reveal next"}
-            </button>
+            <p className="mt-5 text-center font-mono text-xs uppercase tracking-widest opacity-50">
+              {fmRevealIndex + 1 >= fmAnswers.length
+                ? "wrapping up…"
+                : fmRevealIndex < 0
+                  ? "revealing…"
+                  : `revealing ${fmRevealIndex + 2} of ${fmAnswers.length}…`}
+            </p>
           </section>
         )}
 
