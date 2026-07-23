@@ -70,7 +70,35 @@ Keep reloading that URL (without needing `&reset=true` again) until the response
 
 re-run the build URL whenever there are new forum posts / labs ideas. it overwrites cleanly.
 
-## cost + limits notes
+## survey game — more boards + auto mint
+
+Questions live in Redis (`lpp:survey:questions`). The seed list in `lib/larvae-survey.ts` (q01–q24) is merged in on first touch; weekly cron invents more creative ones.
+
+**Add the 12 new creative seed boards** (keeps your existing 100-larva boards):
+
+```
+https://yourapp.vercel.app/api/larvae-survey/build?secret=YOUR_SECRET
+```
+
+Refresh until `done: true`. Do **not** use `&reset=true` unless you want to wipe all boards.
+
+**Mint more creative questions anytime:**
+
+```
+https://yourapp.vercel.app/api/larvae-survey/mint?secret=YOUR_SECRET&count=5
+```
+
+Then hit the build URL again to survey 100 larvae for each new question.
+
+**Or mint + build in one go:**
+
+```
+https://yourapp.vercel.app/api/larvae-survey/build?secret=YOUR_SECRET&mint=3
+```
+
+**Automatic:** `vercel.json` schedules Monday 14:00 UTC → `/api/larvae-survey/cron` (mints 3 + builds what it can). Set `CRON_SECRET` in Vercel so cron auth works (Vercel injects `Authorization: Bearer …`).
+
+
 
 - profiles: one haiku call per larva, one time per build. re-runs regenerate all —
   fine at current scale, add a "skip if fresh" check later if larva count grows a lot.

@@ -48,11 +48,18 @@ type SurveyResponse = {
 
 // ─── Question set ──────────────────────────────────────────────────
 //
-// Written to produce spread, not consensus. A question everyone answers the
-// same way makes a one-answer board, which is not a game. These are phrased
-// to invite different fixations from different personalities.
+// Seed list is the starting bank. Runtime questions live in Redis so minting
+// can grow the pool without a deploy. Build always reads the bank.
+
+export type SurveyQuestion = {
+  id: string;
+  text: string;
+  source: "seed" | "minted";
+  createdAt: string;
+};
 
 export const SURVEY_QUESTIONS: { id: string; text: string }[] = [
+  // Classic board-style (spread, not consensus)
   { id: "q01", text: "Name something a larva would never trust." },
   { id: "q02", text: "Name the fastest way to lose the hive's respect." },
   { id: "q03", text: "Name something every good proposal has." },
@@ -65,10 +72,195 @@ export const SURVEY_QUESTIONS: { id: string; text: string }[] = [
   { id: "q10", text: "Name what makes a project actually survive." },
   { id: "q11", text: "Name something people promise and never deliver." },
   { id: "q12", text: "Name a question that ends a debate immediately." },
+  // Creative / personality bait — analogies & vibes, not "utility" every time
+  { id: "q13", text: "If CLAWD's story was a popular movie, which movie would it be?" },
+  { id: "q14", text: "Name the animal a larva would reincarnate as." },
+  { id: "q15", text: "Name a TV show that describes the hive's group chat." },
+  { id: "q16", text: "Name the karaoke song the hive always ruins." },
+  { id: "q17", text: "Name a board game that feels like shipping on-chain." },
+  { id: "q18", text: "Name the sitcom character that would thrive in the hive." },
+  { id: "q19", text: "Name something a larva would put on a dating profile." },
+  { id: "q20", text: "Name the emoji that starts a fight in the hive." },
+  { id: "q21", text: "Name a childhood toy that explains crypto culture." },
+  { id: "q22", text: "Name the food that best describes governance drama." },
+  { id: "q23", text: "Name a superhero a larva secretly thinks it is." },
+  { id: "q24", text: "Name something you'd hear in a larva's nightmare." },
 ];
 
-export function getQuestion(id: string): { id: string; text: string } | null {
-  return SURVEY_QUESTIONS.find((q) => q.id === id) || null;
+/** Soft cap so weekly minting doesn't grow forever. */
+export const MAX_SURVEY_QUESTIONS = 60;
+
+const QUESTIONS_KEY = "lpp:survey:questions";
+
+function seedAsQuestions(): SurveyQuestion[] {
+  const stamp = "2026-01-01";
+  return SURVEY_QUESTIONS.map((q) => ({
+    id: q.id,
+    text: q.text,
+    source: "seed" as const,
+    createdAt: stamp,
+  }));
+}
+
+async function loadQuestionBankRaw(): Promise<SurveyQuestion[]> {
+  const raw = await redis.get<string | SurveyQuestion[]>(QUESTIONS_KEY);
+  if (!raw) return [];
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+async function saveQuestionBank(questions: SurveyQuestion[]) {
+  await redis.set(QUESTIONS_KEY, JSON.stringify(questions));
+}
+
+/**
+ * Ensure Redis has at least the seed questions. Safe to call often.
+ * New seed entries added in code are merged in on the next call.
+ */
+export async function ensureQuestionBank(): Promise<SurveyQuestion[]> {
+  const bank = await loadQuestionBankRaw();
+  const byId = new Map(bank.map((q) => [q.id, q]));
+  let changed = bank.length === 0;
+
+  for (const s of seedAsQuestions()) {
+    if (!byId.has(s.id)) {
+      byId.set(s.id, s);
+      changed = true;
+    }
+  }
+
+  const merged = Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+  if (changed) await saveQuestionBank(merged);
+  return merged;
+}
+
+export async function getQuestionBank(): Promise<SurveyQuestion[]> {
+  return ensureQuestionBank();
+}
+
+export async function getQuestion(id: string): Promise<SurveyQuestion | null> {
+  const bank = await getQuestionBank();
+  return bank.find((q) => q.id === id) || null;
+}
+
+function nextQuestionIds(bank: SurveyQuestion[], count: number): string[] {
+  let max = 0;
+  for (const q of bank) {
+    const m = /^q(\d+)$/i.exec(q.id);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  const ids: string[] = [];
+  for (let i = 1; i <= count; i++) {
+    ids.push(`q${String(max + i).padStart(2, "0")}`);
+  }
+  return ids;
+}
+
+function normQuestion(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tooSimilar(a: string, b: string): boolean {
+  const wa = new Set(normQuestion(a).split(" ").filter((w) => w.length > 2));
+  const wb = new Set(normQuestion(b).split(" ").filter((w) => w.length > 2));
+  if (wa.size === 0 || wb.size === 0) return normQuestion(a) === normQuestion(b);
+  let overlap = 0;
+  for (const w of wa) if (wb.has(w)) overlap++;
+  const ratio = overlap / Math.min(wa.size, wb.size);
+  return ratio >= 0.7 || normQuestion(a) === normQuestion(b);
+}
+
+const MINT_SYSTEM = `You invent survey questions for a Family Feud–style game about larvae — personal AI agents in the CLAWD / crypto-build hive.
+
+Goal: questions that different larvae will answer DIFFERENTLY, with personality — not dry "utility" prompts where everyone says audit / roadmap / transparency.
+
+Prefer creative formats:
+- Analogies: "If CLAWD's story was a movie, which movie…", "Name the animal a larva would reincarnate as."
+- Pop culture / vibes: TV shows, songs, board games, sitcom characters, emojis, food metaphors, nightmares, dating-profile bits.
+- Social / hive drama that still invites weird answers.
+
+Avoid:
+- Generic governance checklists (audits, roadmaps, KPIs) as the obvious only answer.
+- Near-duplicates of the existing list.
+- Yes/no or one-correct-answer trivia.
+
+Rules:
+- One sentence each, under 110 characters.
+- May start with Name / If / What / Which / Who.
+- Return ONLY a JSON array of strings, no markdown, no preamble.
+Example: ["If the hive was a reality show, which show would it be?","Name the snack a larva rage-buys after a bad proposal."]`;
+
+/**
+ * Mint up to `count` new questions into the Redis bank.
+ * Dedupes against the existing bank. No-ops if already at MAX_SURVEY_QUESTIONS.
+ */
+export async function mintQuestions(count = 3): Promise<{
+  minted: SurveyQuestion[];
+  bankSize: number;
+  skippedReason?: string;
+}> {
+  const bank = await getQuestionBank();
+  const room = MAX_SURVEY_QUESTIONS - bank.length;
+  if (room <= 0) {
+    return { minted: [], bankSize: bank.length, skippedReason: "at cap" };
+  }
+  const want = Math.min(count, room);
+
+  const existingList = bank.map((q) => `- ${q.text}`).join("\n");
+  const raw = await haiku(
+    MINT_SYSTEM,
+    `Existing questions (do not duplicate):\n${existingList}\n\nInvent ${want} NEW questions.`,
+    500
+  );
+
+  let parsed: unknown;
+  try {
+    const clean = raw.replace(/```json|```/g, "").trim();
+    const start = clean.indexOf("[");
+    const end = clean.lastIndexOf("]");
+    parsed = JSON.parse(clean.slice(start, end + 1));
+  } catch {
+    return { minted: [], bankSize: bank.length, skippedReason: "parse failed" };
+  }
+
+  if (!Array.isArray(parsed)) {
+    return { minted: [], bankSize: bank.length, skippedReason: "not an array" };
+  }
+
+  const candidates = parsed
+    .map((t) => String(t || "").trim())
+    .filter((t) => t.length >= 12 && t.length <= 140)
+    .filter((t) => /^(name|if |what |which |who |where )/i.test(t));
+
+  const accepted: string[] = [];
+  for (const text of candidates) {
+    if (accepted.length >= want) break;
+    const clash =
+      bank.some((q) => tooSimilar(q.text, text)) ||
+      accepted.some((a) => tooSimilar(a, text));
+    if (!clash) {
+      accepted.push(text.replace(/\s+/g, " ").trim());
+    }
+  }
+
+  if (accepted.length === 0) {
+    return { minted: [], bankSize: bank.length, skippedReason: "all duplicates" };
+  }
+
+  const ids = nextQuestionIds(bank, accepted.length);
+  const minted: SurveyQuestion[] = accepted.map((text, i) => ({
+    id: ids[i],
+    text,
+    source: "minted" as const,
+    createdAt: new Date().toISOString().slice(0, 10),
+  }));
+
+  const next = [...bank, ...minted].sort((a, b) => a.id.localeCompare(b.id));
+  await saveQuestionBank(next);
+  return { minted, bankSize: next.length };
 }
 
 // ─── Redis keys ────────────────────────────────────────────────────
@@ -180,12 +372,12 @@ function pickRespondents(
 
 const SURVEY_SYSTEM = `You are a larva — a personal AI governance agent in the $CLAWD ecosystem — answering a survey question in character.
 
-Answer with a SHORT phrase: 2-6 words, the single thing that first comes to mind given your values and fixations. Not a sentence. Not an explanation. Just the answer itself.
+Answer with a SHORT phrase: 2-6 words when possible (movie titles, animal names, song names, and proper nouns are fine even if a bit longer). Not a sentence. Not an explanation. Just the answer itself.
 
-Good: "vague roadmaps" / "unaudited contracts" / "promises without receipts"
+Good: "The Social Network" / "racoon with a spreadsheet" / "unaudited contracts"
 Bad: "I think the thing larvae distrust most would be vague roadmaps because..."
 
-Answer from YOUR personality, not the obvious general answer. If your fixation is unusual, give the unusual answer — that is what makes the survey interesting.
+Answer from YOUR personality, not the obvious general answer. If your fixation is unusual, give the unusual answer — that is what makes the survey interesting. Lean into humor and analogy when the question invites it.
 
 Respond with ONLY the phrase, nothing else. No quotes, no punctuation at the end.`;
 
@@ -324,7 +516,7 @@ const MAX_BOARD_ANSWERS = 8;
  * Costs roughly N + 1 Haiku calls.
  */
 export async function buildBoard(questionId: string): Promise<SurveyBoard | null> {
-  const q = getQuestion(questionId);
+  const q = await getQuestion(questionId);
   if (!q) return null;
 
   const index = await getIndex();

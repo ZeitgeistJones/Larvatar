@@ -5,26 +5,27 @@
 //
 //   https://larvatar.vercel.app/api/larvae-survey/build?secret=YOUR_SECRET
 //
-// First visit: queues every question that doesn't have a board yet.
-// Every visit after: builds boards until the time budget runs out.
+// First visit: queues every question in the Redis bank that doesn't have a
+// board yet (seed + minted). Every visit after: builds until the time budget.
 //
-// One board = ~101 Haiku calls (100 surveys + 1 clustering), so expect roughly
-// one board per visit (sometimes none if the budget runs out mid-survey).
+// One board = ~101 LLM calls (100 surveys + 1 clustering).
 //
-// &reset=true wipes all boards and rebuilds from scratch.
-// &only=q03 rebuilds a single question (useful when one board comes out flat).
+// &reset=true wipes all boards (not the question bank) and rebuilds.
+// &only=q03 rebuilds a single question.
+// &mint=3 invents N new creative questions into the bank, then continues build.
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  SURVEY_QUESTIONS,
   buildBoard,
   saveBoard,
-  getBoard,
   getBoardIndex,
   getBuildQueue,
   setBuildQueue,
   clearBuildQueue,
   clearAllBoards,
+  getQuestionBank,
+  mintQuestions,
+  ensureQuestionBank,
 } from "@/lib/larvae-survey";
 
 export const maxDuration = 60;
@@ -36,6 +37,16 @@ export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
   if (!secret || secret !== process.env.LARVAE_BUILD_SECRET) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  await ensureQuestionBank();
+
+  // Optional: mint creative questions into the bank before building.
+  const mintParam = req.nextUrl.searchParams.get("mint");
+  let minted: Awaited<ReturnType<typeof mintQuestions>> | null = null;
+  if (mintParam) {
+    const n = Math.min(12, Math.max(1, parseInt(mintParam, 10) || 3));
+    minted = await mintQuestions(n);
   }
 
   // Single-question rebuild
@@ -53,6 +64,7 @@ export async function GET(req: NextRequest) {
       ok: true,
       done: true,
       mode: "single",
+      minted: minted?.minted,
       board: {
         id: board.id,
         question: board.question,
@@ -71,19 +83,23 @@ export async function GET(req: NextRequest) {
   const start = Date.now();
   let queue = await getBuildQueue();
   const existing = await getBoardIndex();
+  const bank = await getQuestionBank();
 
-  // Collection phase — queue anything without a board yet.
+  // Collection phase — queue anything in the bank without a board yet.
   let justCollected = false;
   if (queue.length === 0) {
-    const missing = SURVEY_QUESTIONS.filter((q) => !existing.includes(q.id)).map(
-      (q) => q.id
-    );
+    const missing = bank.filter((q) => !existing.includes(q.id)).map((q) => q.id);
     if (missing.length === 0) {
       return NextResponse.json({
         ok: true,
         done: true,
         built: existing.length,
-        message: "All boards already built. Add &reset=true to rebuild.",
+        questions: bank.length,
+        minted: minted?.minted,
+        message:
+          minted && minted.minted.length > 0
+            ? "Minted questions; boards already exist for the rest. Visit again to build new ones, or add &mint=N."
+            : "All boards already built. Add &mint=3 to invent new questions, or &reset=true to rebuild boards.",
       });
     }
     queue = missing;
@@ -123,6 +139,7 @@ export async function GET(req: NextRequest) {
       totalBoards: finalIndex.length,
       builtThisRun,
       failed,
+      minted: minted?.minted,
     });
   }
 
@@ -133,6 +150,7 @@ export async function GET(req: NextRequest) {
     builtThisRun,
     remaining: queue.length,
     failed: failed.length > 0 ? failed : undefined,
+    minted: minted?.minted,
     message: "Not finished — visit this same URL again to continue.",
   });
 }
