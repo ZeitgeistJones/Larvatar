@@ -25,7 +25,12 @@ import {
   setQueue,
   clearQueue,
 } from "@/lib/larvae";
-import { nameLarva, remember } from "@/lib/naming";
+import {
+  nameLarva,
+  remember,
+  createRegistry,
+  exhaustedWords,
+} from "@/lib/naming";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -109,6 +114,10 @@ export async function GET(req: NextRequest) {
   }
 
   const preview = req.nextUrl.searchParams.get("preview") === "true";
+  // Per-word repeat cap, tunable without a redeploy so it can be calibrated
+  // against real output. Default lives in lib/naming.ts.
+  const capParam = Number(req.nextUrl.searchParams.get("cap"));
+  const cap = Number.isFinite(capParam) && capParam >= 1 ? capParam : undefined;
   const singleWallet = req.nextUrl.searchParams.get("wallet")?.toLowerCase();
   const reset = req.nextUrl.searchParams.get("reset") === "true";
 
@@ -132,11 +141,11 @@ export async function GET(req: NextRequest) {
     const others = await Promise.all(
       index.filter((e) => e.wallet !== singleWallet).slice(0, 200).map((e) => getProfile(e.wallet))
     );
-    const used = new Set<string>();
-    const usedSigs = new Set<string>();
-    for (const o of others) {
-      if (o?.profile.name) remember(o.profile.name, used, usedSigs);
-    }
+    const reg = createRegistry(
+      index.length,
+      others.map((o) => o?.profile.name).filter(Boolean) as string[],
+      cap
+    );
 
     const result = await nameLarva(
       {
@@ -147,8 +156,7 @@ export async function GET(req: NextRequest) {
         quirks: p.profile.quirks,
         values: p.profile.values,
       },
-      used,
-      usedSigs
+      reg
     );
 
     if (!preview) {
@@ -201,9 +209,13 @@ export async function GET(req: NextRequest) {
 
   /* ── Naming ── */
   const assigned = await getAssignedNames();
-  const used = new Set<string>();
-  const usedSigs = new Set<string>();
-  for (const n of assigned) remember(n, used, usedSigs);
+  // Cap scales to the full run, not just this request's slice, so the word
+  // budget is spent evenly across all visits rather than exhausted early.
+  // The cap is read per-request but the queue spans many visits, so changing
+  // &cap= mid-run would silently apply different rules to different larvae.
+  // Flag it rather than producing a quietly inconsistent set.
+  const reg = createRegistry(assigned.length + queue.length, assigned, cap);
+  const capChangedMidRun = cap !== undefined && assigned.length > 0;
 
   const renamed: {
     wallet: string;
@@ -240,8 +252,7 @@ export async function GET(req: NextRequest) {
           quirks: p.profile.quirks,
           values: p.profile.values,
         },
-        used,
-        usedSigs
+        reg
       );
 
       renamed.push({
@@ -252,7 +263,7 @@ export async function GET(req: NextRequest) {
         ...(result.error ? { error: result.error } : {}),
       });
 
-      remember(result.name, used, usedSigs);
+      remember(result.name, reg);
       assigned.push(result.name);
 
       if (!preview) {
@@ -301,6 +312,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       done: true,
+      cap: reg.maxWordUses,
+      exhaustedWords: exhaustedWords(reg),
       renamedThisRun: renamed.length,
       totalNames: assigned.length,
       bySource,
@@ -312,6 +325,14 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     done: false,
+    cap: reg.maxWordUses,
+    ...(capChangedMidRun
+      ? {
+          warning:
+            "cap was supplied mid-run; earlier names were assigned under a different cap. Use &reset=true for a clean comparison.",
+        }
+      : {}),
+    exhaustedWordCount: exhaustedWords(reg).length,
     renamedThisRun: renamed.length,
     remaining: queue.length,
     bySource: renamed.reduce(

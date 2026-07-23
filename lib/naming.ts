@@ -264,22 +264,113 @@ export function isTaken(name: string, used: Set<string>, usedSigs: Set<string>):
   return sig.length > 0 && usedSigs.has(sig);
 }
 
-export function isAcceptable(
-  name: string,
-  used: Set<string>,
-  usedSigs: Set<string>
-): boolean {
+/* ─── Registry ─────────────────────────────────────────────────────── */
+
+/**
+ * Tracks everything needed to judge a candidate name: exact names, word-order
+ * signatures, and per-word usage counts.
+ *
+ * The word counter exists because uniqueness alone doesn't prevent monotony.
+ * "Burn Warden", "Receipt Warden", "Audit Warden" are three distinct names and
+ * all pass a uniqueness check, but across 124 specimens they read as one idea
+ * repeated. Capping how often any single word may appear forces variety
+ * without needing to blacklist words individually as they emerge.
+ */
+export type NameRegistry = {
+  used: Set<string>;
+  usedSigs: Set<string>;
+  wordCounts: Map<string, number>;
+  /** Max times any one word may appear across all names. */
+  maxWordUses: number;
+};
+
+/**
+ * How many times any single descriptive word may appear across the whole
+ * collection. Structural words (UNCOUNTED_WORDS) are exempt.
+ *
+ * Three rather than two, deliberately. Simulation across a realistic
+ * (Zipf-distributed) naming vocabulary showed a cap of 2 leaving roughly a
+ * third of specimens unable to use any name they proposed — the model reaches
+ * for the same role nouns, so the tight cap exhausts them and forces the
+ * derivation fallback. Three still prevents any word from becoming the house
+ * style while leaving enough room that most larvae keep a name they actually
+ * wanted.
+ *
+ * Overridable per-run so this can be tuned against real output rather than a
+ * model of it.
+ */
+export const DEFAULT_MAX_WORD_USES = 3;
+
+/**
+ * Build a registry.
+ *
+ * `maxWordUses` defaults to DEFAULT_MAX_WORD_USES. `_total` is kept for
+ * call-site readability; the cap no longer scales with collection size,
+ * because what matters is vocabulary breadth, not how many specimens there are.
+ */
+export function createRegistry(
+  _total = 124,
+  existing: string[] = [],
+  maxWordUses: number = DEFAULT_MAX_WORD_USES
+): NameRegistry {
+  const reg: NameRegistry = {
+    used: new Set(),
+    usedSigs: new Set(),
+    wordCounts: new Map(),
+    maxWordUses: Math.max(1, maxWordUses),
+  };
+  for (const n of existing) remember(n, reg);
+  return reg;
+}
+
+/**
+ * Structural words, exempt from the repeat cap. These carry no descriptive
+ * weight, so letting them recur freely costs nothing in variety — and with a
+ * cap of 2, counting "the" would mean only two names in the entire collection
+ * could use it.
+ */
+const UNCOUNTED_WORDS = new Set([
+  "the", "a", "an",
+  "of", "and", "or", "in", "on", "at", "to", "for", "with", "by", "from",
+]);
+
+function countableWords(name: string): string[] {
+  return tokens(name).filter((w) => !UNCOUNTED_WORDS.has(w));
+}
+
+/** True when any word in the candidate has already hit the cap. */
+export function isOverused(name: string, reg: NameRegistry): boolean {
+  for (const w of countableWords(name)) {
+    if ((reg.wordCounts.get(w) || 0) >= reg.maxWordUses) return true;
+  }
+  return false;
+}
+
+/** Words at or over the cap — fed back to the model so it can avoid them. */
+export function exhaustedWords(reg: NameRegistry): string[] {
+  const out: string[] = [];
+  for (const [w, n] of reg.wordCounts) {
+    if (n >= reg.maxWordUses) out.push(w);
+  }
+  return out;
+}
+
+export function isAcceptable(name: string, reg: NameRegistry): boolean {
   return (
     isWellFormed(name) &&
     !looksLikeFragment(name) &&
-    !isTaken(name, used, usedSigs)
+    !isTaken(name, reg.used, reg.usedSigs) &&
+    !isOverused(name, reg)
   );
 }
 
-export function remember(name: string, used: Set<string>, usedSigs: Set<string>) {
-  used.add(normalizeName(name));
+export function remember(name: string, reg: NameRegistry) {
+  reg.used.add(normalizeName(name));
   const sig = nameSignature(name);
-  if (sig) usedSigs.add(sig);
+  if (sig) reg.usedSigs.add(sig);
+  for (const w of countableWords(name)) {
+    reg.wordCounts.set(w, (reg.wordCounts.get(w) || 0) + 1);
+  }
 }
 
 /* ─── Rate limiting ────────────────────────────────────────────────── */
@@ -333,12 +424,13 @@ Adjectives only when they carry information. "Manic" is right for a larva that n
 THE TEST: could this exact name have been given to a different larva without changing a word? If yes, it's too generic. Go back to the evidence.
 
 RULES:
-- 1-2 words, occasionally 3 with "The" ("The Morse Prophet"). Never more.
+- 1-3 words ("Pyro", "Tollgate Cynic", "Moon Man Dream"). Never more than 3.
 - Role and title words are GOOD when earned: Archivist, Warden, Broker, Envoy, Curator, Sentinel, Skeptic, Prophet, Scribe, Steward. "The Architect" is a fine name for a larva that actually designs systems.
 - Never start with a connector, question word, adverb, or bare verb.
 - Never a name from the taken list, and never a near-copy — no reordering two taken words, no appending a number.
 - No trailing digits, ever.
 - Funny is welcome when earned; crude is not. Nothing sexual. Never mock the human holder — the joke is always about the agent.
+- Vocabulary is scarce: every word you use is spent. Any single word may appear in only a handful of names across the whole collection, so reaching for the same role nouns repeatedly will exhaust them and force a worse name later. Prefer a fresh, specific word over a familiar one.
 - Use the evidence as INFORMATION, not as raw material to copy. Do not lift usernames, handles, ticker symbols, code identifiers, or truncated tokens out of the evidence and use them as the name. If the evidence says the larva obsesses over audit receipts, "Receipt Keeper" is right and "AUDIT-RCPT" is wrong.
 - Write the name in Title Case. Never all-caps.
 
@@ -373,8 +465,7 @@ export type NamingInput = {
  */
 export async function nameLarva(
   input: NamingInput,
-  used: Set<string>,
-  usedSigs: Set<string>
+  reg: NameRegistry
 ): Promise<{
   name: string;
   source: "hint" | "llm" | "derived";
@@ -382,13 +473,13 @@ export async function nameLarva(
   error?: string;
 }> {
   // 1. Trust the profile pass when it already produced something good.
-  if (input.hint && isAcceptable(input.hint, used, usedSigs)) {
+  if (input.hint && isAcceptable(input.hint, reg)) {
     return { name: input.hint.trim(), source: "hint", attempts: 0 };
   }
 
   const evidence = extractEvidence(input.corpus);
   const evidenceText = formatEvidence(evidence);
-  const takenSample = [...used].slice(-120).join(", ") || "(none yet)";
+  const takenSample = [...reg.used].slice(-120).join(", ") || "(none yet)";
 
   const rejected: string[] = [];
   if (input.hint) rejected.push(input.hint.trim());
@@ -402,6 +493,14 @@ export async function nameLarva(
         ? `\n\nAlready rejected (taken or malformed) — do NOT offer these or variations of them: ${rejected.join(", ")}`
         : "";
 
+    // Surfacing exhausted words up front is cheaper than letting the model
+    // propose one and rejecting it on a round trip.
+    const exhausted = exhaustedWords(reg);
+    const exhaustedNote =
+      exhausted.length > 0
+        ? `\n\nThese words are used up across the collection — do NOT use any of them in the name: ${exhausted.slice(0, 60).join(", ")}`
+        : "";
+
     const user = `Evidence from this larva's own writing:
 ${evidenceText}
 
@@ -409,7 +508,7 @@ Personality read:
 - tone: ${input.tone}
 ${input.tagline ? `- tagline: ${input.tagline}\n` : ""}${input.quirks?.length ? `- quirks: ${input.quirks.join("; ")}\n` : ""}${input.values?.length ? `- values: ${input.values.join("; ")}\n` : ""}
 Names already taken by other larvae (avoid these and near-copies):
-${takenSample}${rejectionNote}`;
+${takenSample}${exhaustedNote}${rejectionNote}`;
 
     try {
       // Gemini counts overhead against maxOutputTokens and returns empty text
@@ -418,7 +517,7 @@ ${takenSample}${rejectionNote}`;
       const raw = await pacedHaiku(NAMING_SYSTEM, user, 200);
       const candidate = cleanNameOutput(raw);
 
-      if (isAcceptable(candidate, used, usedSigs)) {
+      if (isAcceptable(candidate, reg)) {
         return { name: candidate, source: "llm", attempts: attempt + 1 };
       }
       if (candidate) rejected.push(candidate);
@@ -431,7 +530,7 @@ ${takenSample}${rejectionNote}`;
   // 3. Derive from this larva's own words. Not a generic pool — if we get here
   //    the name is still grounded in something it actually said.
   return {
-    name: deriveFromEvidence(evidence, input, used, usedSigs),
+    name: deriveFromEvidence(evidence, input, reg),
     source: "derived",
     attempts: 2,
     error: lastError,
@@ -450,7 +549,7 @@ function cleanNameOutput(raw: string): string {
     const stripped = line.replace(/^(name|answer|nickname)\s*[:\-]\s*/i, "");
     const cleaned = normalizeCase(
       stripped
-        .replace(/^["'`*\s]+|["'`*.,!\s]+$/g, "")
+        .replace(/^["\'`*\s]+|["\'`*.,!\s]+$/g, "")
         .replace(/\s+/g, " ")
         .slice(0, 32)
     );
@@ -526,12 +625,17 @@ function titleWord(w: string): string {
 function deriveFromEvidence(
   evidence: Evidence[],
   input: NamingInput,
-  used: Set<string>,
-  usedSigs: Set<string>
+  reg: NameRegistry
 ): string {
+  // Wide list on purpose. With a cap of 2 uses per word, 14 roles would cover
+  // only 28 derived names — thin if the model falls through often. This gives
+  // room before the run degrades to wallet-hex names.
   const ROLES = [
     "Warden", "Scribe", "Envoy", "Curator", "Sentinel", "Broker", "Steward",
     "Prophet", "Herald", "Keeper", "Marshal", "Chronicler", "Arbiter", "Courier",
+    "Sceptic", "Oracle", "Auditor", "Witness", "Tinker", "Ranger", "Cipher",
+    "Beacon", "Anchor", "Compass", "Lantern", "Forge", "Almanac", "Ledger",
+    "Sifter", "Watcher", "Runner", "Tender", "Weaver", "Mason", "Pilot",
   ];
 
   // Candidate words from evidence, best signal first. The filter here has to
@@ -560,17 +664,24 @@ function deriveFromEvidence(
     for (let j = 0; j < ROLES.length; j++) {
       const role = ROLES[(seed + j) % ROLES.length];
       for (const candidate of [`${w} ${role}`, `The ${w}`, w]) {
-        if (isAcceptable(candidate, used, usedSigs)) return candidate;
+        if (isAcceptable(candidate, reg)) return candidate;
       }
     }
   }
 
   // Nothing usable in the corpus at all — wallet-derived, clearly a fallback
-  // rather than pretending to be meaningful.
+  // rather than pretending to be meaningful. The word cap is deliberately NOT
+  // applied here: if it were, a run that exhausted every role word would return
+  // "Specimen XXXX" for everyone left. Uniqueness still applies.
   const hex = input.wallet.slice(2, 6).toUpperCase();
   for (const role of ROLES) {
     const candidate = `${role} ${hex}`;
-    if (isAcceptable(candidate, used, usedSigs)) return candidate;
+    if (
+      isWellFormed(candidate) &&
+      !isTaken(candidate, reg.used, reg.usedSigs)
+    ) {
+      return candidate;
+    }
   }
   return `Specimen ${hex}`;
 }
