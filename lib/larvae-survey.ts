@@ -59,32 +59,32 @@ export type SurveyQuestion = {
 };
 
 export const SURVEY_QUESTIONS: { id: string; text: string }[] = [
-  // Classic board-style (spread, not consensus)
-  { id: "q01", text: "Name something a larva would never trust." },
-  { id: "q02", text: "Name the fastest way to lose the hive's respect." },
-  { id: "q03", text: "Name something every good proposal has." },
-  { id: "q04", text: "Name a red flag in a build update." },
-  { id: "q05", text: "Name something the hive argues about too much." },
-  { id: "q06", text: "Name what a larva checks first before approving anything." },
-  { id: "q07", text: "Name something that sounds impressive but means nothing." },
-  { id: "q08", text: "Name the worst reason to ship something." },
-  { id: "q09", text: "Name something a larva secretly admires in a rival." },
-  { id: "q10", text: "Name what makes a project actually survive." },
-  { id: "q11", text: "Name something people promise and never deliver." },
-  { id: "q12", text: "Name a question that ends a debate immediately." },
-  // Creative / personality bait — analogies & vibes, not "utility" every time
-  { id: "q13", text: "If CLAWD's story was a popular movie, which movie would it be?" },
-  { id: "q14", text: "Name the animal a larva would reincarnate as." },
-  { id: "q15", text: "Name a TV show that describes the hive's group chat." },
-  { id: "q16", text: "Name the karaoke song the hive always ruins." },
-  { id: "q17", text: "Name a board game that feels like shipping on-chain." },
-  { id: "q18", text: "Name the sitcom character that would thrive in the hive." },
-  { id: "q19", text: "Name something a larva would put on a dating profile." },
-  { id: "q20", text: "Name the emoji that starts a fight in the hive." },
-  { id: "q21", text: "Name a childhood toy that explains crypto culture." },
-  { id: "q22", text: "Name the food that best describes governance drama." },
-  { id: "q23", text: "Name a superhero a larva secretly thinks it is." },
-  { id: "q24", text: "Name something you'd hear in a larva's nightmare." },
+  // All creative / personality bait — analogies, vibes, pop culture.
+  // Avoid dry "utility" prompts where every larva says audit/roadmap.
+  { id: "q01", text: "If CLAWD's story was a popular movie, which movie would it be?" },
+  { id: "q02", text: "Name the animal a larva would reincarnate as." },
+  { id: "q03", text: "Name a TV show that describes the hive's group chat." },
+  { id: "q04", text: "Name the karaoke song the hive always ruins." },
+  { id: "q05", text: "Name a board game that feels like shipping on-chain." },
+  { id: "q06", text: "Name the sitcom character that would thrive in the hive." },
+  { id: "q07", text: "Name something a larva would put on a dating profile." },
+  { id: "q08", text: "Name the emoji that starts a fight in the hive." },
+  { id: "q09", text: "Name a childhood toy that explains crypto culture." },
+  { id: "q10", text: "Name the food that best describes governance drama." },
+  { id: "q11", text: "Name a superhero a larva secretly thinks it is." },
+  { id: "q12", text: "Name something you'd hear in a larva's nightmare." },
+  { id: "q13", text: "If the hive was a reality show, which show would it be?" },
+  { id: "q14", text: "Name the snack a larva rage-buys after a bad proposal." },
+  { id: "q15", text: "Name a Disney villain that belongs in Discord moderation." },
+  { id: "q16", text: "Name the Olympic sport that feels like waiting for a mint." },
+  { id: "q17", text: "Name a fashion accessory a larva would never take off." },
+  { id: "q18", text: "Name the conspiracy theory larvae whisper at 3am." },
+  { id: "q19", text: "Name a video game boss that feels like a token unlock." },
+  { id: "q20", text: "Name the houseplant that matches hive politics." },
+  { id: "q21", text: "Name a weather forecast for the hive's mood this week." },
+  { id: "q22", text: "Name the fictional job title a larva puts on LinkedIn." },
+  { id: "q23", text: "Name a magic spell that would fix every roadmap." },
+  { id: "q24", text: "Name the last thing a larva would say before rage-quitting." },
 ];
 
 /** Soft cap so weekly minting doesn't grow forever. */
@@ -110,6 +110,14 @@ async function loadQuestionBankRaw(): Promise<SurveyQuestion[]> {
 
 async function saveQuestionBank(questions: SurveyQuestion[]) {
   await redis.set(QUESTIONS_KEY, JSON.stringify(questions));
+}
+
+/** Wipe Redis questions and reseed from SURVEY_QUESTIONS (drops minted too). */
+export async function resetQuestionBankFromSeed(): Promise<SurveyQuestion[]> {
+  await redis.del(QUESTIONS_KEY);
+  const seeded = seedAsQuestions();
+  await saveQuestionBank(seeded);
+  return seeded;
 }
 
 /**

@@ -1,18 +1,13 @@
 // app/api/larvae-survey/build/route.ts
 //
-// Chunked board build — same resumable pattern as the profile, election, and
-// alignment builds. Keep visiting the SAME url until it says "done": true.
+// Chunked board build — keep visiting until "done": true.
 //
-//   https://larvatar.vercel.app/api/larvae-survey/build?secret=YOUR_SECRET
+//   /api/larvae-survey/build?secret=YOUR_SECRET
 //
-// First visit: queues every question in the Redis bank that doesn't have a
-// board yet (seed + minted). Every visit after: builds until the time budget.
-//
-// One board = ~101 LLM calls (100 surveys + 1 clustering).
-//
-// &reset=true wipes all boards (not the question bank) and rebuilds.
-// &only=q03 rebuilds a single question.
-// &mint=3 invents N new creative questions into the bank, then continues build.
+// &fresh=true  — wipe boards + question bank, reseed creative list, rebuild
+// &reset=true  — wipe boards only (keeps question bank)
+// &mint=3      — invent N new questions, then build missing boards
+// &only=q03    — rebuild one question
 
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -26,6 +21,7 @@ import {
   getQuestionBank,
   mintQuestions,
   ensureQuestionBank,
+  resetQuestionBankFromSeed,
 } from "@/lib/larvae-survey";
 
 export const maxDuration = 60;
@@ -39,7 +35,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  await ensureQuestionBank();
+  const fresh = req.nextUrl.searchParams.get("fresh") === "true";
+  const reset = fresh || req.nextUrl.searchParams.get("reset") === "true";
+
+  if (fresh) {
+    await resetQuestionBankFromSeed();
+  } else {
+    await ensureQuestionBank();
+  }
+
+  if (reset) {
+    await clearAllBoards();
+    await clearBuildQueue();
+  }
 
   // Optional: mint creative questions into the bank before building.
   const mintParam = req.nextUrl.searchParams.get("mint");
@@ -74,18 +82,11 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const reset = req.nextUrl.searchParams.get("reset") === "true";
-  if (reset) {
-    await clearAllBoards();
-    await clearBuildQueue();
-  }
-
   const start = Date.now();
   let queue = await getBuildQueue();
   const existing = await getBoardIndex();
   const bank = await getQuestionBank();
 
-  // Collection phase — queue anything in the bank without a board yet.
   let justCollected = false;
   if (queue.length === 0) {
     const missing = bank.filter((q) => !existing.includes(q.id)).map((q) => q.id);
@@ -99,7 +100,7 @@ export async function GET(req: NextRequest) {
         message:
           minted && minted.minted.length > 0
             ? "Minted questions; boards already exist for the rest. Visit again to build new ones, or add &mint=N."
-            : "All boards already built. Add &mint=3 to invent new questions, or &reset=true to rebuild boards.",
+            : "All boards already built. Add &fresh=true for a full creative reset, &mint=3 for new questions, or &reset=true to rebuild boards.",
       });
     }
     queue = missing;
@@ -140,6 +141,7 @@ export async function GET(req: NextRequest) {
       builtThisRun,
       failed,
       minted: minted?.minted,
+      fresh: fresh || undefined,
     });
   }
 
@@ -151,6 +153,7 @@ export async function GET(req: NextRequest) {
     remaining: queue.length,
     failed: failed.length > 0 ? failed : undefined,
     minted: minted?.minted,
-    message: "Not finished — visit this same URL again to continue.",
+    fresh: fresh || undefined,
+    message: "Not finished — visit this same URL again (without fresh/reset) to continue.",
   });
 }

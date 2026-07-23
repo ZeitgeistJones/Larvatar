@@ -74,6 +74,14 @@ re-run the build URL whenever there are new forum posts / labs ideas. it overwri
 
 Questions live in Redis (`lpp:survey:questions`). The seed list in `lib/larvae-survey.ts` (q01–q24) is merged in on first touch; weekly cron invents more creative ones.
 
+**Full creative reset** (wipes boring boards + old question bank, reseeds 24 fun questions, rebuilds):
+
+```
+https://yourapp.vercel.app/api/larvae-survey/build?secret=YOUR_SECRET&fresh=true
+```
+
+Then refresh **without** `&fresh=true` until `done: true`.
+
 **Add the 12 new creative seed boards** (keeps your existing 100-larva boards):
 
 ```
