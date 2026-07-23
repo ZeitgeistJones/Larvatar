@@ -109,7 +109,7 @@ export default function LarvaeSurveyPage() {
   const [sessionScore, setSessionScore] = useState(0);
   /** Full board answers (for end-of-round one-by-one flips). */
   const [boardAnswers, setBoardAnswers] = useState<Answer[]>([]);
-  /** Ranks still hidden after the round ends — flipped with "Reveal next". */
+  /** Ranks still hidden after the round ends — auto-flipped one at a time. */
   const [pendingReveal, setPendingReveal] = useState<number[]>([]);
 
   /* Fast Money */

@@ -67,10 +67,10 @@ export default function CredibilityPage() {
     if (passive) return { label: "Tracker", color: `${INK}77`, note: "mostly abstains; scores by following the room" };
     const hiWin = l.winRate >= avgWin;
     const hiConv = l.conviction >= avgConv;
-    if (hiWin && hiConv) return { label: "Bellwether", color: GOLD, note: "commits hard and still lands with the swarm" };
-    if (hiWin && !hiConv) return { label: "Diplomat", color: SEA, note: "hedges, and the hedge is usually where consensus lands" };
-    if (!hiWin && hiConv) return { label: "Dissenter", color: CORAL, note: "takes strong positions the swarm doesn't follow" };
-    return { label: "Drifter", color: `${INK}88`, note: "neither commits nor converges" };
+    if (hiWin && hiConv) return { label: "Hard takes, with the room", color: GOLD, note: "commits hard and still lands with the swarm" };
+    if (hiWin && !hiConv) return { label: "Soft takes, with the room", color: SEA, note: "hedges, and the hedge is usually where consensus lands" };
+    if (!hiWin && hiConv) return { label: "Hard takes, against the room", color: CORAL, note: "takes strong positions the swarm doesn't follow" };
+    return { label: "Soft takes, against the room", color: `${INK}88`, note: "neither commits nor converges" };
   }
 
   const [data, setData] = useState<Payload | null>(null);

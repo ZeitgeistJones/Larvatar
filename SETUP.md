@@ -24,8 +24,7 @@ npm install @upstash/redis
 ## env vars (vercel dashboard → settings → environment variables)
 
 ```
-GEMINI_API_KEY=...                 # primary LLM (cheap). optional GEMINI_MODEL=gemini-2.5-flash-lite
-ANTHROPIC_API_KEY=sk-ant-...       # fallback if Gemini missing/fails
+GEMINI_API_KEY=...                 # required LLM. optional GEMINI_MODEL=gemini-2.5-flash-lite
 UPSTASH_REDIS_REST_URL=...
 UPSTASH_REDIS_REST_TOKEN=...
 LARVAE_BUILD_SECRET=pick-any-long-random-string

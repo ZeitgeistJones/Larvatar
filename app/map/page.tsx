@@ -61,12 +61,68 @@ type Payload = {
   hive: Hive;
 };
 
-// Minimum posts for a larva to be plotted — below this the rates are noise.
+// Quiet floor — rates from fewer posts are mostly noise. Always applied.
 const MIN_POSTS = 5;
 
 const PAD = { top: 36, right: 28, bottom: 48, left: 56 };
 const W = 760;
 const H = 520;
+
+function dotRadius(posts: number) {
+  return 4 + Math.min(6, Math.sqrt(posts) / 2.4);
+}
+
+/**
+ * Nudge overlapping dots apart while springing them back toward their true
+ * data position — so you can see close neighbors without inventing a new map.
+ */
+function spreadDots(
+  items: { wallet: string; ax: number; ay: number; r: number }[]
+): Map<string, { x: number; y: number }> {
+  const pts = items.map((it) => ({ ...it, x: it.ax, y: it.ay }));
+  const gap = 2.8;
+  const xLo = PAD.left + 6;
+  const xHi = W - PAD.right - 6;
+  const yLo = PAD.top + 6;
+  const yHi = H - PAD.bottom - 6;
+
+  for (let iter = 0; iter < 55; iter++) {
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const a = pts[i];
+        const b = pts[j];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist < 0.01) {
+          // Identical coords — fan out on a tiny deterministic spiral
+          const ang = ((i * 37 + j * 17) % 360) * (Math.PI / 180);
+          dx = Math.cos(ang);
+          dy = Math.sin(ang);
+          dist = 0.01;
+        }
+        const min = a.r + b.r + gap;
+        if (dist < min) {
+          const push = ((min - dist) / 2) * 0.85;
+          dx /= dist;
+          dy /= dist;
+          a.x -= dx * push;
+          a.y -= dy * push;
+          b.x += dx * push;
+          b.y += dy * push;
+        }
+      }
+    }
+    for (const p of pts) {
+      p.x += (p.ax - p.x) * 0.1;
+      p.y += (p.ay - p.y) * 0.1;
+      p.x = Math.min(xHi, Math.max(xLo, p.x));
+      p.y = Math.min(yHi, Math.max(yLo, p.y));
+    }
+  }
+
+  return new Map(pts.map((p) => [p.wallet, { x: p.x, y: p.y }]));
+}
 
 export default function MapPage() {
   const { colors } = useTheme();
@@ -81,8 +137,6 @@ export default function MapPage() {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Larva | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  const [showClusters, setShowClusters] = useState(false);
   const detailRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,8 +152,8 @@ export default function MapPage() {
 
   const plotted = useMemo(() => {
     if (!data) return [];
-    return data.larvae.filter((l) => showAll || l.posts >= MIN_POSTS);
-  }, [data, showAll]);
+    return data.larvae.filter((l) => l.posts >= MIN_POSTS);
+  }, [data]);
 
   const byWallet = useMemo(() => {
     const m = new Map<string, Larva>();
@@ -129,38 +183,43 @@ export default function MapPage() {
   const py = (v: number) =>
     H - PAD.bottom - ((v - scales.yMin) / (scales.yMax - scales.yMin || 1)) * (H - PAD.top - PAD.bottom);
 
-  /** Star edges: hub → other plotted members. Never a complete clique. */
+  const positions = useMemo(() => {
+    return spreadDots(
+      plotted.map((l) => ({
+        wallet: l.wallet,
+        ax: px(l.conviction),
+        ay: py(l.winRate),
+        r: dotRadius(l.posts),
+      }))
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plotted, scales.xMin, scales.xMax, scales.yMin, scales.yMax]);
+
+  const posOf = (l: Larva) => positions.get(l.wallet) || { x: px(l.conviction), y: py(l.winRate) };
+
+  // Paint large dots first so small ones sit on top and stay readable.
+  const paintOrder = useMemo(
+    () => [...plotted].sort((a, b) => b.posts - a.posts),
+    [plotted]
+  );
+
+  /** Star edges from the selected larva only — no global hairball. */
   const clusterLinks = useMemo(() => {
-    if (!data) return [] as { a: Larva; b: Larva; color: string; strong: boolean }[];
-    const links: { a: Larva; b: Larva; color: string; strong: boolean }[] = [];
-
-    const starFrom = (hub: Larva, members: string[], color: string, strong: boolean) => {
-      for (const w of members) {
-        if (w === hub.wallet) continue;
-        const other = byWallet.get(w);
-        if (!other) continue;
-        links.push({ a: hub, b: other, color, strong });
-      }
-    };
-
-    // Selection always reveals that larva's cluster (even if toggle is off).
-    if (selected?.faction !== null && selected?.faction !== undefined) {
-      const f = data.factions.find((x) => x.id === selected.faction);
-      if (f) starFrom(selected, f.members, factionColor(f.id), true);
-    } else if (showClusters) {
-      // Toggle on, nothing selected: one hub per faction (most posts), not every edge.
-      for (const f of data.factions) {
-        const members = f.members
-          .map((w) => byWallet.get(w))
-          .filter(Boolean) as Larva[];
-        if (members.length < 2) continue;
-        const hub = [...members].sort((a, b) => b.posts - a.posts)[0];
-        starFrom(hub, f.members, factionColor(f.id), false);
-      }
+    if (!data || !selected || selected.faction === null || selected.faction === undefined) {
+      return [] as { a: Larva; b: Larva; color: string }[];
     }
-
+    const f = data.factions.find((x) => x.id === selected.faction);
+    if (!f) return [];
+    const links: { a: Larva; b: Larva; color: string }[] = [];
+    const color = factionColor(f.id);
+    for (const w of f.members) {
+      if (w === selected.wallet) continue;
+      const other = byWallet.get(w);
+      if (!other) continue;
+      links.push({ a: selected, b: other, color });
+    }
     return links;
-  }, [data, selected, showClusters, byWallet, INK, CORAL, SEA, GOLD]);
+  }, [data, selected, byWallet, INK, CORAL, SEA, GOLD]);
 
   const focusSet = useMemo(() => {
     if (!selected) return null as Set<string> | null;
@@ -181,34 +240,34 @@ export default function MapPage() {
   const avgX = data?.hive.avgConviction ?? 0.5;
   const avgY = data?.hive.avgWinRate ?? 0.5;
 
-  // Quadrant label positions (centers of each hive-average quadrant)
+  // Plain-English quadrant captions
   const qLabels = data
     ? [
         {
-          key: "quiet",
-          label: "Quiet followers",
-          hint: "hedge · with swarm",
+          key: "soft-with",
+          label: "Soft takes,",
+          hint: "with the room",
           x: (scales.xMin + avgX) / 2,
           y: (avgY + scales.yMax) / 2,
         },
         {
-          key: "bell",
-          label: "Bellwethers",
-          hint: "commit · with swarm",
+          key: "hard-with",
+          label: "Hard takes,",
+          hint: "with the room",
           x: (avgX + scales.xMax) / 2,
           y: (avgY + scales.yMax) / 2,
         },
         {
-          key: "hedge",
-          label: "Hedgers",
-          hint: "hedge · off swarm",
+          key: "soft-against",
+          label: "Soft takes,",
+          hint: "against the room",
           x: (scales.xMin + avgX) / 2,
           y: (scales.yMin + avgY) / 2,
         },
         {
-          key: "diss",
-          label: "Dissidents",
-          hint: "commit · off swarm",
+          key: "hard-against",
+          label: "Hard takes,",
+          hint: "against the room",
           x: (avgX + scales.xMax) / 2,
           y: (scales.yMin + avgY) / 2,
         },
@@ -239,44 +298,20 @@ export default function MapPage() {
 
         {data && (
           <>
-            {/* ── Plot first — the visual is the hero ── */}
             <section
               className="mb-6 rounded-xl border p-4"
               style={{ borderColor: `${INK}22`, background: CARD }}
             >
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-xs uppercase tracking-widest opacity-60">
-                    where each larva sits
-                  </p>
-                  <p className="mt-1 max-w-xl text-sm opacity-70">
-                    Left → more hedging · Right → more hard yes/no · Up → matches the swarm more often
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => setShowClusters((s) => !s)}
-                    className="rounded-md border px-3 py-1 font-mono text-[10px] uppercase tracking-widest transition-opacity hover:opacity-70"
-                    style={{
-                      borderColor: showClusters ? SEA : `${INK}25`,
-                      background: showClusters ? `${SEA}12` : "transparent",
-                      color: showClusters ? SEA : INK,
-                    }}
-                  >
-                    {showClusters ? "clusters on" : "show clusters"}
-                  </button>
-                  <button
-                    onClick={() => setShowAll((s) => !s)}
-                    className="rounded-md border px-3 py-1 font-mono text-[10px] uppercase tracking-widest transition-opacity hover:opacity-70"
-                    style={{ borderColor: `${INK}25` }}
-                  >
-                    {showAll ? `showing all ${data.larvaeCount}` : `${MIN_POSTS}+ posts only`}
-                  </button>
-                </div>
+              <div className="mb-3">
+                <p className="font-mono text-xs uppercase tracking-widest opacity-60">
+                  where each larva sits
+                </p>
+                <p className="mt-1 max-w-xl text-sm opacity-70">
+                  Left → more hedging · Right → more hard yes/no · Up → matches the swarm more often
+                </p>
               </div>
 
               <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 540 }}>
-                {/* Soft quadrant wash */}
                 <rect
                   x={px(scales.xMin)}
                   y={py(scales.yMax)}
@@ -310,9 +345,8 @@ export default function MapPage() {
                   opacity={0.045}
                 />
 
-                {/* Quadrant captions */}
                 {qLabels.map((q) => (
-                  <g key={q.key} opacity={selected ? 0.25 : 0.55} style={{ pointerEvents: "none" }}>
+                  <g key={q.key} opacity={selected ? 0.22 : 0.5} style={{ pointerEvents: "none" }}>
                     <text
                       x={px(q.x)}
                       y={py(q.y) - 6}
@@ -328,17 +362,16 @@ export default function MapPage() {
                       x={px(q.x)}
                       y={py(q.y) + 8}
                       textAnchor="middle"
-                      fontSize="9"
+                      fontSize="10"
                       fill={INK}
-                      fillOpacity={0.55}
-                      fontFamily="ui-monospace, monospace"
+                      fillOpacity={0.65}
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
                     >
                       {q.hint}
                     </text>
                   </g>
                 ))}
 
-                {/* Hive-average crosshairs */}
                 <line
                   x1={px(avgX)}
                   y1={PAD.top}
@@ -358,7 +391,6 @@ export default function MapPage() {
                   strokeDasharray="4 4"
                 />
 
-                {/* Axes */}
                 <line
                   x1={PAD.left}
                   y1={H - PAD.bottom}
@@ -431,33 +463,36 @@ export default function MapPage() {
                   </text>
                 ))}
 
-                {/* Cluster links — star only, never a complete graph */}
-                {clusterLinks.map(({ a, b, color, strong }) => (
-                  <line
-                    key={`${a.wallet}-${b.wallet}`}
-                    x1={px(a.conviction)}
-                    y1={py(a.winRate)}
-                    x2={px(b.conviction)}
-                    y2={py(b.winRate)}
-                    stroke={color}
-                    strokeOpacity={strong ? 0.45 : 0.28}
-                    strokeWidth={strong ? 1.75 : 1.25}
-                  />
-                ))}
+                {clusterLinks.map(({ a, b, color }) => {
+                  const pa = posOf(a);
+                  const pb = posOf(b);
+                  return (
+                    <line
+                      key={`${a.wallet}-${b.wallet}`}
+                      x1={pa.x}
+                      y1={pa.y}
+                      x2={pb.x}
+                      y2={pb.y}
+                      stroke={color}
+                      strokeOpacity={0.4}
+                      strokeWidth={1.5}
+                    />
+                  );
+                })}
 
-                {/* Dots */}
-                {plotted.map((l) => {
+                {paintOrder.map((l) => {
                   const isSel = selected?.wallet === l.wallet;
                   const isHov = hovered === l.wallet;
                   const inFocus = !focusSet || focusSet.has(l.wallet);
-                  const r = 4 + Math.min(6, Math.sqrt(l.posts) / 2.4);
+                  const r = dotRadius(l.posts);
+                  const { x, y } = posOf(l);
                   const showLabel = isHov || isSel;
                   return (
                     <g key={l.wallet}>
                       <circle
-                        cx={px(l.conviction)}
-                        cy={py(l.winRate)}
-                        r={isSel || isHov ? r + 3 : r}
+                        cx={x}
+                        cy={y}
+                        r={isSel || isHov ? r + 2.5 : r}
                         fill={
                           l.avatar
                             ? `hsl(${l.avatar.hue} 62% 58%)`
@@ -470,8 +505,8 @@ export default function MapPage() {
                               ? factionColor(l.faction)
                               : CARD
                         }
-                        strokeWidth={isSel ? 2.5 : l.faction !== null ? 1.75 : 1}
-                        opacity={selected ? (inFocus ? 0.95 : 0.12) : 0.88}
+                        strokeWidth={isSel ? 2.5 : l.faction !== null ? 1.5 : 1}
+                        opacity={selected ? (inFocus ? 0.95 : 0.14) : 0.9}
                         style={{ cursor: "pointer", transition: "opacity 140ms ease" }}
                         onMouseEnter={() => setHovered(l.wallet)}
                         onMouseLeave={() => setHovered(null)}
@@ -480,8 +515,8 @@ export default function MapPage() {
                       {showLabel && (
                         <g style={{ pointerEvents: "none" }}>
                           <text
-                            x={px(l.conviction)}
-                            y={py(l.winRate) - r - 18}
+                            x={x}
+                            y={y - r - 18}
                             textAnchor="middle"
                             fontSize="11"
                             fontWeight="700"
@@ -490,15 +525,15 @@ export default function MapPage() {
                             {l.name}
                           </text>
                           <text
-                            x={px(l.conviction)}
-                            y={py(l.winRate) - r - 5}
+                            x={x}
+                            y={y - r - 5}
                             textAnchor="middle"
                             fontSize="9"
                             fill={INK}
                             fillOpacity={0.6}
                             fontFamily="ui-monospace, monospace"
                           >
-                            {Math.round(l.winRate * 100)}% align · {Math.round(l.conviction * 100)}% conv
+                            {Math.round(l.winRate * 100)}% align · {Math.round(l.conviction * 100)}% hard
                           </text>
                         </g>
                       )}
@@ -511,17 +546,14 @@ export default function MapPage() {
                 <span>dot size = posts answered</span>
                 <span>dot color = specimen</span>
                 <span>dashed = hive average</span>
-                {(showClusters || (selected != null && selected.faction !== null)) && (
-                  <span>colored ring / link = agreement cluster</span>
-                )}
+                <span>nearby dots nudged apart so they don&apos;t stack</span>
               </div>
               <p className="mt-2 text-xs opacity-50">
                 Click a larva to see its place in the swarm
-                {selected ? " — links show who it clusters with." : "."}
+                {selected && selected.faction !== null ? " — lines show who it tends to agree with." : "."}
               </p>
             </section>
 
-            {/* ── Selected larva ── */}
             <div ref={detailRef}>
               {selected && (
                 <section
@@ -568,7 +600,7 @@ export default function MapPage() {
                       accent={selected.winRate > data.hive.avgWinRate ? GOLD : undefined}
                     />
                     <Stat
-                      label="conviction"
+                      label="hard takes"
                       value={`${Math.round(selected.conviction * 100)}%`}
                       accent={selected.conviction > data.hive.avgConviction ? CORAL : undefined}
                     />
@@ -606,7 +638,6 @@ export default function MapPage() {
               )}
             </div>
 
-            {/* ── Hive summary ── */}
             <section
               className="mb-6 grid grid-cols-2 gap-4 rounded-xl border p-5 sm:grid-cols-4"
               style={{ borderColor: `${INK}22`, background: CARD }}
@@ -618,12 +649,11 @@ export default function MapPage() {
                 value={`${Math.round(data.hive.avgWinRate * 100)}%`}
               />
               <Stat
-                label="avg conviction"
+                label="avg hard takes"
                 value={`${Math.round(data.hive.avgConviction * 100)}%`}
               />
             </section>
 
-            {/* ── The finding ── */}
             <section
               className="mb-6 rounded-xl border p-5"
               style={{ borderColor: `${GOLD}55`, background: CARD }}
@@ -642,19 +672,17 @@ export default function MapPage() {
               </p>
             </section>
 
-            {/* ── Factions ── */}
             {data.factions.length > 0 && (
               <section
                 className="rounded-xl border p-5"
                 style={{ borderColor: `${INK}22`, background: CARD }}
               >
                 <p className="font-mono text-xs uppercase tracking-widest opacity-60">
-                  clusters
+                  agreement groups
                 </p>
                 <p className="mt-1 mb-4 text-sm opacity-70">
                   Groups that agree with each other above 70% across at least five shared
-                  posts. Small and loosely bound — worth watching, not worth alarm. Turn on
-                  “show clusters” above, or click a member, to see them on the map.
+                  posts. Small and loosely bound — click a member on the map to see the links.
                 </p>
                 <div className="space-y-3">
                   {data.factions.map((f) => (
@@ -665,7 +693,7 @@ export default function MapPage() {
                     >
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <p className="font-bold" style={{ color: factionColor(f.id) }}>
-                          Cluster {f.id + 1} · {f.members.length} members
+                          Group {f.id + 1} · {f.members.length} members
                         </p>
                         <p className="font-mono text-[10px] uppercase tracking-widest opacity-55">
                           {Math.round(f.cohesion * 100)}% internal agreement ·{" "}

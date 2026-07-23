@@ -207,10 +207,9 @@ export async function collectIntoQueue(): Promise<number> {
   return queue.length;
 }
 
-// ---------- llm (gemini primary, anthropic fallback) ----------
+// ---------- llm (gemini only) ----------
 // Kept named `haiku` so every call site (survey / alignment / ask / election)
-// picks up the routing without changes. Gemini first to cut cost; Haiku only
-// if Gemini is missing, errors, or returns empty.
+// picks up the routing without changes.
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 
@@ -229,7 +228,7 @@ async function callGemini(
   };
 
   // Prefer no-thinking config for short survey/profile calls. If the model
-  // rejects thinkingConfig, retry once without it before failing over.
+  // rejects thinkingConfig, retry once without it before failing.
   const configs = [
     { maxOutputTokens: maxTokens, temperature: 0.7, thinkingConfig: { thinkingBudget: 0 } },
     { maxOutputTokens: maxTokens, temperature: 0.7 },
@@ -261,45 +260,8 @@ async function callGemini(
   throw new Error(lastErr || "gemini failed");
 }
 
-async function callAnthropic(
-  system: string,
-  user: string,
-  maxTokens: number
-): Promise<string> {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("ANTHROPIC_API_KEY not set");
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content: user }],
-    }),
-  });
-  if (!res.ok) throw new Error(`anthropic ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  return (data.content || [])
-    .filter((b: any) => b.type === "text")
-    .map((b: any) => b.text)
-    .join("\n");
-}
-
 export async function haiku(system: string, user: string, maxTokens = 700): Promise<string> {
-  if (process.env.GEMINI_API_KEY) {
-    try {
-      return await callGemini(system, user, maxTokens);
-    } catch {
-      // fall through to Anthropic
-    }
-  }
-  return callAnthropic(system, user, maxTokens);
+  return callGemini(system, user, maxTokens);
 }
 
 export function parseJsonLoose(text: string): any {
