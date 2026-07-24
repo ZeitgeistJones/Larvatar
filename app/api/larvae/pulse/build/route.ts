@@ -16,9 +16,11 @@ import {
   finalizePulse,
   getPulseQueue,
   getPulseResult,
+  isPulseHealthy,
   pulseProgress,
   savePulseQueue,
   savePulseResult,
+  themesComplete,
 } from "@/lib/pulse";
 
 export const maxDuration = 60;
@@ -32,7 +34,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  if (req.nextUrl.searchParams.get("reset") === "true") {
+  const wantReset = req.nextUrl.searchParams.get("reset") === "true";
+  if (wantReset) {
     await clearPulse();
   }
 
@@ -43,7 +46,7 @@ export async function GET(req: NextRequest) {
 
   if (!q) {
     const existing = await getPulseResult();
-    if (existing && req.nextUrl.searchParams.get("reset") !== "true") {
+    if (existing && isPulseHealthy(existing) && !wantReset) {
       return NextResponse.json({
         ok: true,
         done: true,
@@ -52,6 +55,8 @@ export async function GET(req: NextRequest) {
         totalResponses: existing.meta.totalResponses,
       });
     }
+    // Unhealthy leftover — wipe and rebuild
+    if (existing) await clearPulse();
 
     const n = await collectCheckInsIntoQueue();
     if (n === 0) {
@@ -74,12 +79,18 @@ export async function GET(req: NextRequest) {
   let batches = 0;
   while (timeLeft()) {
     if (q.phase === "finalize") {
-      const result = finalizePulse(q);
+      if (!themesComplete(q)) {
+        q.phase = "themes";
+        await savePulseQueue(q);
+        continue;
+      }
+      const result = await finalizePulse(q);
       await savePulseResult(result);
       await clearPulseQueue();
       return NextResponse.json({
         ok: true,
         done: true,
+        healthy: isPulseHealthy(result),
         waves: result.waves.length,
         totalResponses: result.meta.totalResponses,
         positive: result.positive.length,

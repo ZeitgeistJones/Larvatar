@@ -88,6 +88,8 @@ export type PulseQueue = {
   waves: WaveWork[];
   /** Which LLM phase we are in. */
   phase: "sentiment" | "themes" | "finalize";
+  /** True after one pass re-classifying high-unclear waves. */
+  repairPass?: boolean;
 };
 
 /* ─── Redis ────────────────────────────────────────────────────────── */
@@ -216,8 +218,31 @@ export async function collectCheckInsIntoQueue(): Promise<number> {
 
 /* ─── Sentiment classification ─────────────────────────────────────── */
 
-const SENT_BATCH = 18;
+const SENT_BATCH = 10;
 const VALID_SENT: PulseSentiment[] = ["upbeat", "frustrated", "mixed", "unclear"];
+
+async function haikuRetry(
+  system: string,
+  user: string,
+  maxTokens: number,
+  temperature: number,
+  tries = 3
+): Promise<string | null> {
+  let last = "";
+  for (let i = 0; i < tries; i++) {
+    try {
+      const text = await haiku(system, user, maxTokens, temperature);
+      if (text && text.trim()) return text;
+      last = "empty";
+    } catch (e) {
+      last = e instanceof Error ? e.message : "error";
+      // brief backoff for rate limits
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
+  }
+  console.warn("[pulse] haikuRetry failed:", last);
+  return null;
+}
 
 const SENT_SYSTEM = `You classify larva check-in replies about a holder's experience with larv.ai.
 
@@ -269,21 +294,31 @@ export async function classifySentimentBatch(q: PulseQueue): Promise<boolean> {
     .map((r, i) => `${i + 1}. ${r.text.replace(/\s+/g, " ").slice(0, 380)}`)
     .join("\n");
 
-  try {
-    const raw = await haiku(SENT_SYSTEM, user, 400, 0.2);
-    const parsed = parseSentimentArray(raw, slice.length);
-    if (!parsed) {
-      // Don't stall forever — mark unclear and advance
-      wave.sentiments.push(...slice.map(() => "unclear" as PulseSentiment));
-    } else {
-      wave.sentiments.push(...parsed);
-    }
-  } catch {
+  const raw = await haikuRetry(SENT_SYSTEM, user, 500, 0.1, 3);
+  const parsed = raw ? parseSentimentArray(raw, slice.length) : null;
+  if (!parsed) {
     wave.sentiments.push(...slice.map(() => "unclear" as PulseSentiment));
+  } else {
+    wave.sentiments.push(...parsed);
   }
 
   wave.sentCursor += slice.length;
   if (q.waves.every((w) => w.sentCursor >= w.responses.length)) {
+    // One repair pass for waves that mostly failed classification.
+    if (!q.repairPass) {
+      const heavy = q.waves.filter((w) => {
+        const unclear = w.sentiments.filter((s) => s === "unclear").length;
+        return w.responses.length > 0 && unclear / w.responses.length >= 0.6;
+      });
+      if (heavy.length > 0) {
+        q.repairPass = true;
+        for (const w of heavy) {
+          w.sentCursor = 0;
+          w.sentiments = [];
+        }
+        return true;
+      }
+    }
     q.phase = "themes";
   }
   return true;
@@ -291,7 +326,7 @@ export async function classifySentimentBatch(q: PulseQueue): Promise<boolean> {
 
 /* ─── Theme extraction ─────────────────────────────────────────────── */
 
-const THEME_BATCH = 14;
+const THEME_BATCH = 10;
 
 const THEME_SYSTEM = `You extract themes from larva check-in replies about holders' experience with larv.ai.
 
@@ -355,17 +390,28 @@ export async function extractThemeBatch(q: PulseQueue): Promise<boolean> {
     .map((r, i) => `${i + 1}. ${r.text.replace(/\s+/g, " ").slice(0, 380)}`)
     .join("\n");
 
-  try {
-    const raw = await haiku(THEME_SYSTEM, user, 700, 0.3);
-    wave.themeHits.push(...parseThemeHits(raw));
-  } catch {
-    // skip failed batch
-  }
+  const raw = await haikuRetry(THEME_SYSTEM, user, 800, 0.2, 3);
+  if (raw) wave.themeHits.push(...parseThemeHits(raw));
 
   wave.themeCursor += slice.length;
-  if (q.waves.every((w) => w.themeCursor >= w.responses.length)) {
+  if (themesComplete(q)) {
     q.phase = "finalize";
   }
+  return true;
+}
+
+export function themesComplete(q: PulseQueue): boolean {
+  return q.waves.every((w) => w.themeCursor >= w.responses.length);
+}
+
+/** True when a stored result looks too thin / broken to keep. */
+export function isPulseHealthy(result: PulseResult): boolean {
+  if (!result.waves.length) return false;
+  const latest = result.waves[result.waves.length - 1];
+  if (latest.n > 0 && latest.unclear / latest.n >= 0.6) return false;
+  const themes =
+    result.positive.length + result.negative.length + result.contention.length;
+  if (themes === 0) return false;
   return true;
 }
 
@@ -469,12 +515,39 @@ function toTheme(
   return { id, label, n, metric, detail, waves };
 }
 
-export function finalizePulse(q: PulseQueue): PulseResult {
-  const waves = buildWaves(q.waves);
-  const merged = mergeThemes(q.waves);
+const SYNTH_SYSTEM = `You extract the main themes from one larv.ai "Checking in" wave.
 
+Return ONLY JSON:
+{
+  "themes": [
+    { "label": "short theme name", "polarity": "positive"|"negative"|"contested", "count": 3 }
+  ]
+}
+
+Use the aggregate summary and sample replies. Prefer concrete topics (shipping, burns, governance proof, patience, price, product utility). Max 6 themes. count is an importance weight 1-10.`;
+
+async function synthesizeWaveThemes(w: WaveWork): Promise<ThemeHit[]> {
+  const step = Math.max(1, Math.floor(w.responses.length / 12));
+  const sample = w.responses.filter((_, i) => i % step === 0).slice(0, 12);
+  const user = [
+    `Title: ${w.title}`,
+    `Aggregate: ${w.aggregateShort || "(none)"}`,
+    "",
+    "Sample replies:",
+    ...sample.map((r, i) => `${i + 1}. ${r.text.replace(/\s+/g, " ").slice(0, 280)}`),
+  ].join("\n");
+
+  const raw = await haikuRetry(SYNTH_SYSTEM, user, 700, 0.2, 3);
+  return raw ? parseThemeHits(raw) : [];
+}
+
+function rankThemes(merged: Acc[]): {
+  positive: PulseTheme[];
+  negative: PulseTheme[];
+  contention: PulseTheme[];
+} {
   const positive = [...merged]
-    .filter((a) => a.positive >= 2)
+    .filter((a) => a.positive >= 1)
     .sort((a, b) => b.positive - a.positive || b.waves.size - a.waves.size)
     .slice(0, 5)
     .map((a) =>
@@ -489,7 +562,7 @@ export function finalizePulse(q: PulseQueue): PulseResult {
     );
 
   const negative = [...merged]
-    .filter((a) => a.negative >= 2)
+    .filter((a) => a.negative >= 1)
     .sort((a, b) => b.negative - a.negative || b.waves.size - a.waves.size)
     .slice(0, 5)
     .map((a) =>
@@ -509,14 +582,14 @@ export function finalizePulse(q: PulseQueue): PulseResult {
       const score = a.contested * 2 + split;
       return { a, score, split };
     })
-    .filter((x) => x.score >= 2 && (x.a.contested >= 1 || x.split >= 2))
+    .filter((x) => x.score >= 1 && (x.a.contested >= 1 || x.split >= 1))
     .sort((x, y) => y.score - x.score || y.a.waves.size - x.a.waves.size)
     .slice(0, 3)
-    .map(({ a, split }) =>
+    .map(({ a }) =>
       toTheme(
         themeKey(a.label),
         a.label,
-        a.contested + split,
+        a.contested + Math.min(a.positive, a.negative),
         a.contested
           ? `${a.contested} contested · ${a.positive}+/${a.negative}−`
           : `split ${a.positive}+ / ${a.negative}−`,
@@ -525,13 +598,26 @@ export function finalizePulse(q: PulseQueue): PulseResult {
       )
     );
 
+  return { positive, negative, contention };
+}
+
+export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
+  // If batch theme extraction was thin, synthesize per wave from aggregates + samples.
+  const hitCount = q.waves.reduce((n, w) => n + w.themeHits.length, 0);
+  if (hitCount < 6) {
+    for (const w of q.waves) {
+      const extra = await synthesizeWaveThemes(w);
+      w.themeHits.push(...extra);
+    }
+  }
+
+  const waves = buildWaves(q.waves);
+  const ranked = rankThemes(mergeThemes(q.waves));
   const totalResponses = q.waves.reduce((n, w) => n + w.responses.length, 0);
 
   return {
     waves,
-    positive,
-    negative,
-    contention,
+    ...ranked,
     meta: {
       builtAt: new Date().toISOString(),
       waveCount: waves.length,
