@@ -327,7 +327,25 @@ function parseStances(text: string): Stance[] | null {
   }
 }
 
-const RFC_BATCH = 20;
+const RFC_BATCH = 10;
+
+export type RfcFailReason = "api" | "empty" | "parse" | "length";
+
+export type RfcBatchResult = {
+  stances: (Stance | null)[];
+  /** null when the batch classified successfully. */
+  failReason: RfcFailReason | null;
+  /** Raw error / hint for the build JSON. */
+  detail?: string;
+};
+
+/** Drop larva tool-call traces that sometimes get stored as "reasoning". */
+function cleanReasoning(text: string): string {
+  let t = text;
+  const cut = t.search(/<function_calls\b|<\s*tool/i);
+  if (cut >= 0) t = t.slice(0, cut);
+  return t.trim();
+}
 
 /**
  * Classify one batch of RFC responses. Batched and resumable for the same
@@ -338,20 +356,25 @@ export async function classifyRfcBatch(
   item: { title: string; question: string },
   responses: GovResponse[],
   cursor: number
-): Promise<(Stance | null)[]> {
+): Promise<RfcBatchResult> {
   const batch = responses.slice(cursor, cursor + RFC_BATCH);
-  if (batch.length === 0) return [];
+  if (batch.length === 0) {
+    return { stances: [], failReason: null };
+  }
 
   const numbered = batch
-    .map((r, i) => `${i + 1}. ${r.reasoning.slice(0, 280)}`)
+    .map((r, i) => {
+      const cleaned = cleanReasoning(r.reasoning).slice(0, 280);
+      return `${i + 1}. ${cleaned || "(no text)"}`;
+    })
     .join("\n");
 
-  // Token budget must have real headroom. The previous formula
-  // (batch.length * 12 + 60) gave 300 tokens for 20 responses, and Gemini
-  // counts its own overhead against maxOutputTokens — so the array was being
-  // truncated mid-output, which the parser then rejected.
-  const budget = batch.length * 25 + 200;
+  const budget = batch.length * 30 + 300;
   const baseUser = `RFC: "${item.title}"\n${item.question.slice(0, 300)}\n\nResponses:\n${numbered}`;
+
+  let lastApiDetail = "";
+  let sawModelText = false;
+  let lastFail: RfcFailReason = "api";
 
   // Two attempts. A single malformed reply is common; two in a row means the
   // batch genuinely can't be classified right now.
@@ -361,20 +384,42 @@ export async function classifyRfcBatch(
         attempt === 0
           ? baseUser
           : `${baseUser}\n\nReturn ONLY a JSON array of exactly ${batch.length} stance strings, same order as the numbered responses.`;
-      const raw = await haiku(RFC_SYSTEM, user, budget);
+      const raw = await haiku(RFC_SYSTEM, user, budget, 0.2);
+      sawModelText = true;
       const stances = parseStances(raw);
 
-      // The count must match exactly. A short array means responses were
-      // dropped, and lining up stance[i] with response[i] after that would
-      // assign each larva someone else's position.
-      if (stances && stances.length === batch.length) return stances;
-    } catch {
-      // fall through to retry
+      if (stances && stances.length === batch.length) {
+        return { stances, failReason: null };
+      }
+      lastFail =
+        stances && stances.length > 0 && stances.length !== batch.length
+          ? "length"
+          : "parse";
+      lastApiDetail = `got ${stances?.length ?? 0} stances, need ${batch.length}; raw=${raw.slice(0, 120)}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      lastApiDetail = msg;
+      if (/empty/i.test(msg)) lastFail = "empty";
+      else lastFail = "api";
+      // API/empty: retry once, then report without fabricating stances.
     }
   }
 
-  // Unclassified, and recorded as such.
-  return batch.map(() => null);
+  // If we never got usable model text, treat as api/empty so the build can
+  // abort and retry later instead of advancing past the batch.
+  if (!sawModelText) {
+    return {
+      stances: batch.map(() => null),
+      failReason: lastFail === "empty" ? "empty" : "api",
+      detail: lastApiDetail,
+    };
+  }
+
+  return {
+    stances: batch.map(() => null),
+    failReason: lastFail,
+    detail: lastApiDetail,
+  };
 }
 
 /* ─── Collection ───────────────────────────────────────────────────── */

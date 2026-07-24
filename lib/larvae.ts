@@ -216,7 +216,8 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 async function callGemini(
   system: string,
   user: string,
-  maxTokens: number
+  maxTokens: number,
+  temperature = 0.7
 ): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("GEMINI_API_KEY not set");
@@ -230,8 +231,8 @@ async function callGemini(
   // Prefer no-thinking config for short survey/profile calls. If the model
   // rejects thinkingConfig, retry once without it before failing.
   const configs = [
-    { maxOutputTokens: maxTokens, temperature: 0.7, thinkingConfig: { thinkingBudget: 0 } },
-    { maxOutputTokens: maxTokens, temperature: 0.7 },
+    { maxOutputTokens: maxTokens, temperature, thinkingConfig: { thinkingBudget: 0 } },
+    { maxOutputTokens: maxTokens, temperature },
   ];
 
   let lastErr = "";
@@ -260,8 +261,13 @@ async function callGemini(
   throw new Error(lastErr || "gemini failed");
 }
 
-export async function haiku(system: string, user: string, maxTokens = 700): Promise<string> {
-  return callGemini(system, user, maxTokens);
+export async function haiku(
+  system: string,
+  user: string,
+  maxTokens = 700,
+  temperature = 0.7
+): Promise<string> {
+  return callGemini(system, user, maxTokens, temperature);
 }
 
 export function parseJsonLoose(text: string): any {

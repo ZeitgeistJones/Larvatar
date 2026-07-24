@@ -88,8 +88,12 @@ export async function GET(req: NextRequest) {
   /* ── Phase 2: RFC classification ── */
   let classified = 0;
   let failedBatches = 0;
+  let abortedOnApi = false;
+  let lastFailReason: string | null = null;
+  let lastFailDetail: string | undefined;
+  const failTallies: Record<string, number> = {};
 
-  for (const item of result.items) {
+  outer: for (const item of result.items) {
     if (item.kind !== "rfc") continue;
     if (!timeLeft()) break;
 
@@ -98,19 +102,35 @@ export async function GET(req: NextRequest) {
     if (cursor === -1) continue;
 
     while (cursor < item.responses.length && timeLeft()) {
-      const stances = await classifyRfcBatch(item, item.responses, cursor);
-      if (stances.length === 0) break;
+      const batch = await classifyRfcBatch(item, item.responses, cursor);
+      if (batch.stances.length === 0) break;
 
-      const resolved = stances.filter((x) => x !== null).length;
-      if (resolved === 0) failedBatches++;
+      if (batch.failReason) {
+        failedBatches++;
+        failTallies[batch.failReason] = (failTallies[batch.failReason] || 0) + 1;
+        lastFailReason = batch.failReason;
+        lastFailDetail = batch.detail;
 
-      for (let i = 0; i < stances.length; i++) {
-        item.responses[cursor + i].stance = stances[i];
+        // API/empty: do not advance — leave nulls for a later visit once quota recovers.
+        if (batch.failReason === "api" || batch.failReason === "empty") {
+          abortedOnApi = true;
+          break outer;
+        }
+
+        // parse/length: advance past this batch; nulls stay null.
+        for (let i = 0; i < batch.stances.length; i++) {
+          item.responses[cursor + i].stance = batch.stances[i];
+        }
+        cursor += batch.stances.length;
+        await saveGovResult(result);
+        continue;
       }
-      // Advance even on failure so this visit doesn't spin. Nulls stay null and
-      // the next visit resumes via findIndex — unless a full pass makes zero
-      // progress, in which case we stop and report them.
-      cursor += stances.length;
+
+      const resolved = batch.stances.filter((x) => x !== null).length;
+      for (let i = 0; i < batch.stances.length; i++) {
+        item.responses[cursor + i].stance = batch.stances[i];
+      }
+      cursor += batch.stances.length;
       classified += resolved;
       await saveGovResult(result);
     }
@@ -121,12 +141,12 @@ export async function GET(req: NextRequest) {
     .reduce((n, i) => n + i.responses.filter((r) => r.stance === null).length, 0);
 
   const hitTimeLimit = !timeLeft();
-  // Do NOT treat "some batches failed" as done — that left 200+ nulls stranded.
-  // Keep going across visits while there is remaining work OR we still made
-  // progress. Only finish with leftovers after a full pass that classified nothing.
-  const doneClassifying = remaining === 0 || (classified === 0 && !hitTimeLimit);
+  // Never finish as "done" when we aborted on API pressure — remaining work is retryable.
+  // Finish with leftovers only after a full pass with zero progress (parse/length failures).
+  const done =
+    remaining === 0 || (!abortedOnApi && classified === 0 && !hitTimeLimit);
 
-  if (doneClassifying) {
+  if (done) {
     const suspicious = suspiciousItems(result);
     return NextResponse.json({
       ok: true,
@@ -137,6 +157,10 @@ export async function GET(req: NextRequest) {
       rfcs: result.items.filter((i) => i.kind === "rfc").length,
       unclassified: remaining,
       failedBatches,
+      failTallies,
+      lastFailReason,
+      lastFailDetail,
+      abortedOnApi,
       suspicious:
         suspicious.length > 0
           ? suspicious
@@ -150,7 +174,13 @@ export async function GET(req: NextRequest) {
     done: false,
     classifiedThisRun: classified,
     failedBatches,
+    failTallies,
+    lastFailReason,
+    lastFailDetail,
+    abortedOnApi,
     rfcResponsesRemaining: remaining,
-    message: "Not finished — visit this same URL again to continue.",
+    message: abortedOnApi
+      ? "Gemini API/empty failure — not advancing. Visit again to retry remaining RFCs."
+      : "Not finished — visit this same URL again to continue.",
   });
 }
