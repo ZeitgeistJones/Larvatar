@@ -70,8 +70,10 @@ type QueueResponse = { wallet: string; text: string };
 
 type ThemeHit = {
   label: string;
-  polarity: "positive" | "negative" | "contested";
-  count: number;
+  /** Replies in the batch that spoke well of this theme. */
+  praise: number;
+  /** Replies in the batch that complained about it. */
+  pushback: number;
 };
 
 type WaveWork = {
@@ -340,16 +342,17 @@ These are NOT votes on a proposal. Pull out concrete recurring topics people fee
 Return ONLY JSON:
 {
   "themes": [
-    { "label": "short theme name", "polarity": "positive"|"negative"|"contested", "count": 1 }
+    { "label": "short theme name", "praise": 2, "pushback": 1 }
   ]
 }
 
 Rules:
-- polarity positive = celebrated / working / hopeful about that theme
-- polarity negative = complaint / worry about that theme
-- polarity contested = replies clearly split on that theme inside this batch
-- count = roughly how many replies in this batch touched it (integer >= 1)
-- max 8 themes; merge near-duplicates into one label
+- praise = how many replies in this batch speak well of that theme
+- pushback = how many replies in this batch complain about it
+- a theme can have both; use 0 when a side is absent
+- every theme needs praise + pushback >= 1
+- label is 1-4 plain words, lowercase, no "and" lists — split compound topics apart
+- 4 to 8 themes; merge near-duplicates into one label
 - skip overall mood with no topic ("things are fine")
 - no markdown`;
 
@@ -363,14 +366,26 @@ function parseThemeHits(text: string): ThemeHit[] {
     const arr = Array.isArray(obj?.themes) ? obj.themes : [];
     const out: ThemeHit[] = [];
     for (const t of arr) {
-      const label = String(t?.label || "").trim().slice(0, 80);
-      const polarity = String(t?.polarity || "").toLowerCase();
-      const count = Math.max(1, Math.min(50, Number(t?.count) || 1));
+      const label = String(t?.label || "").trim().slice(0, 60);
       if (!label || label.length < 3) continue;
-      if (polarity !== "positive" && polarity !== "negative" && polarity !== "contested") {
-        continue;
+
+      let praise = Math.max(0, Math.min(50, Number(t?.praise) || 0));
+      let pushback = Math.max(0, Math.min(50, Number(t?.pushback) || 0));
+
+      // Tolerate the older {polarity, count} shape.
+      if (praise === 0 && pushback === 0) {
+        const polarity = String(t?.polarity || "").toLowerCase();
+        const count = Math.max(1, Math.min(50, Number(t?.count) || 1));
+        if (polarity === "positive") praise = count;
+        else if (polarity === "negative") pushback = count;
+        else if (polarity === "contested") {
+          praise = Math.ceil(count / 2);
+          pushback = Math.floor(count / 2) || 1;
+        } else continue;
       }
-      out.push({ label, polarity, count });
+
+      if (praise + pushback === 0) continue;
+      out.push({ label, praise, pushback });
     }
     return out;
   } catch {
@@ -488,38 +503,112 @@ function buildWaves(work: WaveWork[]): PulseWave[] {
 
 type Acc = {
   label: string;
-  positive: number;
-  negative: number;
-  contested: number;
+  tokens: Set<string>;
+  praise: number;
+  pushback: number;
   waves: Set<string>;
 };
 
+const STOPWORDS = new Set([
+  "and",
+  "or",
+  "the",
+  "of",
+  "for",
+  "to",
+  "in",
+  "on",
+  "a",
+  "an",
+  "with",
+  "its",
+  "their",
+  "larv",
+  "ai",
+  "clawd",
+]);
+
+/** A queue saved before the praise/pushback change still holds the old shape. */
+function normalizeHit(hit: ThemeHit): ThemeHit | null {
+  const label = String(hit?.label || "").trim();
+  if (!label) return null;
+  const praise = Number(hit?.praise);
+  const pushback = Number(hit?.pushback);
+  if (Number.isFinite(praise) || Number.isFinite(pushback)) {
+    const p = Number.isFinite(praise) ? praise : 0;
+    const b = Number.isFinite(pushback) ? pushback : 0;
+    if (p + b > 0) return { label, praise: p, pushback: b };
+  }
+  const legacy = hit as unknown as { polarity?: string; count?: number };
+  const count = Math.max(1, Number(legacy.count) || 1);
+  if (legacy.polarity === "positive") return { label, praise: count, pushback: 0 };
+  if (legacy.polarity === "negative") return { label, praise: 0, pushback: count };
+  if (legacy.polarity === "contested") {
+    return { label, praise: Math.ceil(count / 2), pushback: Math.floor(count / 2) || 1 };
+  }
+  return null;
+}
+
+function tokenize(label: string): Set<string> {
+  return new Set(
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .filter((t) => t.length > 2 && !STOPWORDS.has(t))
+  );
+}
+
+/**
+ * "shipping speed" and "shipping speed and execution" are the same complaint.
+ * Without fuzzy merging the boards fill up with near-duplicate rows.
+ */
+function sameTheme(a: Set<string>, b: Set<string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  let shared = 0;
+  for (const t of a) if (b.has(t)) shared++;
+  if (shared === 0) return false;
+  const smaller = Math.min(a.size, b.size);
+  if (shared === smaller) return true;
+  const union = a.size + b.size - shared;
+  return shared / union >= 0.5;
+}
+
 function mergeThemes(work: WaveWork[]): Acc[] {
-  const map = new Map<string, Acc>();
+  const accs: Acc[] = [];
+
   for (const w of work) {
-    for (const hit of w.themeHits) {
-      const key = themeKey(hit.label);
-      if (!key) continue;
-      let acc = map.get(key);
+    for (const raw of w.themeHits) {
+      const hit = normalizeHit(raw);
+      if (!hit) continue;
+      const tokens = tokenize(hit.label);
+      if (tokens.size === 0) continue;
+
+      let acc = accs.find((a) => sameTheme(a.tokens, tokens));
       if (!acc) {
         acc = {
           label: hit.label.trim(),
-          positive: 0,
-          negative: 0,
-          contested: 0,
+          tokens: new Set(tokens),
+          praise: 0,
+          pushback: 0,
           waves: new Set(),
         };
-        map.set(key, acc);
+        accs.push(acc);
+      } else {
+        // Keep the tightest wording; long "x and y" labels read worse.
+        if (tokens.size < acc.tokens.size) {
+          acc.label = hit.label.trim();
+          acc.tokens = new Set(tokens);
+        }
       }
-      // Prefer a cleaner / Title-ish label when longer
-      if (hit.label.length > acc.label.length) acc.label = hit.label.trim();
-      if (hit.polarity === "positive") acc.positive += hit.count;
-      else if (hit.polarity === "negative") acc.negative += hit.count;
-      else acc.contested += hit.count;
+
+      acc.praise += hit.praise;
+      acc.pushback += hit.pushback;
       acc.waves.add(w.postId);
     }
   }
-  return [...map.values()];
+
+  return accs;
 }
 
 function toTheme(
@@ -538,15 +627,18 @@ const SYNTH_SYSTEM = `You extract the main themes from one larv.ai "Checking in"
 Return ONLY JSON:
 {
   "themes": [
-    { "label": "short theme name", "polarity": "positive"|"negative"|"contested", "count": 3 }
+    { "label": "short theme name", "praise": 4, "pushback": 2 }
   ]
 }
 
-Use the aggregate summary and sample replies. Prefer concrete topics (shipping, burns, governance proof, patience, price, product utility). Max 6 themes. count is an importance weight 1-10.`;
+Use the aggregate summary and sample replies. Prefer concrete topics (shipping, burns,
+governance proof, patience, price, product utility, onboarding, transparency).
+Labels are 1-4 plain lowercase words, no "and" lists. Give 8 themes: at least 5 with
+praise > 0 and at least 5 with pushback > 0. praise/pushback are weights 0-10.`;
 
 async function synthesizeWaveThemes(w: WaveWork): Promise<ThemeHit[]> {
-  const step = Math.max(1, Math.floor(w.responses.length / 12));
-  const sample = w.responses.filter((_, i) => i % step === 0).slice(0, 12);
+  const step = Math.max(1, Math.floor(w.responses.length / 16));
+  const sample = w.responses.filter((_, i) => i % step === 0).slice(0, 16);
   const user = [
     `Title: ${w.title}`,
     `Aggregate: ${w.aggregateShort || "(none)"}`,
@@ -555,7 +647,7 @@ async function synthesizeWaveThemes(w: WaveWork): Promise<ThemeHit[]> {
     ...sample.map((r, i) => `${i + 1}. ${r.text.replace(/\s+/g, " ").slice(0, 280)}`),
   ].join("\n");
 
-  const raw = await haikuRetry(SYNTH_SYSTEM, user, 700, 0.2, 3);
+  const raw = await haikuRetry(SYNTH_SYSTEM, user, 900, 0.3, 3);
   return raw ? parseThemeHits(raw) : [];
 }
 
@@ -570,56 +662,55 @@ function rankThemes(merged: Acc[], singleWave = false): {
       : `across ${a.waves.size} check-ins`;
 
   const positive = [...merged]
-    .filter((a) => a.positive >= 1)
-    .sort((a, b) => b.positive - a.positive || b.waves.size - a.waves.size)
+    .filter((a) => a.praise >= 1)
+    .sort((a, b) => b.praise - a.praise || b.waves.size - a.waves.size)
     .slice(0, 5)
     .map((a) =>
       toTheme(
         themeKey(a.label),
         a.label,
-        a.positive,
-        `${a.positive} positive mentions`,
+        a.praise,
+        `${a.praise} liked it`,
         across(a),
         [...a.waves]
       )
     );
 
   const negative = [...merged]
-    .filter((a) => a.negative >= 1)
-    .sort((a, b) => b.negative - a.negative || b.waves.size - a.waves.size)
+    .filter((a) => a.pushback >= 1)
+    .sort((a, b) => b.pushback - a.pushback || b.waves.size - a.waves.size)
     .slice(0, 5)
     .map((a) =>
       toTheme(
         themeKey(a.label),
         a.label,
-        a.negative,
-        `${a.negative} negative mentions`,
+        a.pushback,
+        `${a.pushback} complained`,
         across(a),
         [...a.waves]
       )
     );
 
+  // A split needs both sides. One-sided themes already have their own board.
   const contention = [...merged]
     .map((a) => {
-      const split = Math.min(a.positive, a.negative);
-      // Real contention = both praise and pushback. Pure "contested" tags
-      // with only one side are not splits — they confuse the board.
-      const score = split * 2 + Math.min(a.contested, split);
-      return { a, score, split };
+      const total = a.praise + a.pushback;
+      const balance = total > 0 ? Math.min(a.praise, a.pushback) / total : 0;
+      return { a, total, score: balance * total };
     })
-    .filter((x) => x.split >= 1)
-    .sort((x, y) => y.score - x.score || y.a.waves.size - x.a.waves.size)
+    .filter((x) => x.a.praise >= 1 && x.a.pushback >= 1)
+    .sort((x, y) => y.score - x.score || y.total - x.total)
     .slice(0, 3)
-    .map(({ a, split }) => {
-      const total = a.positive + a.negative;
-      const leanFor = Math.round((a.positive / total) * 100);
-      const leanAgainst = 100 - leanFor;
+    .map(({ a, total }) => {
+      const likedPct = Math.round((a.praise / total) * 100);
       return toTheme(
         themeKey(a.label),
         a.label,
-        split,
-        `${leanFor}–${leanAgainst} split`,
-        `${a.positive} praise · ${a.negative} pushback${across(a) ? ` · ${across(a)}` : ""}`,
+        Math.min(a.praise, a.pushback),
+        `${likedPct}% liked it`,
+        `${a.praise} liked · ${a.pushback} complained${
+          across(a) ? ` · ${across(a)}` : ""
+        }`,
         [...a.waves]
       );
     });
@@ -628,10 +719,14 @@ function rankThemes(merged: Acc[], singleWave = false): {
 }
 
 export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
-  // Ensure each wave has enough theme signal for its own top-5 boards.
+  // Every wave needs its own full boards, so top up any wave whose ranked
+  // lists come out thin rather than only checking raw hit count.
   for (const w of q.waves) {
-    if (w.themeHits.length < 4) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const board = rankThemes(mergeThemes([w]), true);
+      if (board.positive.length >= 4 && board.negative.length >= 4) break;
       const extra = await synthesizeWaveThemes(w);
+      if (extra.length === 0) break;
       w.themeHits.push(...extra);
     }
   }

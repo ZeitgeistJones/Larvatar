@@ -204,20 +204,22 @@ export default function TopicTrendsPage() {
                     )}
 
                     <ThemeList
-                      title="Top 5 positive"
+                      title="Top 5 liked"
+                      blurb="What this wave spoke well of."
                       items={w.positive || []}
                       accent={GREEN}
                       empty="No clear positive themes in this wave."
                     />
                     <ThemeList
-                      title="Top 5 negative"
+                      title="Top 5 complaints"
+                      blurb="What this wave pushed back on."
                       items={w.negative || []}
                       accent={CORAL}
                       empty="No clear negative themes in this wave."
                     />
                     <ThemeList
                       title="Top 3 splits"
-                      blurb="Themes that got both praise and pushback in this check-in."
+                      blurb="Topics this wave both liked and complained about."
                       items={w.contention || []}
                       accent={GOLD}
                       empty="No clear split themes in this wave."
