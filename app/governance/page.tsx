@@ -14,6 +14,7 @@ type Item = {
   id: string;
   kind: "vote" | "rfc";
   title: string;
+  question: string;
   author: string;
   authorName: string | null;
   authorEns?: string | null;
@@ -158,6 +159,22 @@ export default function GovernancePage() {
                   </div>
 
                   <h2 className="text-lg font-bold leading-snug">{item.title}</h2>
+                  {item.question && item.question.trim() !== item.title.trim() && (
+                    <p className="mt-2 text-sm leading-relaxed opacity-75 whitespace-pre-wrap">
+                      {item.question}
+                    </p>
+                  )}
+                  <p className="mt-2">
+                    <a
+                      href={`https://larv.ai/gov/${item.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-[10px] uppercase tracking-widest opacity-45 transition-opacity hover:opacity-90"
+                      style={{ color: SEA }}
+                    >
+                      view on larv.ai →
+                    </a>
+                  </p>
 
                   {item.tallies ? (
                     <Tally

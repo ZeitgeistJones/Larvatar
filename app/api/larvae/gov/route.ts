@@ -178,6 +178,7 @@ export async function GET(req: NextRequest) {
       id: i.id,
       kind: i.kind,
       title: i.title,
+      question: i.question,
       author: i.author,
       authorName: names[i.author.toLowerCase()] || null,
       authorEns: ens[i.author.toLowerCase()] || null,
