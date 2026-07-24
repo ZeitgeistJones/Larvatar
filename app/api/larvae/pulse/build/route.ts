@@ -73,19 +73,7 @@ export async function GET(req: NextRequest) {
 
   let batches = 0;
   while (timeLeft()) {
-    if (q.phase === "sentiment") {
-      const did = await classifySentimentBatch(q);
-      await savePulseQueue(q);
-      if (did) batches++;
-      else if (q.phase === "themes") continue;
-      else break;
-    } else if (q.phase === "themes") {
-      const did = await extractThemeBatch(q);
-      await savePulseQueue(q);
-      if (did) batches++;
-      else if (q.phase === "finalize") continue;
-      else break;
-    } else if (q.phase === "finalize") {
+    if (q.phase === "finalize") {
       const result = finalizePulse(q);
       await savePulseResult(result);
       await clearPulseQueue();
@@ -98,9 +86,23 @@ export async function GET(req: NextRequest) {
         negative: result.negative.length,
         contention: result.contention.length,
       });
-    } else {
-      break;
     }
+
+    if (q.phase === "sentiment") {
+      const did = await classifySentimentBatch(q);
+      await savePulseQueue(q);
+      if (did) batches++;
+      continue;
+    }
+
+    if (q.phase === "themes") {
+      const did = await extractThemeBatch(q);
+      await savePulseQueue(q);
+      if (did) batches++;
+      continue;
+    }
+
+    break;
   }
 
   return NextResponse.json({
