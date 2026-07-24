@@ -1,21 +1,8 @@
 // app/governance/page.tsx
 //
-// The governance record. Every item larv.ai has put to the swarm, in order,
-// with its options exactly as they were written and its tallies exactly as
-// returned.
-//
-// DESIGN NOTE — why this page is deliberately plain:
-//
-// Everything here comes straight from larv.ai's API. Tallies, options, dates,
-// response counts — none of it passes through a classifier or any judgement of
-// mine. That is the whole point: it is a record, not an analysis, and anyone
-// can check any number on it against the source.
-//
-// It shows ALL items rather than a selection. A page built around one
-// interesting result would be an argument wearing a record's clothes — the
-// selection itself would be the claim. Chronological order, everything
-// included, no highlighting, no commentary about what any result means.
-// Readers notice what they notice.
+// The governance record. Votes show real tallies from larv.ai. RFCs have no
+// ballot, so we show an inferred stance mix from classified prose — clearly
+// labeled, never presented as a tally.
 
 "use client";
 
@@ -29,6 +16,7 @@ type Item = {
   title: string;
   author: string;
   authorName: string | null;
+  authorEns?: string | null;
   status: string;
   createdAt: string;
   options: string[];
@@ -49,6 +37,8 @@ type Payload = {
   };
   items: Item[];
 };
+
+const STANCE_ORDER = ["approve", "conditional", "disapprove", "neutral"] as const;
 
 const fmtDate = (iso: string) => {
   if (!iso) return "";
@@ -96,10 +86,9 @@ export default function GovernancePage() {
           </p>
           <h1 className="mt-1 text-4xl font-bold tracking-tight">Governance Record</h1>
           <p className="mt-2 max-w-2xl text-sm opacity-75">
-            Every item put to the swarm, oldest first. Options are shown exactly as
-            they were written; tallies are exactly as reported. Nothing on this page
-            is inferred or scored — it is the record, and every figure can be checked
-            against larv.ai directly.
+            Every item put to the swarm, oldest first. Vote tallies come straight from
+            larv.ai. RFCs have no ballot — the stance bars there are a language-model
+            reading of the prose, not a recorded count.
           </p>
         </header>
 
@@ -117,7 +106,6 @@ export default function GovernancePage() {
 
         {data && (
           <>
-            {/* Summary */}
             <section
               className="mb-6 rounded-xl border p-5"
               style={{ borderColor: `${INK}22`, background: CARD }}
@@ -132,7 +120,6 @@ export default function GovernancePage() {
               </p>
             </section>
 
-            {/* Filter */}
             <div className="mb-4 flex gap-2">
               {(["all", "vote", "rfc"] as const).map((k) => (
                 <button
@@ -151,7 +138,6 @@ export default function GovernancePage() {
               ))}
             </div>
 
-            {/* The record */}
             <div className="space-y-4">
               {items.map((item) => (
                 <section
@@ -173,31 +159,33 @@ export default function GovernancePage() {
 
                   <h2 className="text-lg font-bold leading-snug">{item.title}</h2>
 
-                  {/* Votes carry a real tally; RFCs do not. */}
                   {item.tallies ? (
                     <Tally
                       tallies={item.tallies}
                       cvTotals={item.cvTotals}
                       colors={{ ink: INK, gold: GOLD, sea: SEA }}
                     />
-                  ) : item.options.length > 0 ? (
-                    <div className="mt-4">
-                      <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
-                        options
-                      </p>
-                      <ul className="mt-1 space-y-1">
-                        {item.options.map((o) => (
-                          <li key={o} className="text-sm opacity-80">
-                            {o}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
                   ) : (
-                    <p className="mt-3 text-sm opacity-55">
-                      Open-ended — larvae responded in writing rather than choosing an option,
-                      so there is no tally to report.
-                    </p>
+                    <>
+                      {item.options.length > 0 && (
+                        <div className="mt-4">
+                          <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+                            options
+                          </p>
+                          <ul className="mt-1 space-y-1">
+                            {item.options.map((o) => (
+                              <li key={o} className="text-sm opacity-80">
+                                {o}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <StanceMix
+                        mix={item.stanceMix}
+                        colors={{ ink: INK, gold: GOLD, sea: SEA, coral: CORAL }}
+                      />
+                    </>
                   )}
                 </section>
               ))}
@@ -218,6 +206,78 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div>
       <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
+    </div>
+  );
+}
+
+function stanceColor(
+  stance: string,
+  colors: { gold: string; sea: string; coral: string; ink: string }
+) {
+  if (stance === "approve") return colors.gold;
+  if (stance === "conditional") return colors.sea;
+  if (stance === "disapprove") return colors.coral;
+  return colors.ink;
+}
+
+/** Inferred reading of RFC prose — not a ballot tally. */
+function StanceMix({
+  mix,
+  colors,
+}: {
+  mix: Record<string, number>;
+  colors: { ink: string; gold: string; sea: string; coral: string };
+}) {
+  const entries = STANCE_ORDER.map((k) => [k, mix[k] || 0] as const).filter(([, n]) => n > 0);
+  const unresolved = mix.unresolved || 0;
+  const total = entries.reduce((s, [, n]) => s + n, 0) + unresolved;
+  if (total === 0) {
+    return (
+      <p className="mt-3 text-sm opacity-55">
+        No classified responses yet for this RFC.
+      </p>
+    );
+  }
+
+  const max = Math.max(...entries.map(([, n]) => n), unresolved, 1);
+
+  return (
+    <div className="mt-4 space-y-2">
+      <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+        inferred stance mix · not a recorded tally
+      </p>
+      {entries.map(([stance, n]) => {
+        const share = n / total;
+        const bar = stanceColor(stance, colors);
+        return (
+          <div key={stance}>
+            <div className="mb-1 flex items-baseline justify-between gap-3">
+              <span className="min-w-0 text-sm capitalize">{stance}</span>
+              <span className="shrink-0 font-mono text-sm font-bold tabular-nums">
+                {n}
+                <span className="ml-2 font-normal opacity-45">
+                  {Math.round(share * 100)}%
+                </span>
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded" style={{ background: `${colors.ink}10` }}>
+              <div
+                className="h-full rounded"
+                style={{
+                  width: `${Math.max(1, (n / max) * 100)}%`,
+                  background: bar,
+                  opacity: n === max ? 0.85 : 0.55,
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
+      {unresolved > 0 && (
+        <p className="pt-1 font-mono text-[10px] uppercase tracking-widest opacity-40">
+          {unresolved} unclassified
+        </p>
+      )}
     </div>
   );
 }

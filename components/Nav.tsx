@@ -14,7 +14,6 @@ const LINKS = [
   { href: "/credibility", label: "Track Record" },
   { href: "/reception", label: "Reception" },
   { href: "/governance", label: "Governance" },
-  { href: "/election", label: "Election" },
   { href: "/larvae-survey", label: "Survey Game" },
   { href: "/about", label: "About" },
 ];
