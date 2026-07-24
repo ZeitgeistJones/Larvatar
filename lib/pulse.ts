@@ -36,6 +36,10 @@ export type PulseWave = {
   pctMixed: number;
   aggregateShort: string;
   link: string;
+  /** Top themes for this check-in only. */
+  positive: PulseTheme[];
+  negative: PulseTheme[];
+  contention: PulseTheme[];
 };
 
 export type PulseTheme = {
@@ -409,9 +413,20 @@ export function isPulseHealthy(result: PulseResult): boolean {
   if (!result.waves.length) return false;
   const latest = result.waves[result.waves.length - 1];
   if (latest.n > 0 && latest.unclear / latest.n >= 0.6) return false;
-  const themes =
-    result.positive.length + result.negative.length + result.contention.length;
-  if (themes === 0) return false;
+  // Prefer per-wave boards; fall back to global lists for older payloads.
+  const perWaveThemes = result.waves.reduce(
+    (n, w) =>
+      n +
+      (w.positive?.length || 0) +
+      (w.negative?.length || 0) +
+      (w.contention?.length || 0),
+    0
+  );
+  const globalThemes =
+    (result.positive?.length || 0) +
+    (result.negative?.length || 0) +
+    (result.contention?.length || 0);
+  if (perWaveThemes === 0 && globalThemes === 0) return false;
   return true;
 }
 
@@ -464,6 +479,9 @@ function buildWaves(work: WaveWork[]): PulseWave[] {
       pctMixed: mixed / denom,
       aggregateShort: w.aggregateShort,
       link: FORUM(w.postId),
+      positive: [],
+      negative: [],
+      contention: [],
     };
   });
 }
@@ -541,11 +559,16 @@ async function synthesizeWaveThemes(w: WaveWork): Promise<ThemeHit[]> {
   return raw ? parseThemeHits(raw) : [];
 }
 
-function rankThemes(merged: Acc[]): {
+function rankThemes(merged: Acc[], singleWave = false): {
   positive: PulseTheme[];
   negative: PulseTheme[];
   contention: PulseTheme[];
 } {
+  const across = (a: Acc) =>
+    singleWave || a.waves.size <= 1
+      ? undefined
+      : `across ${a.waves.size} check-ins`;
+
   const positive = [...merged]
     .filter((a) => a.positive >= 1)
     .sort((a, b) => b.positive - a.positive || b.waves.size - a.waves.size)
@@ -556,7 +579,7 @@ function rankThemes(merged: Acc[]): {
         a.label,
         a.positive,
         `${a.positive} positive mentions`,
-        a.waves.size > 1 ? `across ${a.waves.size} check-ins` : undefined,
+        across(a),
         [...a.waves]
       )
     );
@@ -571,7 +594,7 @@ function rankThemes(merged: Acc[]): {
         a.label,
         a.negative,
         `${a.negative} negative mentions`,
-        a.waves.size > 1 ? `across ${a.waves.size} check-ins` : undefined,
+        across(a),
         [...a.waves]
       )
     );
@@ -593,7 +616,7 @@ function rankThemes(merged: Acc[]): {
         a.contested
           ? `${a.contested} contested · ${a.positive}+/${a.negative}−`
           : `split ${a.positive}+ / ${a.negative}−`,
-        a.waves.size > 1 ? `across ${a.waves.size} check-ins` : undefined,
+        across(a),
         [...a.waves]
       )
     );
@@ -602,16 +625,18 @@ function rankThemes(merged: Acc[]): {
 }
 
 export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
-  // If batch theme extraction was thin, synthesize per wave from aggregates + samples.
-  const hitCount = q.waves.reduce((n, w) => n + w.themeHits.length, 0);
-  if (hitCount < 6) {
-    for (const w of q.waves) {
+  // Ensure each wave has enough theme signal for its own top-5 boards.
+  for (const w of q.waves) {
+    if (w.themeHits.length < 4) {
       const extra = await synthesizeWaveThemes(w);
       w.themeHits.push(...extra);
     }
   }
 
-  const waves = buildWaves(q.waves);
+  const waves: PulseWave[] = buildWaves(q.waves).map((bw, i) => {
+    const ranked = rankThemes(mergeThemes([q.waves[i]]), true);
+    return { ...bw, ...ranked };
+  });
   const ranked = rankThemes(mergeThemes(q.waves));
   const totalResponses = q.waves.reduce((n, w) => n + w.responses.length, 0);
 
@@ -623,7 +648,7 @@ export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
       waveCount: waves.length,
       totalResponses,
       caveat:
-        "Built from recurring “Checking in” forum posts (same prompt family). Overall pulse is model-classified vibe per reply; theme boards are model-extracted topics across those replies — not ballots.",
+        "Built from recurring “Checking in” forum posts (same prompt family). Overall pulse is model-classified vibe per reply; theme boards are model-extracted per check-in — not ballots.",
     },
   };
 }
