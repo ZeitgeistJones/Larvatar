@@ -1,7 +1,7 @@
 // app/trends/page.tsx
 //
-// Topic Trends — present snapshot of what the swarm has backed, pushed back
-// on, and split over across accumulated governance data.
+// Topic Trends — overall pulse from recurring “Checking in” forum posts,
+// plus top positive / negative / contention themes mined from those replies.
 
 "use client";
 
@@ -9,37 +9,54 @@ import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 
-type TrendItem = {
-  id: string;
+type PulseWave = {
+  postId: string;
   title: string;
-  kind: "vote" | "rfc";
-  score: number;
+  createdAt: string;
   n: number;
-  metric: string;
-  detail?: string;
-  equalWeightFallback?: boolean;
+  upbeat: number;
+  frustrated: number;
+  mixed: number;
+  unclear: number;
+  pctUpbeat: number;
+  pctFrustrated: number;
+  pctMixed: number;
+  aggregateShort: string;
   link: string;
 };
 
-type TrendBoard = {
-  happy: TrendItem[];
-  frustrated: TrendItem[];
-  contention: TrendItem[];
+type PulseTheme = {
+  id: string;
+  label: string;
+  n: number;
+  metric: string;
+  detail?: string;
+  waves: string[];
 };
 
 type Payload = {
-  equal: TrendBoard;
-  cv: TrendBoard;
+  waves: PulseWave[];
+  positive: PulseTheme[];
+  negative: PulseTheme[];
+  contention: PulseTheme[];
   meta: {
-    collectedAt: string;
-    voteCount: number;
-    rfcCount: number;
-    cvCoverage: number;
+    builtAt: string;
+    waveCount: number;
+    totalResponses: number;
     caveat: string;
   };
 };
 
-type Weight = "equal" | "cv";
+function pct(n: number) {
+  return `${Math.round(n * 100)}%`;
+}
+
+function shortDate(iso: string) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+}
 
 export default function TopicTrendsPage() {
   const { colors } = useTheme();
@@ -49,17 +66,14 @@ export default function TopicTrendsPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [weight, setWeight] = useState<Weight>("equal");
 
   useEffect(() => {
-    fetch("/api/larvae/mood")
+    fetch("/api/larvae/pulse")
       .then((r) => r.json())
       .then((d) => (d.error ? setError(d.error) : setData(d)))
       .catch(() => setError("network error"))
       .finally(() => setLoading(false));
   }, []);
-
-  const board = data ? (weight === "equal" ? data.equal : data.cv) : null;
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
@@ -72,12 +86,12 @@ export default function TopicTrendsPage() {
           </p>
           <h1 className="mt-1 text-4xl font-bold tracking-tight">Topic Trends</h1>
           <p className="mt-2 max-w-2xl text-sm opacity-75">
-            Where the swarm has backed, pushed back on, and split — across all
-            accumulated governance topics. A present snapshot, not a weekly chart.
+            Overall pulse from the recurring Checking in forum posts, plus the
+            themes that keep coming up as wins, gripes, and splits.
           </p>
         </header>
 
-        {loading && <p className="text-sm opacity-60">ranking topics…</p>}
+        {loading && <p className="text-sm opacity-60">reading check-ins…</p>}
         {error && (
           <section
             className="rounded-xl border p-5"
@@ -89,82 +103,83 @@ export default function TopicTrendsPage() {
           </section>
         )}
 
-        {data && board && (
+        {data && (
           <>
             <section
               className="mb-6 rounded-xl border p-5"
               style={{ borderColor: `${INK}22`, background: CARD }}
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="grid grid-cols-3 gap-4">
-                  <Stat label="votes" value={String(data.meta.voteCount)} />
-                  <Stat label="rfcs" value={String(data.meta.rfcCount)} />
-                  <Stat
-                    label="votes w/ CV"
-                    value={`${Math.round(data.meta.cvCoverage * 100)}%`}
-                  />
-                </div>
-                <div className="flex gap-2">
-                  {(["equal", "cv"] as Weight[]).map((w) => (
-                    <button
-                      key={w}
-                      type="button"
-                      onClick={() => setWeight(w)}
-                      className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity"
-                      style={{
-                        borderColor: weight === w ? CORAL : `${INK}22`,
-                        background: weight === w ? `${CORAL}12` : "transparent",
-                        color: weight === w ? CORAL : INK,
-                        opacity: weight === w ? 1 : 0.6,
-                      }}
-                    >
-                      {w === "equal" ? "Equal weight" : "CV weight"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <p className="mt-4 border-t pt-4 text-sm opacity-70" style={{ borderColor: `${INK}15` }}>
+              <p className="font-mono text-xs uppercase tracking-widest" style={{ color: CORAL }}>
+                Overall pulse
+              </p>
+              <p className="mt-1 mb-4 text-sm opacity-70">
+                Same check-in prompt across {data.meta.waveCount} waves ·{" "}
+                {data.meta.totalResponses} larva replies classified
+              </p>
+
+              <ol className="space-y-4">
+                {data.waves.map((w, i) => (
+                  <li key={w.postId} className="border-t pt-4 first:border-t-0 first:pt-0" style={{ borderColor: `${INK}12` }}>
+                    <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                      <div>
+                        <a
+                          href={w.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sm font-semibold hover:opacity-80"
+                        >
+                          {w.title.trim() || `Check-in ${i + 1}`}
+                        </a>
+                        <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+                          {shortDate(w.createdAt)} · n={w.n}
+                        </p>
+                      </div>
+                      <p className="font-mono text-[10px] opacity-50">
+                        {pct(w.pctUpbeat)} up · {pct(w.pctFrustrated)} down ·{" "}
+                        {pct(w.pctMixed)} mixed
+                      </p>
+                    </div>
+
+                    <div className="flex h-2.5 overflow-hidden rounded-full" style={{ background: `${INK}12` }}>
+                      <div style={{ width: pct(w.pctUpbeat), background: GREEN }} />
+                      <div style={{ width: pct(w.pctMixed), background: GOLD }} />
+                      <div style={{ width: pct(w.pctFrustrated), background: CORAL }} />
+                    </div>
+
+                    {w.aggregateShort && (
+                      <p className="mt-2 text-sm opacity-65">{w.aggregateShort}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+
+              <p className="mt-4 border-t pt-4 text-sm opacity-60" style={{ borderColor: `${INK}15` }}>
                 {data.meta.caveat}
-                {weight === "cv" && (
-                  <>
-                    {" "}
-                    CV mode uses larv.ai conviction totals on votes; RFCs still
-                    use headcount and are marked when they fall back.
-                  </>
-                )}
               </p>
             </section>
 
-            <TrendSection
-              title="Happy with"
-              blurb={
-                weight === "equal"
-                  ? "Highest share for the yes side (votes) or approve (RFCs). Metric = % support · n = how many weighed in."
-                  : "Same idea, CV-weighted on votes. Metric = % support under CV · n = CV mass (or headcount for RFCs)."
-              }
-              items={board.happy}
+            <ThemeSection
+              title="Top positive vibes"
+              blurb="Themes that show up as wins, hope, or what’s working."
+              items={data.positive}
               accent={GREEN}
-              empty="Nothing clear enough to call a win yet."
+              empty="Not enough repeated positive themes yet."
             />
 
-            <TrendSection
-              title="Frustrated with"
-              blurb={
-                weight === "equal"
-                  ? "Highest share against the yes side (votes) or disapprove (RFCs). Metric = % opposition · n = participation."
-                  : "Same idea under CV on votes. Metric = % opposition · n = CV mass (or headcount for RFCs)."
-              }
-              items={board.frustrated}
+            <ThemeSection
+              title="Top negative vibes"
+              blurb="Themes that show up as gripes, impatience, or worry."
+              items={data.negative}
               accent={CORAL}
-              empty="No strong opposition showing up yet."
+              empty="Not enough repeated negative themes yet."
             />
 
-            <TrendSection
+            <ThemeSection
               title="Points of contention"
-              blurb="Closest splits with real participation. Metric = how the top sides broke · detail notes vote vs RFC."
-              items={board.contention}
+              blurb="Themes where the swarm splits — contested takes, or both praise and pushback."
+              items={data.contention}
               accent={GOLD}
-              empty="The room isn't splitting hard on anything scored yet."
+              empty="No strong split themes extracted yet."
             />
           </>
         )}
@@ -173,16 +188,7 @@ export default function TopicTrendsPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">{label}</p>
-      <p className="text-2xl font-bold">{value}</p>
-    </div>
-  );
-}
-
-function TrendSection({
+function ThemeSection({
   title,
   blurb,
   items,
@@ -191,7 +197,7 @@ function TrendSection({
 }: {
   title: string;
   blurb: string;
-  items: TrendItem[];
+  items: PulseTheme[];
   accent: string;
   empty: string;
 }) {
@@ -225,25 +231,15 @@ function TrendSection({
                 {i + 1}
               </span>
               <div className="min-w-0 flex-1">
-                <a
-                  href={item.link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm font-semibold hover:opacity-80"
-                >
-                  {item.title}
-                </a>
+                <p className="text-sm font-semibold">{item.label}</p>
                 <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest opacity-45">
-                  {item.kind}
-                  {item.equalWeightFallback ? " · equal fallback" : ""}
-                  {item.detail ? ` · ${item.detail}` : ""}
+                  {item.detail || `waves ${item.waves.join(", ")}`}
                 </p>
               </div>
               <div className="shrink-0 text-right">
                 <p className="text-sm font-bold" style={{ color: accent }}>
                   {item.metric}
                 </p>
-                <p className="font-mono text-[10px] opacity-45">n={item.n}</p>
               </div>
             </li>
           ))}
