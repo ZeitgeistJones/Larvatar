@@ -23,6 +23,7 @@ type Breakdown = {
 
 type Larva = {
   wallet: string;
+  ens?: string | null;
   name: string;
   tagline: string;
   tone: string;
@@ -711,7 +712,8 @@ export default function MapPage() {
                         </button>
                       </div>
                       <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-40">
-                        {selected.wallet.slice(0, 10)}…{selected.wallet.slice(-6)}
+                        {selected.ens ||
+                          `${selected.wallet.slice(0, 10)}…${selected.wallet.slice(-6)}`}
                       </p>
                     </div>
                   </div>
@@ -752,6 +754,7 @@ export default function MapPage() {
                       Votes with{" "}
                       <strong>
                         {data.larvae.find((l) => l.wallet === selected.topAlly!.wallet)?.name ||
+                          data.larvae.find((l) => l.wallet === selected.topAlly!.wallet)?.ens ||
                           selected.topAlly.wallet.slice(0, 8)}
                       </strong>{" "}
                       {Math.round(selected.topAlly.rate * 100)}% of the time — its closest

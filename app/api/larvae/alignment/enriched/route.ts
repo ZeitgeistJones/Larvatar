@@ -72,22 +72,16 @@ export async function GET() {
     if (!cur2 || p.rate > cur2.rate) bestAlly.set(p.b, { wallet: p.a, rate: p.rate });
   }
 
-  const needEns = result.credibility
-    .filter((_, i) => !profiles[i]?.profile.name)
-    .map((c) => c.wallet);
-  const ens = needEns.length > 0 ? await lookupEnsMany(needEns) : {};
+  const ens = await lookupEnsMany(result.credibility.map((c) => c.wallet));
 
   const larvae = result.credibility.map((c, i) => {
     const p = profiles[i];
     const ally = bestAlly.get(c.wallet) || null;
-    // Nickname first; ENS only fills bare hex; never replaces a nickname.
-    const name =
-      p?.profile.name ||
-      ens[c.wallet.toLowerCase()] ||
-      `${c.wallet.slice(0, 6)}…${c.wallet.slice(-4)}`;
     return {
       wallet: c.wallet,
-      name,
+      // Nickname only. Hex→ENS is a separate field for address display.
+      name: p?.profile.name || `${c.wallet.slice(0, 6)}…${c.wallet.slice(-4)}`,
+      ens: ens[c.wallet.toLowerCase()] || null,
       tagline: p?.profile.tagline || "",
       tone: p?.profile.tone || "",
       avatar: p?.avatar || null,

@@ -2,7 +2,9 @@
 //
 // Reverse-resolve ENS names for wallets. larv.ai's API only returns addresses;
 // any .eth labels on their UI are client-side. We look them up ourselves and
-// cache in Redis so governance / reception pages don't hammer a public API.
+// cache in Redis so pages don't hammer a public API.
+//
+// ENS replaces displayed wallet hex only. Specimen nicknames are never ENS.
 
 import { redis } from "@/lib/larvae";
 
@@ -74,4 +76,12 @@ export async function lookupEnsMany(
   }
 
   return out;
+}
+
+/** What to show instead of raw hex: ENS if present, else a short address. */
+export function walletLabel(wallet: string, ens?: string | null): string {
+  if (ens) return ens;
+  const w = wallet || "";
+  if (w.length < 12) return w;
+  return `${w.slice(0, 6)}…${w.slice(-4)}`;
 }

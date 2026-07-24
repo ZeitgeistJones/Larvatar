@@ -24,6 +24,7 @@ type Breakdown = {
 
 type Larva = {
   wallet: string;
+  ens?: string | null;
   name: string;
   tagline: string;
   tone: string;
@@ -289,6 +290,7 @@ export default function CredibilityPage() {
                             <span>
                               closest:{" "}
                               {data.larvae.find((x) => x.wallet === l.topAlly!.wallet)?.name ||
+                                data.larvae.find((x) => x.wallet === l.topAlly!.wallet)?.ens ||
                                 l.topAlly.wallet.slice(0, 8)}{" "}
                               ({Math.round(l.topAlly.rate * 100)}%)
                             </span>

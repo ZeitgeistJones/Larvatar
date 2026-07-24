@@ -93,18 +93,13 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ENS only when there is no specimen nickname — replaces bare hex, never nicknames.
-  const needEns = wallets.filter((w) => !nameByWallet[w]);
-  if (needEns.length > 0) {
-    const ens = await lookupEnsMany(needEns);
-    for (const [w, name] of Object.entries(ens)) {
-      if (!nameByWallet[w]) nameByWallet[w] = name;
-    }
-  }
+  // ENS is a wallet-label only — never written into nickname fields.
+  const ensByWallet = await lookupEnsMany(wallets);
 
   const named = <T extends { wallet: string }>(x: T) => ({
     ...x,
     name: nameByWallet[x.wallet.toLowerCase()] || null,
+    ens: ensByWallet[x.wallet.toLowerCase()] || null,
   });
 
   const body: Record<string, unknown> = {
@@ -130,6 +125,8 @@ export async function GET(req: NextRequest) {
       ...r,
       larvaName: nameByWallet[r.larva.toLowerCase()] || null,
       authorName: nameByWallet[r.author.toLowerCase()] || null,
+      larvaEns: ensByWallet[r.larva.toLowerCase()] || null,
+      authorEns: ensByWallet[r.author.toLowerCase()] || null,
     }));
     body.note =
       "Deviation is relative to each larva's own overall approval rate, not to the swarm. A positive value means this larva approves this author more often than it approves anyone. It does not establish why.";

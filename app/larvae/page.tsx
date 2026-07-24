@@ -8,6 +8,7 @@ import type { LarvatarTraits } from "@/lib/avatar";
 
 type Larva = {
   wallet: string;
+  ens?: string | null;
   responseCount: number;
   sources: { forum: number; labs: number };
   profile: {
@@ -191,7 +192,8 @@ export default function LarvaePage() {
                       <p className="truncate text-lg font-bold">{l.profile.name}</p>
                       <p className="text-xs italic opacity-70">{l.profile.tagline}</p>
                       <p className="mt-1 font-mono text-[10px] opacity-50">
-                        {l.wallet.slice(0, 6)}…{l.wallet.slice(-4)} · {l.responseCount} responses
+                        {l.ens || `${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}`} ·{" "}
+                        {l.responseCount} responses
                       </p>
                     </div>
                   </div>

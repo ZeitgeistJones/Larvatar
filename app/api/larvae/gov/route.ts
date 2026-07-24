@@ -20,9 +20,8 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 /**
- * Specimen nickname when we have a profile; otherwise ENS if the wallet has
- * one; otherwise no label (UI falls back to a short hex). ENS must never
- * replace an invented nickname.
+ * Specimen nicknames only. ENS is resolved separately and never written into
+ * the name field — nicknames and wallet labels are different things.
  */
 async function resolveNames(wallets: string[]): Promise<Record<string, string>> {
   const index = await getIndex();
@@ -40,15 +39,6 @@ async function resolveNames(wallets: string[]): Promise<Record<string, string>> 
       if (n) out[w] = n;
     });
   }
-
-  const needEns = list.filter((w) => !out[w]);
-  if (needEns.length > 0) {
-    const ens = await lookupEnsMany(needEns);
-    for (const [w, name] of Object.entries(ens)) {
-      if (!out[w]) out[w] = name;
-    }
-  }
-
   return out;
 }
 
@@ -69,17 +59,18 @@ export async function GET(req: NextRequest) {
     const item = result.items.find((i) => i.id === id);
     if (!item) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-    const names = await resolveNames([
-      item.author,
-      ...item.responses.map((r) => r.wallet),
-    ]);
+    const wallets = [item.author, ...item.responses.map((r) => r.wallet)];
+    const names = await resolveNames(wallets);
+    const ens = await lookupEnsMany(wallets);
 
     return NextResponse.json({
       ...item,
       authorName: names[item.author.toLowerCase()] || null,
+      authorEns: ens[item.author.toLowerCase()] || null,
       responses: item.responses.map((r) => ({
         ...r,
         name: names[r.wallet.toLowerCase()] || null,
+        ens: ens[r.wallet.toLowerCase()] || null,
       })),
     });
   }
@@ -87,26 +78,35 @@ export async function GET(req: NextRequest) {
   /* ── Majority alignment ── */
   if (view === "alignment") {
     const rows = majorityAlignment(result);
-    const names = await resolveNames(rows.map((r) => r.wallet));
+    const wallets = rows.map((r) => r.wallet);
+    const names = await resolveNames(wallets);
+    const ens = await lookupEnsMany(wallets);
 
     // Below this many votes, a high agreement rate is what a coin flip
     // produces on a few lopsided ballots, not a signal — so those larvae are
     // reported separately rather than ranked alongside larvae with enough
     // votes for the rate to mean something.
     const MIN_VOTES_FOR_RATE = 4;
-    const larvae: (ReturnType<typeof majorityAlignment>[number] & { name: string | null })[] = [];
-    const insufficientData: { wallet: string; name: string | null; votes: number }[] = [];
+    const larvae: (ReturnType<typeof majorityAlignment>[number] & {
+      name: string | null;
+      ens: string | null;
+    })[] = [];
+    const insufficientData: {
+      wallet: string;
+      name: string | null;
+      ens: string | null;
+      votes: number;
+    }[] = [];
 
     for (const r of rows) {
-      if (r.votes >= MIN_VOTES_FOR_RATE) {
-        larvae.push({ ...r, name: names[r.wallet.toLowerCase()] || null });
-      } else {
-        insufficientData.push({
-          wallet: r.wallet,
-          name: names[r.wallet.toLowerCase()] || null,
-          votes: r.votes,
-        });
-      }
+      const w = r.wallet.toLowerCase();
+      const row = {
+        ...r,
+        name: names[w] || null,
+        ens: ens[w] || null,
+      };
+      if (r.votes >= MIN_VOTES_FOR_RATE) larvae.push(row);
+      else insufficientData.push({ wallet: r.wallet, name: row.name, ens: row.ens, votes: r.votes });
     }
 
     return NextResponse.json({
@@ -122,7 +122,9 @@ export async function GET(req: NextRequest) {
   /* ── Vote agreement ── */
   if (view === "agreement") {
     const pairs = voteAgreement(result);
-    const names = await resolveNames(pairs.flatMap((p) => [p.a, p.b]));
+    const wallets = pairs.flatMap((p) => [p.a, p.b]);
+    const names = await resolveNames(wallets);
+    const ens = await lookupEnsMany(wallets);
     const voteCount = result.items.filter((i) => i.kind === "vote").length;
     const perfectPairs = pairs.filter((p) => p.agreed === p.total).length;
 
@@ -136,6 +138,8 @@ export async function GET(req: NextRequest) {
         ...p,
         aName: names[p.a.toLowerCase()] || null,
         bName: names[p.b.toLowerCase()] || null,
+        aEns: ens[p.a.toLowerCase()] || null,
+        bEns: ens[p.b.toLowerCase()] || null,
       })),
     });
   }
@@ -149,10 +153,12 @@ export async function GET(req: NextRequest) {
   // distribution. The concentration is reported as context instead.
   const proposers = proposerProfile(result);
   const itemAuthorWallets = result.items.map((i) => i.author);
-  const names = await resolveNames([
+  const wallets = [
     ...proposers.authors.map((a) => a.wallet),
     ...itemAuthorWallets,
-  ]);
+  ];
+  const names = await resolveNames(wallets);
+  const ens = await lookupEnsMany(wallets);
 
   return NextResponse.json({
     collectedAt: result.collectedAt,
@@ -162,6 +168,7 @@ export async function GET(req: NextRequest) {
       authors: proposers.authors.map((a) => ({
         ...a,
         name: names[a.wallet.toLowerCase()] || null,
+        ens: ens[a.wallet.toLowerCase()] || null,
       })),
       note: proposers.singleAuthor
         ? "Every governance item was created by one wallet, so there is no per-author comparison to make here. Proposal creation is gated on larv.ai; this reflects that gate, not a preference of the swarm."
@@ -173,6 +180,7 @@ export async function GET(req: NextRequest) {
       title: i.title,
       author: i.author,
       authorName: names[i.author.toLowerCase()] || null,
+      authorEns: ens[i.author.toLowerCase()] || null,
       status: i.status,
       createdAt: i.createdAt,
       options: i.options,
