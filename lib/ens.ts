@@ -78,6 +78,28 @@ export async function lookupEnsMany(
   return out;
 }
 
+/**
+ * Redis-only ENS lookup — never hits the network.
+ * Use on hot list endpoints so a cold ENS cache can't stall the page.
+ */
+export async function lookupEnsCachedOnly(
+  wallets: string[]
+): Promise<Record<string, string>> {
+  const unique = [...new Set(wallets.map((w) => w.toLowerCase()))];
+  const out: Record<string, string> = {};
+  await Promise.all(
+    unique.map(async (w) => {
+      try {
+        const cached = await redis.get<string>(ENS_KEY(w));
+        if (cached && cached !== MISS) out[w] = String(cached);
+      } catch {
+        // ignore
+      }
+    })
+  );
+  return out;
+}
+
 /** What to show instead of raw hex: ENS if present, else a short address. */
 export function walletLabel(wallet: string, ens?: string | null): string {
   if (ens) return ens;

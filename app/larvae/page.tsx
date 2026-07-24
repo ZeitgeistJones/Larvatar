@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
@@ -31,11 +31,14 @@ type Answer = {
   answer: string;
 };
 
+const CHUNK = 9;
+
 export default function LarvaePage() {
   const { colors } = useTheme();
   const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL } = colors;
 
   const [larvae, setLarvae] = useState<Larva[]>([]);
+  const [shown, setShown] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -48,16 +51,24 @@ export default function LarvaePage() {
 
   useEffect(() => {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 20_000);
+    const timer = setTimeout(() => ac.abort(), 15_000);
     fetch("/api/larvae", { signal: ac.signal })
       .then(async (r) => {
         if (!r.ok) throw new Error(`load failed (${r.status})`);
         return r.json();
       })
-      .then((d) => setLarvae(d.larvae || []))
+      .then((d) => {
+        const list = (d.larvae || []) as Larva[];
+        setLarvae(list);
+        // First paint: a small batch so nav stays clickable.
+        setShown(Math.min(CHUNK, list.length));
+      })
       .catch((e) => {
-        if (e?.name === "AbortError") setLoadError("Specimens took too long to load. Refresh?");
-        else setLoadError("Couldn’t load specimens. Refresh?");
+        if (e?.name === "AbortError") {
+          setLoadError("Specimens took too long to load. Refresh?");
+        } else {
+          setLoadError("Couldn’t load specimens. Refresh?");
+        }
       })
       .finally(() => {
         clearTimeout(timer);
@@ -68,6 +79,15 @@ export default function LarvaePage() {
       ac.abort();
     };
   }, []);
+
+  // Reveal remaining cards in small chunks between frames.
+  useEffect(() => {
+    if (shown >= larvae.length) return;
+    const id = window.setTimeout(() => {
+      setShown((n) => Math.min(n + CHUNK, larvae.length));
+    }, 40);
+    return () => window.clearTimeout(id);
+  }, [shown, larvae.length]);
 
   async function ask() {
     if (!question.trim() || asking) return;
@@ -95,10 +115,14 @@ export default function LarvaePage() {
     }
   }
 
+  const visible = larvae.slice(0, shown);
+
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
       <div className="mx-auto max-w-5xl">
-        <Nav />
+        <div className="sticky top-0 z-40 -mx-4 mb-2 px-4 pb-2 pt-1" style={{ background: SHEET }}>
+          <Nav />
+        </div>
         <header className="mb-10">
           <p className="font-mono text-xs tracking-widest uppercase" style={{ color: CORAL }}>
             larv.ai field guide
@@ -151,7 +175,10 @@ export default function LarvaePage() {
                   className="rounded-lg px-4 py-3 text-sm font-medium"
                   style={{ background: `${CORAL}14`, color: INK }}
                 >
-                  <span className="font-mono text-xs uppercase tracking-widest mr-2" style={{ color: CORAL }}>
+                  <span
+                    className="mr-2 font-mono text-xs uppercase tracking-widest"
+                    style={{ color: CORAL }}
+                  >
                     consensus
                   </span>
                   {consensus}
@@ -190,78 +217,148 @@ export default function LarvaePage() {
             No profiles built yet. Run the build endpoint first.
           </p>
         ) : (
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {larvae.map((l) => {
-              const open = expanded === l.wallet;
-              return (
-                <button
-                  key={l.wallet}
-                  onClick={() => setExpanded(open ? null : l.wallet)}
-                  className="rounded-xl border p-5 text-left transition-shadow hover:shadow-md"
-                  style={{
-                    borderColor: `${INK}22`,
-                    background: CARD,
-                    contentVisibility: "auto",
-                    containIntrinsicSize: "auto 180px",
-                  }}
-                >
-                  <div className="flex items-center gap-4">
-                    <LarvaAvatar
-                      hue={l.avatar.hue}
-                      tone={l.profile.tone}
-                      wallet={l.wallet}
-                      traits={l.avatar}
-                      label={l.profile.name}
-                      size={72}
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate text-lg font-bold">{l.profile.name}</p>
-                      <p className="text-xs italic opacity-70">{l.profile.tagline}</p>
-                      <p className="mt-1 font-mono text-[10px] opacity-50">
-                        {l.ens || `${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}`} ·{" "}
-                        {l.responseCount} responses
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    <span
-                      className="rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-white"
-                      style={{ background: CORAL }}
-                    >
-                      {l.profile.tone}
-                    </span>
-                    {l.profile.values.slice(0, open ? 4 : 2).map((v) => (
-                      <span
-                        key={v}
-                        className="rounded-full border px-2 py-0.5 text-[10px]"
-                        style={{ borderColor: `${INK}30` }}
-                      >
-                        {v}
-                      </span>
-                    ))}
-                  </div>
-
-                  {open && (
-                    <div className="mt-4 space-y-2 text-sm">
-                      <p className="opacity-85">{l.profile.summary}</p>
-                      {l.profile.quirks.length > 0 && (
-                        <p className="text-xs opacity-60">
-                          <span className="font-mono uppercase tracking-widest">quirks:</span>{" "}
-                          {l.profile.quirks.join(" · ")}
+          <>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {visible.map((l) => {
+                const open = expanded === l.wallet;
+                return (
+                  <button
+                    key={l.wallet}
+                    type="button"
+                    onClick={() => setExpanded(open ? null : l.wallet)}
+                    className="rounded-xl border p-5 text-left transition-shadow hover:shadow-md"
+                    style={{
+                      borderColor: `${INK}22`,
+                      background: CARD,
+                      contentVisibility: "auto",
+                      containIntrinsicSize: "auto 180px",
+                    }}
+                  >
+                    <div className="flex items-center gap-4">
+                      <DeferredAvatar
+                        hue={l.avatar.hue}
+                        tone={l.profile.tone}
+                        wallet={l.wallet}
+                        traits={l.avatar}
+                        label={l.profile.name}
+                        size={72}
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate text-lg font-bold">{l.profile.name}</p>
+                        <p className="text-xs italic opacity-70">{l.profile.tagline}</p>
+                        <p className="mt-1 font-mono text-[10px] opacity-50">
+                          {l.ens || `${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}`} ·{" "}
+                          {l.responseCount} responses
                         </p>
-                      )}
-                      <p className="font-mono text-[10px] opacity-45">
-                        forum {l.sources.forum} · labs {l.sources.labs}
-                      </p>
+                      </div>
                     </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      <span
+                        className="rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-white"
+                        style={{ background: CORAL }}
+                      >
+                        {l.profile.tone}
+                      </span>
+                      {l.profile.values.slice(0, open ? 4 : 2).map((v) => (
+                        <span
+                          key={v}
+                          className="rounded-full border px-2 py-0.5 text-[10px]"
+                          style={{ borderColor: `${INK}30` }}
+                        >
+                          {v}
+                        </span>
+                      ))}
+                    </div>
+
+                    {open && (
+                      <div className="mt-4 space-y-2 text-sm">
+                        <p className="opacity-85">{l.profile.summary}</p>
+                        {l.profile.quirks.length > 0 && (
+                          <p className="text-xs opacity-60">
+                            <span className="font-mono uppercase tracking-widest">quirks:</span>{" "}
+                            {l.profile.quirks.join(" · ")}
+                          </p>
+                        )}
+                        <p className="font-mono text-[10px] opacity-45">
+                          forum {l.sources.forum} · labs {l.sources.labs}
+                        </p>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {shown < larvae.length && (
+              <p className="mt-4 font-mono text-[10px] uppercase tracking-widest opacity-40">
+                showing {shown} of {larvae.length}…
+              </p>
+            )}
+          </>
         )}
       </div>
     </main>
+  );
+}
+
+/** Placeholder until near viewport — keeps first paint light so clicks work. */
+function DeferredAvatar({
+  hue,
+  tone,
+  wallet,
+  traits,
+  label,
+  size,
+}: {
+  hue: number;
+  tone: string;
+  wallet: string;
+  traits: LarvatarTraits;
+  label: string;
+  size: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setReady(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "240px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  return (
+    <div ref={ref} className="shrink-0" style={{ width: size, height: size }}>
+      {ready ? (
+        <LarvaAvatar
+          hue={hue}
+          tone={tone}
+          wallet={wallet}
+          traits={traits}
+          label={label}
+          size={size}
+        />
+      ) : (
+        <div
+          aria-hidden
+          style={{
+            width: size,
+            height: size,
+            borderRadius: "50%",
+            background: `hsl(${hue} 55% 48%)`,
+            opacity: 0.85,
+          }}
+        />
+      )}
+    </div>
   );
 }
