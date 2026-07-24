@@ -173,6 +173,7 @@ export function computeReception(
   for (const p of alignment.posts) {
     const author = authors[postKey(p.source, p.id)];
     if (!author) continue;
+    if (p.aggregatedStance === null) continue;
     withAuthor++;
     if (!byAuthor.has(author)) {
       byAuthor.set(author, { approve: 0, conditional: 0, disapprove: 0, neutral: 0 });

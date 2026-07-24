@@ -109,6 +109,7 @@ export async function GET() {
 
   const aggStances = result.posts.reduce(
     (acc, p) => {
+      if (p.aggregatedStance === null) return acc;
       acc[p.aggregatedStance] = (acc[p.aggregatedStance] || 0) + 1;
       return acc;
     },
