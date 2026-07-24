@@ -14,16 +14,20 @@ import {
   proposerProfile,
 } from "@/lib/gov";
 import { getIndex, getProfile } from "@/lib/larvae";
+import { lookupEnsMany } from "@/lib/ens";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-/** Resolve wallets to specimen names, batched to spare Redis. */
+/**
+ * Display label for a wallet: ENS if it has one, else specimen nickname.
+ * ENS is the real on-chain identity; invented nicknames fill the gaps.
+ */
 async function resolveNames(wallets: string[]): Promise<Record<string, string>> {
   const index = await getIndex();
-  const known = new Set(index.map((e) => e.wallet));
+  const known = new Set(index.map((e) => e.wallet.toLowerCase()));
   const out: Record<string, string> = {};
-  const list = [...new Set(wallets)];
+  const list = [...new Set(wallets.map((w) => w.toLowerCase()))];
   const BATCH = 20;
   for (let i = 0; i < list.length; i += BATCH) {
     const slice = list.slice(i, i + BATCH);
@@ -35,6 +39,12 @@ async function resolveNames(wallets: string[]): Promise<Record<string, string>> 
       if (n) out[w] = n;
     });
   }
+
+  const ens = await lookupEnsMany(list);
+  for (const [w, name] of Object.entries(ens)) {
+    out[w] = name;
+  }
+
   return out;
 }
 
@@ -62,10 +72,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       ...item,
-      authorName: names[item.author] || null,
+      authorName: names[item.author.toLowerCase()] || null,
       responses: item.responses.map((r) => ({
         ...r,
-        name: names[r.wallet] || null,
+        name: names[r.wallet.toLowerCase()] || null,
       })),
     });
   }
@@ -85,9 +95,13 @@ export async function GET(req: NextRequest) {
 
     for (const r of rows) {
       if (r.votes >= MIN_VOTES_FOR_RATE) {
-        larvae.push({ ...r, name: names[r.wallet] || null });
+        larvae.push({ ...r, name: names[r.wallet.toLowerCase()] || null });
       } else {
-        insufficientData.push({ wallet: r.wallet, name: names[r.wallet] || null, votes: r.votes });
+        insufficientData.push({
+          wallet: r.wallet,
+          name: names[r.wallet.toLowerCase()] || null,
+          votes: r.votes,
+        });
       }
     }
 
@@ -116,8 +130,8 @@ export async function GET(req: NextRequest) {
       pairCount: pairs.length,
       pairs: pairs.slice(0, 100).map((p) => ({
         ...p,
-        aName: names[p.a] || null,
-        bName: names[p.b] || null,
+        aName: names[p.a.toLowerCase()] || null,
+        bName: names[p.b.toLowerCase()] || null,
       })),
     });
   }
@@ -130,7 +144,11 @@ export async function GET(req: NextRequest) {
   // case a per-author breakdown would be a one-row table masquerading as a
   // distribution. The concentration is reported as context instead.
   const proposers = proposerProfile(result);
-  const names = await resolveNames(proposers.authors.map((a) => a.wallet));
+  const itemAuthorWallets = result.items.map((i) => i.author);
+  const names = await resolveNames([
+    ...proposers.authors.map((a) => a.wallet),
+    ...itemAuthorWallets,
+  ]);
 
   return NextResponse.json({
     collectedAt: result.collectedAt,
@@ -139,7 +157,7 @@ export async function GET(req: NextRequest) {
       ...proposers,
       authors: proposers.authors.map((a) => ({
         ...a,
-        name: names[a.wallet] || null,
+        name: names[a.wallet.toLowerCase()] || null,
       })),
       note: proposers.singleAuthor
         ? "Every governance item was created by one wallet, so there is no per-author comparison to make here. Proposal creation is gated on larv.ai; this reflects that gate, not a preference of the swarm."
@@ -150,8 +168,9 @@ export async function GET(req: NextRequest) {
       kind: i.kind,
       title: i.title,
       author: i.author,
-      authorName: names[i.author] || null,
+      authorName: names[i.author.toLowerCase()] || null,
       status: i.status,
+      createdAt: i.createdAt,
       options: i.options,
       affirmativeOption: i.affirmativeOption,
       tallies: i.tallies,

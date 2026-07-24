@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAlignResult } from "@/lib/alignment";
 import { getIndex, getProfile } from "@/lib/larvae";
+import { lookupEnsMany } from "@/lib/ens";
 import {
   getAuthorMap,
   backfillAuthors,
@@ -66,14 +67,14 @@ export async function GET(req: NextRequest) {
    * shortened wallet rather than an empty string.
    */
   const index = await getIndex();
-  const known = new Set(index.map((e) => e.wallet));
+  const known = new Set(index.map((e) => e.wallet.toLowerCase()));
 
   const needed = new Set<string>();
-  for (const a of report.authors) needed.add(a.wallet);
+  for (const a of report.authors) needed.add(a.wallet.toLowerCase());
   if (wantRelations) {
     for (const r of report.relations) {
-      needed.add(r.larva);
-      needed.add(r.author);
+      needed.add(r.larva.toLowerCase());
+      needed.add(r.author.toLowerCase());
     }
   }
 
@@ -92,9 +93,15 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // Prefer ENS when the wallet has one — authors especially are real people.
+  const ens = await lookupEnsMany(wallets);
+  for (const [w, name] of Object.entries(ens)) {
+    nameByWallet[w] = name;
+  }
+
   const named = <T extends { wallet: string }>(x: T) => ({
     ...x,
-    name: nameByWallet[x.wallet] || null,
+    name: nameByWallet[x.wallet.toLowerCase()] || null,
   });
 
   const body: Record<string, unknown> = {
@@ -118,8 +125,8 @@ export async function GET(req: NextRequest) {
   if (wantRelations) {
     body.relations = report.relations.map((r) => ({
       ...r,
-      larvaName: nameByWallet[r.larva] || null,
-      authorName: nameByWallet[r.author] || null,
+      larvaName: nameByWallet[r.larva.toLowerCase()] || null,
+      authorName: nameByWallet[r.author.toLowerCase()] || null,
     }));
     body.note =
       "Deviation is relative to each larva's own overall approval rate, not to the swarm. A positive value means this larva approves this author more often than it approves anyone. It does not establish why.";

@@ -87,7 +87,6 @@ export async function GET(req: NextRequest) {
 
   /* ── Phase 2: RFC classification ── */
   let classified = 0;
-
   let failedBatches = 0;
 
   for (const item of result.items) {
@@ -108,22 +107,24 @@ export async function GET(req: NextRequest) {
       for (let i = 0; i < stances.length; i++) {
         item.responses[cursor + i].stance = stances[i];
       }
-      // Advance regardless of success. A batch that cannot be classified stays
-      // null and is reported, rather than being retried forever or quietly
-      // filled with a fabricated stance.
+      // Advance even on failure so this visit doesn't spin. Nulls stay null and
+      // the next visit resumes via findIndex — unless a full pass makes zero
+      // progress, in which case we stop and report them.
       cursor += stances.length;
       classified += resolved;
       await saveGovResult(result);
     }
   }
 
-  // Every RFC response has now been attempted; nulls are permanent failures,
-  // not pending work, so the run is complete once the cursor reaches the end.
   const remaining = result.items
     .filter((i) => i.kind === "rfc")
     .reduce((n, i) => n + i.responses.filter((r) => r.stance === null).length, 0);
 
-  const doneClassifying = failedBatches === 0 ? remaining === 0 : true;
+  const hitTimeLimit = !timeLeft();
+  // Do NOT treat "some batches failed" as done — that left 200+ nulls stranded.
+  // Keep going across visits while there is remaining work OR we still made
+  // progress. Only finish with leftovers after a full pass that classified nothing.
+  const doneClassifying = remaining === 0 || (classified === 0 && !hitTimeLimit);
 
   if (doneClassifying) {
     const suspicious = suspiciousItems(result);
@@ -148,6 +149,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     done: false,
     classifiedThisRun: classified,
+    failedBatches,
     rfcResponsesRemaining: remaining,
     message: "Not finished — visit this same URL again to continue.",
   });

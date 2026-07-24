@@ -351,12 +351,16 @@ export async function classifyRfcBatch(
   // counts its own overhead against maxOutputTokens — so the array was being
   // truncated mid-output, which the parser then rejected.
   const budget = batch.length * 25 + 200;
-  const user = `RFC: "${item.title}"\n${item.question.slice(0, 300)}\n\nResponses:\n${numbered}`;
+  const baseUser = `RFC: "${item.title}"\n${item.question.slice(0, 300)}\n\nResponses:\n${numbered}`;
 
   // Two attempts. A single malformed reply is common; two in a row means the
   // batch genuinely can't be classified right now.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      const user =
+        attempt === 0
+          ? baseUser
+          : `${baseUser}\n\nReturn ONLY a JSON array of exactly ${batch.length} stance strings, same order as the numbered responses.`;
       const raw = await haiku(RFC_SYSTEM, user, budget);
       const stances = parseStances(raw);
 

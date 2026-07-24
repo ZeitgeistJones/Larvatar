@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server";
 import { getAlignResult, type Stance } from "@/lib/alignment";
 import { getIndex, getProfile } from "@/lib/larvae";
+import { lookupEnsMany } from "@/lib/ens";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -90,6 +91,13 @@ export async function GET() {
       topAlly: ally,
     };
   });
+
+  // Overlay ENS where available (real identity beats invented nickname).
+  const ens = await lookupEnsMany(larvae.map((l) => l.wallet));
+  for (const l of larvae) {
+    const e = ens[l.wallet.toLowerCase()];
+    if (e) l.name = e;
+  }
 
   // Hive-wide aggregates, so the pages can show where the middle actually sits
   // instead of leaving the reader to eyeball it.
