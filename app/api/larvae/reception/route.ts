@@ -93,10 +93,13 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Prefer ENS when the wallet has one — authors especially are real people.
-  const ens = await lookupEnsMany(wallets);
-  for (const [w, name] of Object.entries(ens)) {
-    nameByWallet[w] = name;
+  // ENS only when there is no specimen nickname — replaces bare hex, never nicknames.
+  const needEns = wallets.filter((w) => !nameByWallet[w]);
+  if (needEns.length > 0) {
+    const ens = await lookupEnsMany(needEns);
+    for (const [w, name] of Object.entries(ens)) {
+      if (!nameByWallet[w]) nameByWallet[w] = name;
+    }
   }
 
   const named = <T extends { wallet: string }>(x: T) => ({

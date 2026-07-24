@@ -20,8 +20,9 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 /**
- * Display label for a wallet: ENS if it has one, else specimen nickname.
- * ENS is the real on-chain identity; invented nicknames fill the gaps.
+ * Specimen nickname when we have a profile; otherwise ENS if the wallet has
+ * one; otherwise no label (UI falls back to a short hex). ENS must never
+ * replace an invented nickname.
  */
 async function resolveNames(wallets: string[]): Promise<Record<string, string>> {
   const index = await getIndex();
@@ -40,9 +41,12 @@ async function resolveNames(wallets: string[]): Promise<Record<string, string>> 
     });
   }
 
-  const ens = await lookupEnsMany(list);
-  for (const [w, name] of Object.entries(ens)) {
-    out[w] = name;
+  const needEns = list.filter((w) => !out[w]);
+  if (needEns.length > 0) {
+    const ens = await lookupEnsMany(needEns);
+    for (const [w, name] of Object.entries(ens)) {
+      if (!out[w]) out[w] = name;
+    }
   }
 
   return out;

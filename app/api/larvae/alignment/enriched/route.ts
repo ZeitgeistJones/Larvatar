@@ -72,12 +72,22 @@ export async function GET() {
     if (!cur2 || p.rate > cur2.rate) bestAlly.set(p.b, { wallet: p.a, rate: p.rate });
   }
 
+  const needEns = result.credibility
+    .filter((_, i) => !profiles[i]?.profile.name)
+    .map((c) => c.wallet);
+  const ens = needEns.length > 0 ? await lookupEnsMany(needEns) : {};
+
   const larvae = result.credibility.map((c, i) => {
     const p = profiles[i];
     const ally = bestAlly.get(c.wallet) || null;
+    // Nickname first; ENS only fills bare hex; never replaces a nickname.
+    const name =
+      p?.profile.name ||
+      ens[c.wallet.toLowerCase()] ||
+      `${c.wallet.slice(0, 6)}…${c.wallet.slice(-4)}`;
     return {
       wallet: c.wallet,
-      name: p?.profile.name || `${c.wallet.slice(0, 6)}…${c.wallet.slice(-4)}`,
+      name,
       tagline: p?.profile.tagline || "",
       tone: p?.profile.tone || "",
       avatar: p?.avatar || null,
@@ -91,13 +101,6 @@ export async function GET() {
       topAlly: ally,
     };
   });
-
-  // Overlay ENS where available (real identity beats invented nickname).
-  const ens = await lookupEnsMany(larvae.map((l) => l.wallet));
-  for (const l of larvae) {
-    const e = ens[l.wallet.toLowerCase()];
-    if (e) l.name = e;
-  }
 
   // Hive-wide aggregates, so the pages can show where the middle actually sits
   // instead of leaving the reader to eyeball it.
