@@ -74,11 +74,30 @@ export async function GET(req: NextRequest) {
   if (view === "alignment") {
     const rows = majorityAlignment(result);
     const names = await resolveNames(rows.map((r) => r.wallet));
+
+    // Below this many votes, a high agreement rate is what a coin flip
+    // produces on a few lopsided ballots, not a signal — so those larvae are
+    // reported separately rather than ranked alongside larvae with enough
+    // votes for the rate to mean something.
+    const MIN_VOTES_FOR_RATE = 4;
+    const larvae: (ReturnType<typeof majorityAlignment>[number] & { name: string | null })[] = [];
+    const insufficientData: { wallet: string; name: string | null; votes: number }[] = [];
+
+    for (const r of rows) {
+      if (r.votes >= MIN_VOTES_FOR_RATE) {
+        larvae.push({ ...r, name: names[r.wallet] || null });
+      } else {
+        insufficientData.push({ wallet: r.wallet, name: names[r.wallet] || null, votes: r.votes });
+      }
+    }
+
     return NextResponse.json({
       note:
         "Votes only. Choice and outcome are both explicit here — nothing is inferred — but this still measures agreement with the majority, not correctness.",
+      caveat: `Larvae with fewer than ${MIN_VOTES_FOR_RATE} votes are excluded from the rate ranking and listed in insufficientData instead. With only a handful of lopsided votes, landing with the majority is the expected outcome, not a signal of alignment.`,
       voteCount: result.items.filter((i) => i.kind === "vote").length,
-      larvae: rows.map((r) => ({ ...r, name: names[r.wallet] || null })),
+      larvae,
+      insufficientData,
     });
   }
 
@@ -86,8 +105,14 @@ export async function GET(req: NextRequest) {
   if (view === "agreement") {
     const pairs = voteAgreement(result);
     const names = await resolveNames(pairs.flatMap((p) => [p.a, p.b]));
+    const voteCount = result.items.filter((i) => i.kind === "vote").length;
+    const perfectPairs = pairs.filter((p) => p.agreed === p.total).length;
+
     return NextResponse.json({
       note: "Pairs sharing at least 3 votes, ranked by how often they chose identically.",
+      caveat: `${perfectPairs} pair(s) agree on every shared vote. Perfect agreement across just 3-4 lopsided votes — where most larvae land on the same side anyway — is what chance produces on its own, not evidence of a voting bloc.`,
+      voteCount,
+      perfectPairs,
       pairCount: pairs.length,
       pairs: pairs.slice(0, 100).map((p) => ({
         ...p,

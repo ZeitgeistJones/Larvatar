@@ -223,6 +223,8 @@ export async function GET(req: NextRequest) {
     to: string;
     source: string;
     error?: string;
+    /** Passed structure but failed the quality gate on the final attempt. */
+    gated?: boolean;
   }[] = [];
   const failed: string[] = [];
   // Paced calls mean ~5 larvae per request; preview stops early on purpose.
@@ -261,6 +263,7 @@ export async function GET(req: NextRequest) {
         to: result.name,
         source: result.source,
         ...(result.error ? { error: result.error } : {}),
+        ...(result.gated ? { gated: true } : {}),
       });
 
       remember(result.name, reg);
@@ -335,6 +338,7 @@ export async function GET(req: NextRequest) {
     exhaustedWordCount: exhaustedWords(reg).length,
     renamedThisRun: renamed.length,
     remaining: queue.length,
+    gatedCount: renamed.filter((r) => r.gated).length,
     bySource: renamed.reduce(
       (acc, r) => {
         acc[r.source] = (acc[r.source] || 0) + 1;

@@ -351,6 +351,62 @@ export function exhaustedWords(reg: NameRegistry): string[] {
   return out;
 }
 
+/* ─── Quality gate ─────────────────────────────────────────────────── */
+
+/**
+ * Generic occupation words. These are what the collection kept collapsing
+ * into: [Adjective] + [Job Title], 124 times over. A job title says what a
+ * larva's topic is and nothing about what it's like, which is exactly the
+ * flatness this system exists to avoid.
+ *
+ * Matched as WHOLE WORDS on the FINAL word only. Substring matching would
+ * reject "Burnbound" for containing "bound", and a job word appearing first
+ * ("Warden Echo") reads differently from one appearing last ("Refrain Warden")
+ * — it's the trailing position that makes a name sound like a post.
+ */
+const OCCUPATION_WORDS = new Set([
+  "steward", "sentinel", "iterator", "arbiter", "evangelist", "inquisitor",
+  "prophet", "curator", "zealot", "analyst", "architect", "warden", "scribe",
+  "broker", "keeper", "accountant", "categorizer", "mechanist", "gatekeeper",
+  "maximalist", "auditor", "operator", "executor", "strategist", "optimizer",
+  "custodian", "marshal", "chronicler", "courier", "herald", "envoy",
+  "overseer", "administrator", "coordinator", "supervisor", "specialist",
+  "technician", "practitioner", "advocate", "guardian", "shepherd",
+]);
+
+/**
+ * Why a candidate was rejected by the quality gate, phrased so it can be fed
+ * straight back to the model on the retry.
+ */
+export type GateFailure = string | null;
+
+/**
+ * Reject names that are structurally fine but boring.
+ *
+ * `hasEvidence` relaxes the gate: when the corpus turned up nothing
+ * distinctive, there is genuinely little to name from, and forcing retries
+ * just burns calls to arrive at the same place. Those larvae are allowed a
+ * plain name.
+ */
+export function gateFailure(name: string, hasEvidence: boolean): GateFailure {
+  const words = tokens(name).filter((w) => w !== "the");
+  if (words.length === 0) return null;
+
+  const last = words[words.length - 1];
+
+  if (hasEvidence && OCCUPATION_WORDS.has(last)) {
+    return `"${name}" ends in "${last}", a generic job title. Name what this larva is LIKE, not what job it does.`;
+  }
+
+  // Two occupation words is a job title even without the trailing rule.
+  const occupationCount = words.filter((w) => OCCUPATION_WORDS.has(w)).length;
+  if (occupationCount >= 2) {
+    return `"${name}" is built entirely from job-title words. Use a trait, a relationship, or something specific from the evidence instead.`;
+  }
+
+  return null;
+}
+
 export function isAcceptable(name: string, reg: NameRegistry): boolean {
   return (
     isWellFormed(name) &&
@@ -488,13 +544,22 @@ export async function nameLarva(
   source: "hint" | "llm" | "derived";
   attempts: number;
   error?: string;
+  /** True when the name passed structure but failed the quality gate. */
+  gated?: boolean;
 }> {
   // 1. Trust the profile pass when it already produced something good.
-  if (input.hint && isAcceptable(input.hint, reg)) {
+  const evidence = extractEvidence(input.corpus);
+
+  // The hint comes from the profile pass, which has no quality gate of its own,
+  // so it has to clear the same bar as anything the namer produces.
+  if (
+    input.hint &&
+    isAcceptable(input.hint, reg) &&
+    !gateFailure(input.hint, evidence.length > 0)
+  ) {
     return { name: input.hint.trim(), source: "hint", attempts: 0 };
   }
 
-  const evidence = extractEvidence(input.corpus);
   const evidenceText = formatEvidence(evidence);
   const takenSample = [...reg.used].slice(-120).join(", ") || "(none yet)";
 
@@ -502,9 +567,15 @@ export async function nameLarva(
   if (input.hint) rejected.push(input.hint.trim());
   let lastError = "";
 
-  // Two attempts, not three: at ~7s per paced call a third rarely fits in
-  // the request budget, and the retry prompt does most of its work on attempt 2.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Feedback from the quality gate, fed back verbatim so the model is told
+  // what was wrong rather than just that something was.
+  const gateNotes: string[] = [];
+  const hasEvidence = evidence.length > 0;
+
+  // Three attempts. The quality gate can reject a structurally valid name for
+  // being a job title, so the model needs a chance to hear why and try again —
+  // two attempts left too little room once the gate was added.
+  for (let attempt = 0; attempt < 3; attempt++) {
     const rejectionNote =
       rejected.length > 0
         ? `\n\nAlready rejected (taken or malformed) — do NOT offer these or variations of them: ${rejected.join(", ")}`
@@ -518,6 +589,11 @@ export async function nameLarva(
         ? `\n\nThese words are used up across the collection — do NOT use any of them in the name: ${exhausted.slice(0, 60).join(", ")}`
         : "";
 
+    const gateNote =
+      gateNotes.length > 0
+        ? `\n\nYour previous attempt was rejected for quality: ${gateNotes[gateNotes.length - 1]}`
+        : "";
+
     const user = `Evidence from this larva's own writing:
 ${evidenceText}
 
@@ -525,7 +601,7 @@ Personality read:
 - tone: ${input.tone}
 ${input.tagline ? `- tagline: ${input.tagline}\n` : ""}${input.quirks?.length ? `- quirks: ${input.quirks.join("; ")}\n` : ""}${input.values?.length ? `- values: ${input.values.join("; ")}\n` : ""}
 Names already taken by other larvae (avoid these and near-copies):
-${takenSample}${exhaustedNote}${rejectionNote}`;
+${takenSample}${exhaustedNote}${rejectionNote}${gateNote}`;
 
     try {
       // Gemini counts overhead against maxOutputTokens and returns empty text
@@ -535,10 +611,22 @@ ${takenSample}${exhaustedNote}${rejectionNote}`;
       const candidate = cleanNameOutput(raw);
 
       if (isAcceptable(candidate, reg)) {
-        return { name: candidate, source: "llm", attempts: attempt + 1 };
+        const failure = gateFailure(candidate, hasEvidence);
+        if (!failure) {
+          return { name: candidate, source: "llm", attempts: attempt + 1 };
+        }
+        // Structurally fine but generic. On the final attempt, accept it
+        // anyway — a mediocre real name beats falling through to derivation.
+        if (attempt === 2) {
+          return { name: candidate, source: "llm", attempts: attempt + 1, gated: true };
+        }
+        gateNotes.push(failure);
+        rejected.push(candidate);
+      } else if (candidate) {
+        rejected.push(candidate);
+      } else {
+        lastError = "model returned no usable name";
       }
-      if (candidate) rejected.push(candidate);
-      else lastError = "model returned no usable name";
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
     }
@@ -549,7 +637,7 @@ ${takenSample}${exhaustedNote}${rejectionNote}`;
   return {
     name: deriveFromEvidence(evidence, input, reg),
     source: "derived",
-    attempts: 2,
+    attempts: 3,
     error: lastError,
   };
 }
