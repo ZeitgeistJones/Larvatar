@@ -13,6 +13,7 @@ const LINKS = [
   { href: "/map", label: "Map" },
   { href: "/credibility", label: "Track Record" },
   { href: "/reception", label: "Reception" },
+  { href: "/governance", label: "Governance" },
   { href: "/election", label: "Election" },
   { href: "/larvae-survey", label: "Survey Game" },
 ];
