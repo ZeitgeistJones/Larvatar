@@ -160,18 +160,75 @@ export function detectAffirmative(options: string[]): string | null {
   const na = norm(a);
   const nb = norm(b);
 
-  // Leading yes/no is the strongest and most common signal.
+  // ── 1. Explicit yes/no ──
+  //
+  // The strongest signal, and it wins outright when both options begin with a
+  // literal yes/no — the ballot is stating its own polarity, and second-
+  // guessing it would be replacing the question's framing with ours.
+  //
+  // Note this can point the opposite way from the continuation reading. On
+  // larv.ai item 5, "No, keep all larva responses public" vs "Yes, start
+  // hiding larva responses", continuation would call keeping-public the
+  // affirmative, while the explicit yes is on start-hiding. The explicit
+  // labelling takes precedence: the question asked whether to make responses
+  // private, and "yes" means yes to that.
   const startsYes = (s: string) => /^(yes|approve|agree|support|for)\b/.test(s);
-  const startsNo = (s: string) => /^(no|reject|disagree|oppose|against|do not|don't)\b/.test(s);
+  const startsNo = (s: string) =>
+    /^(no|reject|disagree|oppose|against|do not|don't)\b/.test(s);
 
   if (startsYes(na) && startsNo(nb)) return a;
   if (startsYes(nb) && startsNo(na)) return b;
 
-  // Fall back to yes/no appearing anywhere, but only when exactly one side has
-  // each. "No Do Not Burn" contains both "no" and "do not", so requiring
-  // exclusivity avoids matching both options at once.
-  const hasYes = (s: string) => /\b(yes|approve|support|in favor|in favour)\b/.test(s);
-  const hasNo = (s: string) => /\b(no|reject|oppose|against|do not|don't|keep|stop)\b/.test(s);
+  // ── 2. Continue vs discontinue ──
+  //
+  // "KEEP burning tokens" vs "STOP burning tokens" is not a yes/no question —
+  // it asks whether to continue an existing activity. Treating it as yes/no
+  // was the bug that left this vote unresolved: "keep" and "stop" were both
+  // listed as negative words, so neither side could win.
+  //
+  // The affirmative side here is CONTINUATION — the option that supports the
+  // activity carrying on. That is the reading that lines up with a separate
+  // "should we start X" vote, which matters because the whole point of
+  // resolving these is comparing across votes about the same subject.
+  const continues = (s: string) =>
+    /\b(keep|continue|maintain|retain|preserve|carry on|stay)\b/.test(s);
+  const discontinues = (s: string) =>
+    /\b(stop|cease|halt|end|discontinue|pause|abandon|quit)\b/.test(s);
+
+  const aCont = continues(na) && !discontinues(na);
+  const bCont = continues(nb) && !discontinues(nb);
+  const aDisc = discontinues(na) && !continues(na);
+  const bDisc = discontinues(nb) && !continues(nb);
+
+  if (aCont && bDisc) return a;
+  if (bCont && aDisc) return b;
+
+  // ── 3. Start vs don't start ──
+  //
+  // Guarded against the case where continuation and explicit-yes point in
+  // OPPOSITE directions. larv.ai item 5 is exactly this: "No, keep all larva
+  // responses public" vs "Yes, start hiding larva responses". The continuation
+  // reading says "keep public" is affirmative; the yes/no reading says "start
+  // hiding" is. Both are defensible, which is precisely why the answer must be
+  // to refuse rather than to let whichever rule runs first decide.
+  const anyContinuation = continues(na) || continues(nb);
+  if (!anyContinuation) {
+    const starts = (s: string) =>
+      /\b(start|begin|launch|enable|resume|adopt)\b/.test(s);
+    const aStart = starts(na) && !discontinues(na) && !/\bnot?\b/.test(na);
+    const bStart = starts(nb) && !discontinues(nb) && !/\bnot?\b/.test(nb);
+    if (aStart && !bStart && /\b(no|not|don't|do not)\b/.test(nb)) return a;
+    if (bStart && !aStart && /\b(no|not|don't|do not)\b/.test(na)) return b;
+  }
+
+  // ── 4. Weaker yes/no, anywhere in the text ──
+  //
+  // "keep" and "stop" are deliberately NOT in these lists — they belong to the
+  // continuation test above, and including them here is what broke it.
+  const hasYes = (s: string) =>
+    /\b(yes|approve|support|in favor|in favour)\b/.test(s);
+  const hasNo = (s: string) =>
+    /\b(no|reject|oppose|against|do not|don't)\b/.test(s);
 
   const aYes = hasYes(na) && !hasNo(na);
   const bYes = hasYes(nb) && !hasNo(nb);
@@ -181,9 +238,25 @@ export function detectAffirmative(options: string[]): string | null {
   if (aYes && bNo) return a;
   if (bYes && aNo) return b;
 
-  // No readable polarity — "Ship now" vs "Wait for audit" lands here, correctly.
+  // No readable polarity — "Ship now" vs "Wait for the audit" lands here,
+  // correctly. Guessing would silently corrupt every stance from that vote.
   return null;
 }
+
+/**
+ * Manual polarity for votes the detector cannot read.
+ *
+ * Keyed by governance item id. Every entry must be verifiable by reading the
+ * option text on larv.ai — this exists to record a human judgement about
+ * wording, not to override what the data says.
+ *
+ * Empty by default. The stop/keep case that motivated it is now handled by the
+ * continuation rule above, so nothing needs an override today; the hook stays
+ * for future votes whose wording defeats all four rules.
+ */
+export const POLARITY_OVERRIDES: Record<string, string> = {
+  // "6": "KEEP burning tokens in the incinerator",
+};
 
 /** Map a chosen option to a stance, given the affirmative side. */
 function stanceFromOption(
@@ -303,7 +376,10 @@ export async function collectGov(): Promise<{
 
     const kind: GovKind = g.type === "vote" ? "vote" : "rfc";
     const options: string[] = Array.isArray(g.options) ? g.options.map(String) : [];
-    const affirmative = kind === "vote" ? detectAffirmative(options) : null;
+    const affirmative =
+      kind === "vote"
+        ? POLARITY_OVERRIDES[String(g.id)] ?? detectAffirmative(options)
+        : null;
 
     if (kind === "vote" && options.length > 0 && !affirmative) {
       unpolarized.push(String(g.id));
