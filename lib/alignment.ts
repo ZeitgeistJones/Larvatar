@@ -654,6 +654,3 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
     },
   };
 }
-````
-
-## File: lib/avatar.ts

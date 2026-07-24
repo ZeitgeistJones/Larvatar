@@ -182,6 +182,3 @@ export async function GET(req: NextRequest) {
     message: "Not finished — visit this same URL again to continue.",
   });
 }
-````
-
-## File: app/api/larvae/alignment/enriched/route.ts
