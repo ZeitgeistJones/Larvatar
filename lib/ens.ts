@@ -18,7 +18,7 @@ async function fetchEns(wallet: string): Promise<string | null> {
   const url = `https://api.ensideas.com/ens/resolve/${encodeURIComponent(wallet)}`;
   const res = await fetch(url, {
     headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(8_000),
+    signal: AbortSignal.timeout(2_000),
   });
   if (!res.ok) return null;
   const data = (await res.json()) as { name?: unknown };

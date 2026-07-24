@@ -37,6 +37,7 @@ export default function LarvaePage() {
 
   const [larvae, setLarvae] = useState<Larva[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const [question, setQuestion] = useState("");
@@ -46,10 +47,26 @@ export default function LarvaePage() {
   const [askError, setAskError] = useState("");
 
   useEffect(() => {
-    fetch("/api/larvae")
-      .then((r) => r.json())
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 20_000);
+    fetch("/api/larvae", { signal: ac.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`load failed (${r.status})`);
+        return r.json();
+      })
       .then((d) => setLarvae(d.larvae || []))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (e?.name === "AbortError") setLoadError("Specimens took too long to load. Refresh?");
+        else setLoadError("Couldn’t load specimens. Refresh?");
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        setLoading(false);
+      });
+    return () => {
+      clearTimeout(timer);
+      ac.abort();
+    };
   }, []);
 
   async function ask() {
@@ -164,6 +181,10 @@ export default function LarvaePage() {
 
         {loading ? (
           <p className="text-sm opacity-60">loading specimens…</p>
+        ) : loadError ? (
+          <p className="text-sm" style={{ color: CORAL }}>
+            {loadError}
+          </p>
         ) : larvae.length === 0 ? (
           <p className="text-sm opacity-60">
             No profiles built yet. Run the build endpoint first.
@@ -177,7 +198,12 @@ export default function LarvaePage() {
                   key={l.wallet}
                   onClick={() => setExpanded(open ? null : l.wallet)}
                   className="rounded-xl border p-5 text-left transition-shadow hover:shadow-md"
-                  style={{ borderColor: `${INK}22`, background: CARD }}
+                  style={{
+                    borderColor: `${INK}22`,
+                    background: CARD,
+                    contentVisibility: "auto",
+                    containIntrinsicSize: "auto 180px",
+                  }}
                 >
                   <div className="flex items-center gap-4">
                     <LarvaAvatar

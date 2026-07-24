@@ -11,7 +11,14 @@ export async function GET() {
     await Promise.all(index.map((e) => getProfile(e.wallet)))
   ).filter(Boolean) as NonNullable<Awaited<ReturnType<typeof getProfile>>>[];
 
-  const ens = await lookupEnsMany(profiles.map((p) => p.wallet));
+  // ENS is nice-to-have. A cold cache can take minutes across 100+ wallets and
+  // leaves the Specimens page stuck on "loading…". Cap the wait hard.
+  const ens = await Promise.race([
+    lookupEnsMany(profiles.map((p) => p.wallet)),
+    new Promise<Record<string, string>>((resolve) =>
+      setTimeout(() => resolve({}), 2500)
+    ),
+  ]);
   const larvae = profiles.map((p) => ({
     ...p,
     ens: ens[p.wallet.toLowerCase()] || null,
