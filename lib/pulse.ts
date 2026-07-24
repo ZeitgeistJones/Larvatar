@@ -602,24 +602,27 @@ function rankThemes(merged: Acc[], singleWave = false): {
   const contention = [...merged]
     .map((a) => {
       const split = Math.min(a.positive, a.negative);
-      const score = a.contested * 2 + split;
+      // Real contention = both praise and pushback. Pure "contested" tags
+      // with only one side are not splits — they confuse the board.
+      const score = split * 2 + Math.min(a.contested, split);
       return { a, score, split };
     })
-    .filter((x) => x.score >= 1 && (x.a.contested >= 1 || x.split >= 1))
+    .filter((x) => x.split >= 1)
     .sort((x, y) => y.score - x.score || y.a.waves.size - x.a.waves.size)
     .slice(0, 3)
-    .map(({ a }) =>
-      toTheme(
+    .map(({ a, split }) => {
+      const total = a.positive + a.negative;
+      const leanFor = Math.round((a.positive / total) * 100);
+      const leanAgainst = 100 - leanFor;
+      return toTheme(
         themeKey(a.label),
         a.label,
-        a.contested + Math.min(a.positive, a.negative),
-        a.contested
-          ? `${a.contested} contested · ${a.positive}+/${a.negative}−`
-          : `split ${a.positive}+ / ${a.negative}−`,
-        across(a),
+        split,
+        `${leanFor}–${leanAgainst} split`,
+        `${a.positive} praise · ${a.negative} pushback${across(a) ? ` · ${across(a)}` : ""}`,
         [...a.waves]
-      )
-    );
+      );
+    });
 
   return { positive, negative, contention };
 }

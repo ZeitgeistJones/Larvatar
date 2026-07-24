@@ -216,10 +216,11 @@ export default function TopicTrendsPage() {
                       empty="No clear negative themes in this wave."
                     />
                     <ThemeList
-                      title="Top 3 contention"
+                      title="Top 3 splits"
+                      blurb="Themes that got both praise and pushback in this check-in."
                       items={w.contention || []}
                       accent={GOLD}
-                      empty="No clear contention themes in this wave."
+                      empty="No clear split themes in this wave."
                       last
                     />
                   </section>
@@ -258,12 +259,14 @@ export default function TopicTrendsPage() {
 
 function ThemeList({
   title,
+  blurb,
   items,
   accent,
   empty,
   last,
 }: {
   title: string;
+  blurb?: string;
   items: PulseTheme[];
   accent: string;
   empty: string;
@@ -277,6 +280,7 @@ function ThemeList({
       <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: accent }}>
         {title}
       </p>
+      {blurb && <p className="mt-1 text-sm opacity-60">{blurb}</p>}
       {items.length === 0 ? (
         <p className="mt-2 text-sm opacity-50">{empty}</p>
       ) : (
@@ -291,6 +295,11 @@ function ThemeList({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">{item.label}</p>
+                {item.detail && (
+                  <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest opacity-45">
+                    {item.detail}
+                  </p>
+                )}
               </div>
               <p className="shrink-0 text-right text-xs font-bold" style={{ color: accent }}>
                 {item.metric}
