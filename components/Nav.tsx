@@ -16,6 +16,7 @@ const LINKS = [
   { href: "/governance", label: "Governance" },
   { href: "/election", label: "Election" },
   { href: "/larvae-survey", label: "Survey Game" },
+  { href: "/about", label: "About" },
 ];
 
 export default function Nav() {

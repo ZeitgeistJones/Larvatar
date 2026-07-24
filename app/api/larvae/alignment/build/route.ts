@@ -1,4 +1,3 @@
-// app/api/larvae/alignment/build/route.ts
 //
 // Chunked alignment build. Keep visiting the SAME url until "done": true.
 //
@@ -183,3 +182,6 @@ export async function GET(req: NextRequest) {
     message: "Not finished — visit this same URL again to continue.",
   });
 }
+````
+
+## File: app/api/larvae/alignment/enriched/route.ts

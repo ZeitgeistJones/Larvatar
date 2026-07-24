@@ -44,7 +44,14 @@ export type GovResponse = {
   wallet: string;
   /** Exact option text for votes; null for RFCs. */
   chosenOption: string | null;
-  /** Stance, when it could be determined. Null when polarity is unreadable. */
+  /**
+   * Stance for this response.
+   *
+   * null means NOT CLASSIFIED — either the polarity of a vote was unreadable,
+   * or classification of an RFC response failed. It explicitly does NOT mean
+   * "no position". Conflating the two is what produced 111 responses saying
+   * "VOTE: YES" recorded as neutral.
+   */
   stance: Stance | null;
   /** The larva's prose, used for RFC classification and for display. */
   reasoning: string;
@@ -58,6 +65,9 @@ export type GovItem = {
   /** Wallet that created the proposal. */
   author: string;
   status: string;
+  /** ISO timestamp. Essential for a governance record — without it, two votes
+   *  on the same subject look like a contradiction rather than a sequence. */
+  createdAt: string;
   options: string[];
   /** Real outcome counts, straight from the API. Null for RFCs. */
   tallies: Record<string, number> | null;
@@ -286,20 +296,34 @@ Respond with ONLY a JSON array of stance strings, no markdown, no preamble:
 
 const VALID: Stance[] = ["approve", "conditional", "disapprove", "neutral"];
 
-function parseStances(text: string): Stance[] {
+/**
+ * Parse a stance array from model output.
+ *
+ * Returns null on ANY failure rather than an empty or partial array. The
+ * caller must be able to tell "the model answered" from "the model did not",
+ * because the previous behaviour — returning [] and letting the caller pad
+ * with "neutral" — silently converted whole batches of clear approvals into
+ * fabricated neutrals.
+ */
+function parseStances(text: string): Stance[] | null {
   const clean = text.replace(/```json|```/g, "").trim();
   const start = clean.indexOf("[");
   const end = clean.lastIndexOf("]");
-  if (start === -1 || end === -1) return [];
+  if (start === -1 || end === -1) return null;
   try {
     const arr = JSON.parse(clean.slice(start, end + 1));
-    if (!Array.isArray(arr)) return [];
-    return arr.map((s) => {
-      const v = String(s).toLowerCase().replace(/[^a-z]/g, "") as Stance;
-      return VALID.includes(v) ? v : "neutral";
-    });
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const out: Stance[] = [];
+    for (const raw of arr) {
+      const v = String(raw).toLowerCase().replace(/[^a-z]/g, "") as Stance;
+      // An unrecognized token means the output is malformed. Coercing it to
+      // "neutral" would hide that, so reject the whole batch instead.
+      if (!VALID.includes(v)) return null;
+      out.push(v);
+    }
+    return out;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -314,7 +338,7 @@ export async function classifyRfcBatch(
   item: { title: string; question: string },
   responses: GovResponse[],
   cursor: number
-): Promise<Stance[]> {
+): Promise<(Stance | null)[]> {
   const batch = responses.slice(cursor, cursor + RFC_BATCH);
   if (batch.length === 0) return [];
 
@@ -322,17 +346,31 @@ export async function classifyRfcBatch(
     .map((r, i) => `${i + 1}. ${r.reasoning.slice(0, 280)}`)
     .join("\n");
 
-  try {
-    const raw = await haiku(
-      RFC_SYSTEM,
-      `RFC: "${item.title}"\n${item.question.slice(0, 300)}\n\nResponses:\n${numbered}`,
-      batch.length * 12 + 60
-    );
-    const stances = parseStances(raw);
-    return batch.map((_, i) => stances[i] ?? "neutral");
-  } catch {
-    return batch.map(() => "neutral" as Stance);
+  // Token budget must have real headroom. The previous formula
+  // (batch.length * 12 + 60) gave 300 tokens for 20 responses, and Gemini
+  // counts its own overhead against maxOutputTokens — so the array was being
+  // truncated mid-output, which the parser then rejected.
+  const budget = batch.length * 25 + 200;
+  const user = `RFC: "${item.title}"\n${item.question.slice(0, 300)}\n\nResponses:\n${numbered}`;
+
+  // Two attempts. A single malformed reply is common; two in a row means the
+  // batch genuinely can't be classified right now.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const raw = await haiku(RFC_SYSTEM, user, budget);
+      const stances = parseStances(raw);
+
+      // The count must match exactly. A short array means responses were
+      // dropped, and lining up stance[i] with response[i] after that would
+      // assign each larva someone else's position.
+      if (stances && stances.length === batch.length) return stances;
+    } catch {
+      // fall through to retry
+    }
   }
+
+  // Unclassified, and recorded as such.
+  return batch.map(() => null);
 }
 
 /* ─── Collection ───────────────────────────────────────────────────── */
@@ -416,6 +454,7 @@ export async function collectGov(): Promise<{
       question: String(g.question || "").slice(0, 600),
       author: String(g.created_by || "").toLowerCase(),
       status: String(g.status || ""),
+      createdAt: String(g.created_at || ""),
       options,
       tallies: detail.tallies && typeof detail.tallies === "object" ? detail.tallies : null,
       cvTotals: detail.cvTotals && typeof detail.cvTotals === "object" ? detail.cvTotals : null,
@@ -425,6 +464,58 @@ export async function collectGov(): Promise<{
   }
 
   return { items, votes, rfcs, unpolarized };
+}
+
+/**
+ * Flag items whose classification looks like a failure rather than a result.
+ *
+ * A governance item where every single response lands on one stance is far
+ * more likely to be a broken batch than genuine unanimity — especially when
+ * that stance is "neutral", which is what a silent parse failure used to
+ * produce. Surfacing this in the build output means the next failure is caught
+ * in minutes rather than weeks.
+ */
+export function suspiciousItems(result: GovResult): {
+  id: string;
+  title: string;
+  reason: string;
+}[] {
+  const out: { id: string; title: string; reason: string }[] = [];
+
+  for (const item of result.items) {
+    if (item.kind !== "rfc") continue;
+    const total = item.responses.length;
+    if (total < 10) continue;
+
+    const counts = new Map<string, number>();
+    for (const r of item.responses) {
+      const k = r.stance ?? "unclassified";
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+
+    const unclassified = counts.get("unclassified") || 0;
+    if (unclassified / total > 0.2) {
+      out.push({
+        id: item.id,
+        title: item.title,
+        reason: `${unclassified} of ${total} responses could not be classified`,
+      });
+      continue;
+    }
+
+    const [topStance, topCount] = [...counts.entries()].reduce((a, b) =>
+      b[1] > a[1] ? b : a
+    );
+    if (topCount === total) {
+      out.push({
+        id: item.id,
+        title: item.title,
+        reason: `all ${total} responses classified "${topStance}" — check this is real before trusting it`,
+      });
+    }
+  }
+
+  return out;
 }
 
 /* ─── Derived views ────────────────────────────────────────────────── */

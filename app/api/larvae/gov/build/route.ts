@@ -22,6 +22,7 @@ import {
   saveGovResult,
   clearGovResult,
   majorityAlignment,
+  suspiciousItems,
   type GovResult,
 } from "@/lib/gov";
 
@@ -87,6 +88,8 @@ export async function GET(req: NextRequest) {
   /* ── Phase 2: RFC classification ── */
   let classified = 0;
 
+  let failedBatches = 0;
+
   for (const item of result.items) {
     if (item.kind !== "rfc") continue;
     if (!timeLeft()) break;
@@ -98,22 +101,32 @@ export async function GET(req: NextRequest) {
     while (cursor < item.responses.length && timeLeft()) {
       const stances = await classifyRfcBatch(item, item.responses, cursor);
       if (stances.length === 0) break;
+
+      const resolved = stances.filter((x) => x !== null).length;
+      if (resolved === 0) failedBatches++;
+
       for (let i = 0; i < stances.length; i++) {
         item.responses[cursor + i].stance = stances[i];
       }
+      // Advance regardless of success. A batch that cannot be classified stays
+      // null and is reported, rather than being retried forever or quietly
+      // filled with a fabricated stance.
       cursor += stances.length;
-      classified += stances.length;
-      // Save after each batch so an interrupted run loses at most one batch.
+      classified += resolved;
       await saveGovResult(result);
     }
   }
 
+  // Every RFC response has now been attempted; nulls are permanent failures,
+  // not pending work, so the run is complete once the cursor reaches the end.
   const remaining = result.items
     .filter((i) => i.kind === "rfc")
     .reduce((n, i) => n + i.responses.filter((r) => r.stance === null).length, 0);
 
-  if (remaining === 0) {
-    const top = majorityAlignment(result).slice(0, 5);
+  const doneClassifying = failedBatches === 0 ? remaining === 0 : true;
+
+  if (doneClassifying) {
+    const suspicious = suspiciousItems(result);
     return NextResponse.json({
       ok: true,
       done: true,
@@ -121,7 +134,13 @@ export async function GET(req: NextRequest) {
       items: result.items.length,
       votes: result.items.filter((i) => i.kind === "vote").length,
       rfcs: result.items.filter((i) => i.kind === "rfc").length,
-      topMajorityAlignment: top,
+      unclassified: remaining,
+      failedBatches,
+      suspicious:
+        suspicious.length > 0
+          ? suspicious
+          : "none — no item classified suspiciously uniformly",
+      topMajorityAlignment: majorityAlignment(result).slice(0, 5),
     });
   }
 

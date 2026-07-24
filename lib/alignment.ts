@@ -1,4 +1,3 @@
-// lib/alignment.ts
 //
 // Alignment matrix + credibility scoring for larvana.
 // Fetches all forum + labs posts with their aggregated_opinion and individual
@@ -655,3 +654,6 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
     },
   };
 }
+````
+
+## File: lib/avatar.ts
