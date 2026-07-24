@@ -98,9 +98,11 @@ export async function GET(req: NextRequest) {
     while (item.cursor < item.responses.length && timeLeft()) {
       const batch = await classifyBatch(item, item.cursor);
       item.partial.push(...batch);
+      // Advance even when a batch fails. Its entries stay null and are
+      // reported at the end — retrying forever would stall the run, and
+      // filling them with a fabricated stance is the bug being fixed.
       item.cursor += batch.length;
       batchesThisRun++;
-      // Save after every batch — an interrupted run loses at most one batch.
       await setAlignQueue(queue);
     }
 
@@ -126,6 +128,7 @@ export async function GET(req: NextRequest) {
     await saveAlignResult(result);
     await clearClassified();
 
+    const q = result.quality;
     return NextResponse.json({
       ok: true,
       done: true,
@@ -133,6 +136,15 @@ export async function GET(req: NextRequest) {
       totalStances: result.stances.length,
       uniqueLarvae: result.credibility.length,
       factions: result.factions.length,
+      quality: q
+        ? {
+            ...q,
+            note:
+              q.droppedStances > 0 || q.postsWithoutAggregate > 0
+                ? "Unclassified records were dropped rather than counted as neutral. A high number here means the classifier is struggling and the results should be treated with caution."
+                : "All responses and aggregates classified successfully.",
+          }
+        : undefined,
       topWinRate: result.credibility[0]
         ? {
             wallet: result.credibility[0].wallet,

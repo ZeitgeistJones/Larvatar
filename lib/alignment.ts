@@ -28,12 +28,22 @@ export type StanceRecord = {
   stance: Stance;
 };
 
+/**
+ * A stance that may not have been determined.
+ *
+ * null means classification FAILED, not that the larva had no position.
+ * Recording failures as "neutral" is what caused whole posts of clear
+ * approvals to be counted as fence-sitting.
+ */
+export type MaybeStance = Stance | null;
+
 /** Metadata for a post, including the aggregate's classified stance. */
 export type PostMeta = {
   id: string;
   source: "forum" | "labs";
   title: string;
-  aggregatedStance: Stance;
+  /** null when the aggregate could not be classified. */
+  aggregatedStance: MaybeStance;
   respondentCount: number;
 };
 
@@ -71,6 +81,15 @@ export type AlignmentResult = {
   credibility: CredibilityRecord[];
   factions: Faction[];
   computedAt: string;
+  /**
+   * How much data was unusable. Surfaced so a silent classification failure
+   * shows up as a number rather than as quietly wrong results.
+   */
+  quality?: {
+    droppedStances: number;
+    postsWithoutAggregate: number;
+    totalPosts: number;
+  };
 };
 
 // ─── Queue types ───────────────────────────────────────────────────
@@ -89,16 +108,16 @@ export type AlignmentQueueItem = {
   aggregatedOpinion: string;
   responses: { wallet: string; text: string }[];
   cursor: number;
-  partial: { wallet: string; stance: Stance }[];
-  aggregatedStance: Stance | null; // null until the aggregate call succeeds
+  partial: { wallet: string; stance: MaybeStance }[];
+  aggregatedStance: MaybeStance;
 };
 
 export type ClassifiedPost = {
   postId: string;
   source: "forum" | "labs";
   title: string;
-  aggregatedStance: Stance;
-  stances: { wallet: string; stance: Stance }[];
+  aggregatedStance: MaybeStance;
+  stances: { wallet: string; stance: MaybeStance }[];
 };
 
 // ─── Redis keys ────────────────────────────────────────────────────
@@ -323,40 +342,71 @@ Respond with ONLY the stance word, nothing else.`;
 
 const BATCH_SIZE = 20;
 
-/** Parse a JSON array of stance strings, tolerant of markdown fences. */
-function parseStanceArray(text: string): Stance[] {
+/**
+ * Parse a JSON array of stance strings, tolerant of markdown fences.
+ *
+ * Returns null on ANY failure — malformed JSON, wrong shape, or an
+ * unrecognized stance token. The caller must be able to distinguish "the model
+ * answered" from "the model did not", because the previous behaviour of
+ * returning a partial array and letting the caller pad with "neutral" silently
+ * converted entire batches of clear positions into fabricated fence-sitting.
+ */
+function parseStanceArray(text: string): Stance[] | null {
   const clean = text.replace(/```json|```/g, "").trim();
   const start = clean.indexOf("[");
   const end = clean.lastIndexOf("]");
-  if (start === -1 || end === -1) return [];
+  if (start === -1 || end === -1) return null;
   try {
     const arr = JSON.parse(clean.slice(start, end + 1));
-    if (!Array.isArray(arr)) return [];
-    return arr.map((s) => {
-      const v = String(s).toLowerCase().replace(/[^a-z]/g, "");
-      return isValidStance(v) ? v : "neutral";
-    });
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const out: Stance[] = [];
+    for (const raw of arr) {
+      const v = String(raw).toLowerCase().replace(/[^a-z]/g, "");
+      if (!isValidStance(v)) return null;
+      out.push(v);
+    }
+    return out;
   } catch {
-    return [];
+    return null;
   }
 }
 
-/** Classify the aggregated opinion for a post. One Haiku call. */
+/**
+ * Classify the aggregated opinion for a post.
+ *
+ * The token budget here was 20, which is below what Gemini needs — it counts
+ * its own overhead against maxOutputTokens and returns empty text when the
+ * ceiling is that tight. Every aggregate was therefore failing and defaulting
+ * to "neutral", which is why essentially no post ever registered as
+ * "approve" and why win rates computed against these aggregates were
+ * meaningless.
+ *
+ * Returns null when classification genuinely fails, so the caller can tell an
+ * unclassified post from a neutral one.
+ */
 export async function classifyAggregate(
   item: AlignmentQueueItem
-): Promise<Stance> {
-  if (item.aggregatedOpinion.length <= 10) return "neutral";
-  try {
-    const raw = await haiku(
-      CLASSIFY_AGGREGATE_SYSTEM,
-      `Post: "${item.title}"\n\nAggregated opinion:\n${item.aggregatedOpinion}`,
-      20
-    );
-    const cleaned = raw.trim().toLowerCase().replace(/[^a-z]/g, "");
-    return isValidStance(cleaned) ? cleaned : "neutral";
-  } catch {
-    return "neutral";
+): Promise<MaybeStance> {
+  if (item.aggregatedOpinion.length <= 10) return null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const raw = await haiku(
+        CLASSIFY_AGGREGATE_SYSTEM,
+        `Post: "${item.title}"\n\nAggregated opinion:\n${item.aggregatedOpinion}`,
+        200
+      );
+      const cleaned = raw.trim().toLowerCase().replace(/[^a-z]/g, "");
+      if (isValidStance(cleaned)) return cleaned;
+      // Sometimes the word arrives inside a sentence despite the instruction.
+      for (const v of VALID_STANCES) {
+        if (new RegExp(`\\b${v}\\b`, "i").test(raw)) return v;
+      }
+    } catch {
+      // retry
+    }
   }
+  return null;
 }
 
 /**
@@ -366,7 +416,7 @@ export async function classifyAggregate(
 export async function classifyBatch(
   item: AlignmentQueueItem,
   cursor: number
-): Promise<{ wallet: string; stance: Stance }[]> {
+): Promise<{ wallet: string; stance: MaybeStance }[]> {
   const batch = item.responses.slice(cursor, cursor + BATCH_SIZE);
   if (batch.length === 0) return [];
 
@@ -374,20 +424,27 @@ export async function classifyBatch(
     .map((r, idx) => `${idx + 1}. ${r.text.slice(0, 280)}`)
     .join("\n");
 
-  try {
-    const raw = await haiku(
-      CLASSIFY_SYSTEM,
-      `Post: "${item.title}"\n\nResponses:\n${numbered}`,
-      batch.length * 12 + 60
-    );
-    const stances = parseStanceArray(raw);
-    return batch.map((r, i) => ({
-      wallet: r.wallet,
-      stance: stances[i] ?? "neutral",
-    }));
-  } catch {
-    return batch.map((r) => ({ wallet: r.wallet, stance: "neutral" as Stance }));
+  // Real headroom. The old budget (batch.length * 12 + 60) gave 300 tokens for
+  // 20 responses, and Gemini counts overhead against that, so arrays were
+  // being truncated mid-output and rejected by the parser.
+  const budget = batch.length * 25 + 200;
+  const user = `Post: "${item.title}"\n\nResponses:\n${numbered}`;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const raw = await haiku(CLASSIFY_SYSTEM, user, budget);
+      const stances = parseStanceArray(raw);
+      // Count must match exactly — a short array means stance[i] would be
+      // assigned to the wrong larva.
+      if (stances && stances.length === batch.length) {
+        return batch.map((r, i) => ({ wallet: r.wallet, stance: stances[i] }));
+      }
+    } catch {
+      // retry
+    }
   }
+
+  return batch.map((r) => ({ wallet: r.wallet, stance: null }));
 }
 
 /** How many batches a post still needs. Used for progress reporting. */
@@ -402,20 +459,35 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
   const stances: StanceRecord[] = [];
   const posts: PostMeta[] = [];
 
+  // Unclassified records are DROPPED, not counted.
+  //
+  // A response whose classification failed carries no information about that
+  // larva's position. Including it as "neutral" — which is what happened
+  // before — invented a stance the larva never took, and did so systematically
+  // enough to flatten every downstream measure built on this data.
+  let droppedStances = 0;
+  let postsWithoutAggregate = 0;
+
   for (const cp of classified) {
+    if (cp.aggregatedStance === null) postsWithoutAggregate++;
+
+    const usable = cp.stances.filter((s) => s.stance !== null);
+    droppedStances += cp.stances.length - usable.length;
+
     posts.push({
       id: cp.postId,
       source: cp.source,
       title: cp.title,
       aggregatedStance: cp.aggregatedStance,
-      respondentCount: cp.stances.length,
+      respondentCount: usable.length,
     });
-    for (const s of cp.stances) {
+
+    for (const s of usable) {
       stances.push({
         wallet: s.wallet,
         postId: cp.postId,
         source: cp.source,
-        stance: s.stance,
+        stance: s.stance as Stance,
       });
     }
   }
@@ -462,8 +534,16 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
   }
 
   // ── Credibility ──
+  // Only posts with a successfully classified aggregate can score a win.
+  // Posts without one are excluded from the denominator entirely — scoring a
+  // larva against an aggregate we never determined would be scoring it against
+  // nothing.
   const aggByPost = new Map<string, Stance>();
-  for (const p of posts) aggByPost.set(postKey(p.source, p.id), p.aggregatedStance);
+  for (const p of posts) {
+    if (p.aggregatedStance !== null) {
+      aggByPost.set(postKey(p.source, p.id), p.aggregatedStance);
+    }
+  }
 
   const credibility: CredibilityRecord[] = wallets.map((wallet) => {
     const wMap = walletStances.get(wallet)!;
@@ -474,11 +554,15 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
       disapprove: 0,
       neutral: 0,
     };
+    let scorable = 0;
     for (const [key, stance] of wMap) {
       breakdown[stance]++;
-      if (aggByPost.get(key) === stance) wins++;
+      const agg = aggByPost.get(key);
+      if (agg === undefined) continue; // no aggregate — cannot be right or wrong
+      scorable++;
+      if (agg === stance) wins++;
     }
-    const postCount = wMap.size;
+    const postCount = scorable;
     return {
       wallet,
       posts: postCount,
@@ -564,5 +648,10 @@ export function computeAlignment(classified: ClassifiedPost[]): AlignmentResult 
     credibility: credibility.sort((a, b) => b.winRate - a.winRate),
     factions,
     computedAt: new Date().toISOString(),
+    quality: {
+      droppedStances,
+      postsWithoutAggregate,
+      totalPosts: posts.length,
+    },
   };
 }
