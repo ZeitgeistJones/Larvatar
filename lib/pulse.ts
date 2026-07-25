@@ -570,8 +570,8 @@ function attachDeltas(
     t.delta = {
       praisePrev: prior ? praisePrev : null,
       pushbackPrev: prior ? pushbackPrev : null,
-      praiseDelta: prior ? t.praise - praisePrev : null,
-      pushbackDelta: prior ? t.pushback - pushbackPrev : null,
+      praiseDelta: prior ? t.praise - praisePrev : t.praise,
+      pushbackDelta: prior ? t.pushback - pushbackPrev : t.pushback,
     };
   }
 }

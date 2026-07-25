@@ -401,16 +401,16 @@ function ThemeList({
                 </div>
                 {mixed && (
                   <p className="mt-0.5 text-xs opacity-60">
-                    {item.praise} liked · {item.pushback} complained
+                    {item.praise ?? item.n} liked · {item.pushback ?? 0} complained
                   </p>
                 )}
               </div>
               <p className="shrink-0 text-right text-xs font-bold" style={{ color: accent }}>
                 {mixed
-                  ? `${item.praise}/${item.pushback}`
+                  ? `${item.praise ?? item.n}/${item.pushback ?? 0}`
                   : side === "praise"
-                    ? `${item.praise} liked`
-                    : `${item.pushback} complained`}
+                    ? `${item.praise ?? item.n} liked`
+                    : `${item.pushback ?? item.n} complained`}
               </p>
             </li>
           ))}
