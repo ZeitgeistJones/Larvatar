@@ -95,7 +95,7 @@ export async function GET(req: NextRequest) {
         totalResponses: result.meta.totalResponses,
         positive: result.positive.length,
         negative: result.negative.length,
-        contention: result.contention.length,
+        mixed: result.mixed_themes.length,
       });
     }
 

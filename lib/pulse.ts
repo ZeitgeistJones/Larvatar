@@ -5,10 +5,10 @@
 //
 // WHAT WE BUILD:
 //
-//   waves       — per check-in overall vibe (% upbeat / frustrated / mixed)
-//   positive    — top themes people celebrate
-//   negative    — top themes people complain about
-//   contention  — themes that split the room
+//   waves        — per check-in overall vibe (% upbeat / frustrated / mixed)
+//   positive     — top themes people liked
+//   negative     — top themes people complained about
+//   mixed_themes — themes the swarm both liked and complained about
 //
 // Build is resumable (sentiment batches, then theme batches) so it fits
 // Vercel time budgets.
@@ -39,7 +39,20 @@ export type PulseWave = {
   /** Top themes for this check-in only. */
   positive: PulseTheme[];
   negative: PulseTheme[];
-  contention: PulseTheme[];
+  /** Themes this wave both liked and complained about. */
+  mixed_themes: PulseTheme[];
+  /** Every theme this wave surfaced, kept so later waves can show movement. */
+  ledger: ThemeTally[];
+};
+
+/** How a theme moved versus the previous check-in. */
+export type ThemeDelta = {
+  /** Praise count in the prior wave, or null if the theme is brand new. */
+  praisePrev: number | null;
+  pushbackPrev: number | null;
+  /** current - prev; null when there is no prior wave to compare. */
+  praiseDelta: number | null;
+  pushbackDelta: number | null;
 };
 
 export type PulseTheme = {
@@ -47,17 +60,34 @@ export type PulseTheme = {
   label: string;
   /** Mention mass used for ranking. */
   n: number;
+  /** How many liked this theme. */
+  praise: number;
+  /** How many complained about it. */
+  pushback: number;
   metric: string;
   detail?: string;
+  /** Movement vs the previous check-in wave. */
+  delta?: ThemeDelta;
   /** Check-in post ids that surfaced this theme. */
   waves: string[];
 };
 
+/** Compact per-wave record of one theme; drives cross-wave deltas. */
+export type ThemeTally = {
+  id: string;
+  label: string;
+  praise: number;
+  pushback: number;
+};
+
 export type PulseResult = {
   waves: PulseWave[];
+  /** All-time boards across every check-in (fallback / overview). */
   positive: PulseTheme[];
   negative: PulseTheme[];
-  contention: PulseTheme[];
+  mixed_themes: PulseTheme[];
+  /** The shared check-in prompt, shown once at the top of the page. */
+  prompt: string;
   meta: {
     builtAt: string;
     waveCount: number;
@@ -81,6 +111,8 @@ type WaveWork = {
   title: string;
   createdAt: string;
   aggregateShort: string;
+  /** Full post body — the shared "Checking in" prompt. */
+  prompt: string;
   responses: QueueResponse[];
   /** Sentiment progress. */
   sentCursor: number;
@@ -208,6 +240,7 @@ export async function collectCheckInsIntoQueue(): Promise<number> {
           post.aggregated_opinion ||
           ""
       ).slice(0, 400),
+      prompt: String(post.body || p.body || "").slice(0, 800),
       responses,
       sentCursor: 0,
       sentiments: [],
@@ -349,10 +382,12 @@ Return ONLY JSON:
 Rules:
 - praise = how many replies in this batch speak well of that theme
 - pushback = how many replies in this batch complain about it
-- a theme can have both; use 0 when a side is absent
+- most themes are one-sided: give praise OR pushback and leave the other at 0
+- only set both above 0 when replies genuinely disagree about that theme
 - every theme needs praise + pushback >= 1
 - label is 1-4 plain words, lowercase, no "and" lists — split compound topics apart
-- 4 to 8 themes; merge near-duplicates into one label
+- give 6 to 8 themes, a healthy mix of liked and complained-about topics
+- merge near-duplicates into one label
 - skip overall mood with no topic ("things are fine")
 - no markdown`;
 
@@ -423,25 +458,20 @@ export function themesComplete(q: PulseQueue): boolean {
   return q.waves.every((w) => w.themeCursor >= w.responses.length);
 }
 
-/** True when a stored result looks too thin / broken to keep. */
+/** True when a stored result is complete enough to keep (else auto-rebuild). */
 export function isPulseHealthy(result: PulseResult): boolean {
   if (!result.waves.length) return false;
+  // Old payloads (pre praise/pushback) lack ledgers/prompt — force a rebuild.
+  if (!("prompt" in result)) return false;
+
   const latest = result.waves[result.waves.length - 1];
   if (latest.n > 0 && latest.unclear / latest.n >= 0.6) return false;
-  // Prefer per-wave boards; fall back to global lists for older payloads.
-  const perWaveThemes = result.waves.reduce(
-    (n, w) =>
-      n +
-      (w.positive?.length || 0) +
-      (w.negative?.length || 0) +
-      (w.contention?.length || 0),
-    0
-  );
-  const globalThemes =
-    (result.positive?.length || 0) +
-    (result.negative?.length || 0) +
-    (result.contention?.length || 0);
-  if (perWaveThemes === 0 && globalThemes === 0) return false;
+
+  // Every wave should carry near-full liked and complaint boards.
+  for (const w of result.waves) {
+    if ((w.positive?.length || 0) < 4) return false;
+    if ((w.negative?.length || 0) < 4) return false;
+  }
   return true;
 }
 
@@ -496,9 +526,54 @@ function buildWaves(work: WaveWork[]): PulseWave[] {
       link: FORUM(w.postId),
       positive: [],
       negative: [],
-      contention: [],
+      mixed_themes: [],
+      ledger: [],
     };
   });
+}
+
+/** Flatten one wave's merged themes into a compact tally for delta matching. */
+function buildLedger(merged: Acc[]): ThemeTally[] {
+  return merged
+    .map((a) => ({
+      id: themeKey(a.label),
+      label: a.label,
+      praise: a.praise,
+      pushback: a.pushback,
+    }))
+    .sort((x, y) => y.praise + y.pushback - (x.praise + x.pushback));
+}
+
+/**
+ * Attach movement vs the previous wave's ledger onto each ranked theme.
+ * Matches by fuzzy token overlap so "shipping speed" lines up across waves.
+ */
+function attachDeltas(
+  themes: PulseTheme[],
+  prevLedger: ThemeTally[] | null
+): void {
+  for (const t of themes) {
+    if (!prevLedger) {
+      // First wave: nothing to compare against.
+      t.delta = {
+        praisePrev: null,
+        pushbackPrev: null,
+        praiseDelta: null,
+        pushbackDelta: null,
+      };
+      continue;
+    }
+    const tokens = tokenize(t.label);
+    const prior = prevLedger.find((p) => sameTheme(tokenize(p.label), tokens));
+    const praisePrev = prior ? prior.praise : 0;
+    const pushbackPrev = prior ? prior.pushback : 0;
+    t.delta = {
+      praisePrev: prior ? praisePrev : null,
+      pushbackPrev: prior ? pushbackPrev : null,
+      praiseDelta: prior ? t.praise - praisePrev : null,
+      pushbackDelta: prior ? t.pushback - pushbackPrev : null,
+    };
+  }
 }
 
 type Acc = {
@@ -612,14 +687,15 @@ function mergeThemes(work: WaveWork[]): Acc[] {
 }
 
 function toTheme(
-  id: string,
   label: string,
+  praise: number,
+  pushback: number,
   n: number,
   metric: string,
   detail: string | undefined,
   waves: string[]
 ): PulseTheme {
-  return { id, label, n, metric, detail, waves };
+  return { id: themeKey(label), label, n, praise, pushback, metric, detail, waves };
 }
 
 const SYNTH_SYSTEM = `You extract the main themes from one larv.ai "Checking in" wave.
@@ -654,7 +730,7 @@ async function synthesizeWaveThemes(w: WaveWork): Promise<ThemeHit[]> {
 function rankThemes(merged: Acc[], singleWave = false): {
   positive: PulseTheme[];
   negative: PulseTheme[];
-  contention: PulseTheme[];
+  mixed_themes: PulseTheme[];
 } {
   const across = (a: Acc) =>
     singleWave || a.waves.size <= 1
@@ -667,8 +743,9 @@ function rankThemes(merged: Acc[], singleWave = false): {
     .slice(0, 5)
     .map((a) =>
       toTheme(
-        themeKey(a.label),
         a.label,
+        a.praise,
+        a.pushback,
         a.praise,
         `${a.praise} liked it`,
         across(a),
@@ -682,8 +759,9 @@ function rankThemes(merged: Acc[], singleWave = false): {
     .slice(0, 5)
     .map((a) =>
       toTheme(
-        themeKey(a.label),
         a.label,
+        a.praise,
+        a.pushback,
         a.pushback,
         `${a.pushback} complained`,
         across(a),
@@ -691,8 +769,8 @@ function rankThemes(merged: Acc[], singleWave = false): {
       )
     );
 
-  // A split needs both sides. One-sided themes already have their own board.
-  const contention = [...merged]
+  // A mixed take needs both sides. One-sided themes live on the boards above.
+  const mixed_themes = [...merged]
     .map((a) => {
       const total = a.praise + a.pushback;
       const balance = total > 0 ? Math.min(a.praise, a.pushback) / total : 0;
@@ -701,46 +779,61 @@ function rankThemes(merged: Acc[], singleWave = false): {
     .filter((x) => x.a.praise >= 1 && x.a.pushback >= 1)
     .sort((x, y) => y.score - x.score || y.total - x.total)
     .slice(0, 3)
-    .map(({ a, total }) => {
-      const likedPct = Math.round((a.praise / total) * 100);
-      return toTheme(
-        themeKey(a.label),
+    .map(({ a }) =>
+      toTheme(
         a.label,
+        a.praise,
+        a.pushback,
         Math.min(a.praise, a.pushback),
-        `${likedPct}% liked it`,
-        `${a.praise} liked · ${a.pushback} complained${
-          across(a) ? ` · ${across(a)}` : ""
-        }`,
+        `${a.praise} liked · ${a.pushback} complained`,
+        across(a),
         [...a.waves]
-      );
-    });
+      )
+    );
 
-  return { positive, negative, contention };
+  return { positive, negative, mixed_themes };
 }
 
 export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
-  // Every wave needs its own full boards, so top up any wave whose ranked
-  // lists come out thin rather than only checking raw hit count.
+  // Every wave needs its own full top-5 boards, so top up any wave whose
+  // ranked lists come out thin rather than only checking raw hit count.
   for (const w of q.waves) {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       const board = rankThemes(mergeThemes([w]), true);
-      if (board.positive.length >= 4 && board.negative.length >= 4) break;
+      if (board.positive.length >= 5 && board.negative.length >= 5) break;
       const extra = await synthesizeWaveThemes(w);
       if (extra.length === 0) break;
       w.themeHits.push(...extra);
     }
   }
 
+  // Waves are stored oldest → newest; each compares to the one before it.
+  let prevLedger: ThemeTally[] | null = null;
   const waves: PulseWave[] = buildWaves(q.waves).map((bw, i) => {
-    const ranked = rankThemes(mergeThemes([q.waves[i]]), true);
-    return { ...bw, ...ranked };
+    const merged = mergeThemes([q.waves[i]]);
+    const ranked = rankThemes(merged, true);
+    const ledger = buildLedger(merged);
+
+    attachDeltas(ranked.positive, prevLedger);
+    attachDeltas(ranked.negative, prevLedger);
+    attachDeltas(ranked.mixed_themes, prevLedger);
+
+    prevLedger = ledger;
+    return { ...bw, ...ranked, ledger };
   });
+
   const ranked = rankThemes(mergeThemes(q.waves));
   const totalResponses = q.waves.reduce((n, w) => n + w.responses.length, 0);
+  // The check-in prompt is essentially the same each wave; show the latest.
+  const prompt =
+    [...q.waves].reverse().find((w) => w.prompt && w.prompt.length > 20)?.prompt || "";
 
   return {
     waves,
-    ...ranked,
+    positive: ranked.positive,
+    negative: ranked.negative,
+    mixed_themes: ranked.mixed_themes,
+    prompt,
     meta: {
       builtAt: new Date().toISOString(),
       waveCount: waves.length,

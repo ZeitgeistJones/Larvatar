@@ -1,7 +1,8 @@
 // app/trends/page.tsx
 //
 // Topic Trends — overall pulse from recurring “Checking in” forum posts,
-// with top positive / negative / contention themes per check-in.
+// with the top liked / complained / mixed themes per check-in, plus how each
+// theme moved versus the previous check-in.
 
 "use client";
 
@@ -9,12 +10,22 @@ import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 
+type ThemeDelta = {
+  praisePrev: number | null;
+  pushbackPrev: number | null;
+  praiseDelta: number | null;
+  pushbackDelta: number | null;
+};
+
 type PulseTheme = {
   id: string;
   label: string;
   n: number;
+  praise: number;
+  pushback: number;
   metric: string;
   detail?: string;
+  delta?: ThemeDelta;
   waves: string[];
 };
 
@@ -34,14 +45,15 @@ type PulseWave = {
   link: string;
   positive?: PulseTheme[];
   negative?: PulseTheme[];
-  contention?: PulseTheme[];
+  mixed_themes?: PulseTheme[];
 };
 
 type Payload = {
   waves: PulseWave[];
   positive: PulseTheme[];
   negative: PulseTheme[];
-  contention: PulseTheme[];
+  mixed_themes: PulseTheme[];
+  prompt?: string;
   meta: {
     builtAt: string;
     waveCount: number;
@@ -49,6 +61,8 @@ type Payload = {
     caveat: string;
   };
 };
+
+type Side = "praise" | "pushback";
 
 function pct(n: number) {
   return `${Math.round(n * 100)}%`;
@@ -79,7 +93,11 @@ export default function TopicTrendsPage() {
   }, []);
 
   const hasPerWave = data?.waves.some(
-    (w) => (w.positive?.length || 0) + (w.negative?.length || 0) + (w.contention?.length || 0) > 0
+    (w) =>
+      (w.positive?.length || 0) +
+        (w.negative?.length || 0) +
+        (w.mixed_themes?.length || 0) >
+      0
   );
 
   return (
@@ -93,8 +111,9 @@ export default function TopicTrendsPage() {
           </p>
           <h1 className="mt-1 text-4xl font-bold tracking-tight">Topic Trends</h1>
           <p className="mt-2 max-w-2xl text-sm opacity-75">
-            Overall pulse from each Checking in post, then the top positive,
-            negative, and contention themes inside that wave.
+            The swarm gets the same check-in every month. Here is the overall
+            mood each time, the topics people liked and complained about, and how
+            those topics moved since the check-in before.
           </p>
         </header>
 
@@ -112,6 +131,22 @@ export default function TopicTrendsPage() {
 
         {data && (
           <>
+            {data.prompt && (
+              <section
+                className="mb-6 rounded-xl border p-5"
+                style={{ borderColor: `${INK}22`, background: CARD }}
+              >
+                <p className="font-mono text-xs uppercase tracking-widest" style={{ color: CORAL }}>
+                  The recurring question
+                </p>
+                <p className="mt-2 text-sm italic opacity-80">“{data.prompt}”</p>
+                <p className="mt-2 font-mono text-[10px] uppercase tracking-widest opacity-45">
+                  Asked every check-in · {data.meta.waveCount} waves ·{" "}
+                  {data.meta.totalResponses} replies
+                </p>
+              </section>
+            )}
+
             <section
               className="mb-6 rounded-xl border p-5"
               style={{ borderColor: `${INK}22`, background: CARD }}
@@ -120,8 +155,7 @@ export default function TopicTrendsPage() {
                 Overall pulse
               </p>
               <p className="mt-1 mb-4 text-sm opacity-70">
-                Same check-in prompt across {data.meta.waveCount} waves ·{" "}
-                {data.meta.totalResponses} larva replies classified
+                Share of replies that read upbeat, mixed, or frustrated each wave.
               </p>
 
               <ol className="space-y-4">
@@ -170,92 +204,153 @@ export default function TopicTrendsPage() {
               </p>
             </section>
 
-            {hasPerWave
-              ? data.waves.map((w, i) => (
-                  <section
-                    key={`board-${w.postId}`}
-                    className="mb-6 rounded-xl border p-5"
-                    style={{ borderColor: `${INK}22`, background: CARD }}
-                  >
-                    <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-                      <div>
-                        <p
-                          className="font-mono text-xs uppercase tracking-widest"
-                          style={{ color: CORAL }}
-                        >
-                          Check-in {i + 1}
-                        </p>
-                        <a
-                          href={w.link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-lg font-bold hover:opacity-80"
-                        >
-                          {w.title.trim() || `Wave ${i + 1}`}
-                        </a>
-                        <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
-                          {shortDate(w.createdAt)} · n={w.n}
-                        </p>
-                      </div>
+            {hasPerWave ? (
+              data.waves.map((w, i) => (
+                <section
+                  key={`board-${w.postId}`}
+                  className="mb-6 rounded-xl border p-5"
+                  style={{ borderColor: `${INK}22`, background: CARD }}
+                >
+                  <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+                    <div>
+                      <p
+                        className="font-mono text-xs uppercase tracking-widest"
+                        style={{ color: CORAL }}
+                      >
+                        Check-in {i + 1}
+                      </p>
+                      <a
+                        href={w.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-lg font-bold hover:opacity-80"
+                      >
+                        {w.title.trim() || `Wave ${i + 1}`}
+                      </a>
+                      <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+                        {shortDate(w.createdAt)} · n={w.n}
+                        {i > 0 ? " · vs previous check-in" : " · first check-in"}
+                      </p>
                     </div>
+                  </div>
 
-                    {w.aggregateShort && (
-                      <p className="mb-5 text-sm opacity-65">{w.aggregateShort}</p>
-                    )}
+                  {w.aggregateShort && (
+                    <p className="mb-5 text-sm opacity-65">{w.aggregateShort}</p>
+                  )}
 
-                    <ThemeList
-                      title="Top 5 liked"
-                      blurb="What this wave spoke well of."
-                      items={w.positive || []}
-                      accent={GREEN}
-                      empty="No clear positive themes in this wave."
-                    />
-                    <ThemeList
-                      title="Top 5 complaints"
-                      blurb="What this wave pushed back on."
-                      items={w.negative || []}
-                      accent={CORAL}
-                      empty="No clear negative themes in this wave."
-                    />
-                    <ThemeList
-                      title="Top 3 splits"
-                      blurb="Topics this wave both liked and complained about."
-                      items={w.contention || []}
-                      accent={GOLD}
-                      empty="No clear split themes in this wave."
-                      last
-                    />
-                  </section>
-                ))
-              : (
-                  <>
-                    <ThemeSection
-                      title="Top positive vibes"
-                      blurb="Rebuild pulse to get per-check-in boards."
-                      items={data.positive}
-                      accent={GREEN}
-                      empty="Not enough repeated positive themes yet."
-                    />
-                    <ThemeSection
-                      title="Top negative vibes"
-                      blurb="Rebuild pulse to get per-check-in boards."
-                      items={data.negative}
-                      accent={CORAL}
-                      empty="Not enough repeated negative themes yet."
-                    />
-                    <ThemeSection
-                      title="Points of contention"
-                      blurb="Rebuild pulse to get per-check-in boards."
-                      items={data.contention}
-                      accent={GOLD}
-                      empty="No strong split themes extracted yet."
-                    />
-                  </>
-                )}
+                  <ThemeList
+                    title="Top 5 liked"
+                    blurb="Topics people spoke well of."
+                    items={w.positive || []}
+                    accent={GREEN}
+                    side="praise"
+                    empty="No clear liked themes in this wave."
+                  />
+                  <ThemeList
+                    title="Top 5 complaints"
+                    blurb="Topics people pushed back on."
+                    items={w.negative || []}
+                    accent={CORAL}
+                    side="pushback"
+                    empty="No clear complaints in this wave."
+                  />
+                  <ThemeList
+                    title="Mixed takes"
+                    blurb="Topics the swarm both liked and complained about."
+                    items={w.mixed_themes || []}
+                    accent={GOLD}
+                    side="praise"
+                    mixed
+                    empty="No clearly divisive topics this wave."
+                    last
+                  />
+                </section>
+              ))
+            ) : (
+              <>
+                <ThemeSection
+                  title="Top liked"
+                  blurb="Rebuild pulse to get per-check-in boards."
+                  items={data.positive}
+                  accent={GREEN}
+                  empty="Not enough repeated liked themes yet."
+                />
+                <ThemeSection
+                  title="Top complaints"
+                  blurb="Rebuild pulse to get per-check-in boards."
+                  items={data.negative}
+                  accent={CORAL}
+                  empty="Not enough repeated complaints yet."
+                />
+                <ThemeSection
+                  title="Mixed takes"
+                  blurb="Rebuild pulse to get per-check-in boards."
+                  items={data.mixed_themes}
+                  accent={GOLD}
+                  empty="No clearly divisive topics yet."
+                />
+              </>
+            )}
           </>
         )}
       </div>
     </main>
+  );
+}
+
+/** A small chip describing movement vs the previous check-in. */
+function DeltaChip({
+  delta,
+  side,
+  accent,
+}: {
+  delta?: ThemeDelta;
+  side: Side;
+  accent: string;
+}) {
+  const { colors } = useTheme();
+  const { ink: INK } = colors;
+  if (!delta) return null;
+
+  const d = side === "praise" ? delta.praiseDelta : delta.pushbackDelta;
+  const prev = side === "praise" ? delta.praisePrev : delta.pushbackPrev;
+
+  // No prior wave to compare against.
+  if (d === null) return null;
+
+  // Theme was absent last time.
+  if (prev === null || prev === 0) {
+    return (
+      <span
+        className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide"
+        style={{ background: `${accent}22`, color: accent }}
+      >
+        new
+      </span>
+    );
+  }
+
+  if (d === 0) {
+    return (
+      <span
+        className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide opacity-55"
+        style={{ background: `${INK}14` }}
+      >
+        = flat
+      </span>
+    );
+  }
+
+  const up = d > 0;
+  return (
+    <span
+      className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide"
+      style={{ background: `${accent}22`, color: accent }}
+      title={`was ${prev} last check-in`}
+    >
+      {up ? "↑" : "↓"} {up ? "+" : ""}
+      {d} vs last
+    </span>
   );
 }
 
@@ -264,14 +359,18 @@ function ThemeList({
   blurb,
   items,
   accent,
+  side,
   empty,
+  mixed,
   last,
 }: {
   title: string;
   blurb?: string;
   items: PulseTheme[];
   accent: string;
+  side: Side;
   empty: string;
+  mixed?: boolean;
   last?: boolean;
 }) {
   const { colors } = useTheme();
@@ -296,23 +395,28 @@ function ThemeList({
                 {i + 1}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">{item.label}</p>
-                {item.detail && (
-                  <p className="mt-0.5 font-mono text-[10px] uppercase tracking-widest opacity-45">
-                    {item.detail}
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold">{item.label}</p>
+                  {!mixed && <DeltaChip delta={item.delta} side={side} accent={accent} />}
+                </div>
+                {mixed && (
+                  <p className="mt-0.5 text-xs opacity-60">
+                    {item.praise} liked · {item.pushback} complained
                   </p>
                 )}
               </div>
               <p className="shrink-0 text-right text-xs font-bold" style={{ color: accent }}>
-                {item.metric}
+                {mixed
+                  ? `${item.praise}/${item.pushback}`
+                  : side === "praise"
+                    ? `${item.praise} liked`
+                    : `${item.pushback} complained`}
               </p>
             </li>
           ))}
         </ol>
       )}
-      {!last && (
-        <div className="mt-4 border-t" style={{ borderColor: `${INK}12` }} />
-      )}
+      {!last && <div className="mt-4 border-t" style={{ borderColor: `${INK}12` }} />}
     </div>
   );
 }
