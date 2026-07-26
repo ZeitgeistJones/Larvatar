@@ -139,8 +139,17 @@ export default function MapPage() {
   const [selected, setSelected] = useState<Larva | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [isMobile, setIsMobile] = useState(false);
   const detailRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const sync = () => setIsMobile(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   useEffect(() => {
     fetch("/api/larvae/alignment/enriched")
@@ -261,7 +270,14 @@ export default function MapPage() {
 
   function pick(l: Larva) {
     setSelected(l);
-    setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+    setTimeout(
+      () =>
+        detailRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: isMobile ? "start" : "nearest",
+        }),
+      50
+    );
   }
 
   function isolate(l: Larva) {
@@ -319,14 +335,17 @@ export default function MapPage() {
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
       <div className="mx-auto max-w-5xl">
         <Nav />
-        <header className="mb-8">
+        <header className="mb-8 max-md:mb-5">
           <p className="font-mono text-xs uppercase tracking-widest" style={{ color: CORAL }}>
             larv.ai field guide
           </p>
-          <h1 className="mt-1 text-4xl font-bold tracking-tight">The Hive Map</h1>
+          <h1 className="mt-1 text-4xl font-bold tracking-tight max-md:text-3xl">The Hive Map</h1>
           <p className="mt-2 max-w-2xl text-sm opacity-75">
             Every larva placed by two measured traits: how often it commits to a hard yes or
             no rather than hedging, and how often it ends up where the swarm ends up.
+          </p>
+          <p className="mt-2 font-mono text-[11px] uppercase tracking-widest opacity-55 md:hidden">
+            Tap a larva
           </p>
         </header>
 
@@ -591,6 +610,7 @@ export default function MapPage() {
                   const isolated = Boolean(searchSet);
                   const visible = isolated ? isMatch : !selected || inFocus;
                   const r = dotRadius(l.posts);
+                  const hitR = isMobile ? Math.max(r + 8, 14) : r;
                   const { x, y } = posOf(l);
                   const showLabel = isMatch && (isHov || isSel || (isolated && searchHits.length <= 3));
                   return (
@@ -598,6 +618,17 @@ export default function MapPage() {
                       key={l.wallet}
                       style={{ pointerEvents: visible ? "auto" : "none" }}
                     >
+                      {/* Invisible larger hit target on mobile only */}
+                      {isMobile && (
+                        <circle
+                          cx={x}
+                          cy={y}
+                          r={hitR}
+                          fill="transparent"
+                          style={{ cursor: visible ? "pointer" : "default" }}
+                          onClick={() => visible && pick(l)}
+                        />
+                      )}
                       <circle
                         cx={x}
                         cy={y}
@@ -670,7 +701,12 @@ export default function MapPage() {
               <p className="mt-2 text-xs opacity-50">
                 {qNorm
                   ? "Search isolates matches — everyone else fades out."
-                  : "Click a larva to see its place in the swarm"}
+                  : (
+                    <>
+                      <span className="md:hidden">Tap a larva to see its place in the swarm</span>
+                      <span className="hidden md:inline">Click a larva to see its place in the swarm</span>
+                    </>
+                  )}
                 {!qNorm && selected && selected.faction !== null
                   ? " — lines show who it tends to agree with."
                   : !qNorm
@@ -679,13 +715,13 @@ export default function MapPage() {
               </p>
             </section>
 
-            <div ref={detailRef}>
+            <div ref={detailRef} className="max-md:scroll-mt-4">
               {selected && (
                 <section
-                  className="mb-6 rounded-xl border p-5"
+                  className="mb-6 rounded-xl border p-5 max-md:p-4"
                   style={{ borderColor: `${INK}22`, background: CARD }}
                 >
-                  <div className="flex items-start gap-4">
+                  <div className="flex items-start gap-4 max-md:gap-3">
                     {selected.avatar && (
                       <div className="shrink-0">
                         <LarvaAvatar
@@ -699,14 +735,14 @@ export default function MapPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <h2 className="text-xl font-bold">{selected.name}</h2>
+                          <h2 className="text-xl font-bold max-md:text-lg">{selected.name}</h2>
                           {selected.tagline && (
                             <p className="text-sm opacity-70">{selected.tagline}</p>
                           )}
                         </div>
                         <button
                           onClick={() => setSelected(null)}
-                          className="shrink-0 font-mono text-[10px] uppercase tracking-widest opacity-40 hover:opacity-80"
+                          className="shrink-0 font-mono text-[10px] uppercase tracking-widest opacity-40 hover:opacity-80 max-md:min-h-11 max-md:px-2"
                         >
                           close
                         </button>

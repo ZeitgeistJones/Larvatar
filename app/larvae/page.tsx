@@ -120,14 +120,14 @@ export default function LarvaePage() {
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
       <div className="mx-auto max-w-5xl">
-        <div className="sticky top-0 z-40 -mx-4 mb-2 px-4 pb-2 pt-1" style={{ background: SHEET }}>
+        <div className="sticky top-0 z-40 -mx-4 mb-2 px-4 pb-2 pt-1 max-md:mb-1 max-md:pb-1 max-md:pt-0" style={{ background: SHEET }}>
           <Nav />
         </div>
-        <header className="mb-10">
+        <header className="mb-10 max-md:mb-6">
           <p className="font-mono text-xs tracking-widest uppercase" style={{ color: CORAL }}>
             larv.ai field guide
           </p>
-          <h1 className="mt-1 text-4xl font-bold tracking-tight">Larva Specimens</h1>
+          <h1 className="mt-1 text-4xl font-bold tracking-tight max-md:text-3xl">Larva Specimens</h1>
           <p className="mt-2 max-w-xl text-sm opacity-75">
             Every larva that has spoken on the larv.ai forum and labs, profiled from its own
             words. Tap a specimen to read its full profile, or put a question to the hive.
@@ -139,20 +139,20 @@ export default function LarvaePage() {
           style={{ borderColor: `${INK}22`, background: CARD }}
         >
           <p className="font-mono text-xs uppercase tracking-widest opacity-60">ask the hive</p>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex gap-2 max-md:flex-col">
             <input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && ask()}
               maxLength={200}
               placeholder="e.g. should CLAWD burn more or build more?"
-              className="w-full rounded-lg border px-4 py-3 text-sm outline-none focus:ring-2"
+              className="w-full rounded-lg border px-4 py-3 text-sm outline-none focus:ring-2 max-md:min-h-11"
               style={{ borderColor: `${INK}25` }}
             />
             <button
               onClick={ask}
               disabled={asking || !question.trim()}
-              className="shrink-0 rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              className="shrink-0 rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40 max-md:min-h-11 max-md:w-full"
               style={{ background: CORAL }}
             >
               {asking ? "asking…" : "Ask"}
@@ -226,7 +226,7 @@ export default function LarvaePage() {
                     key={l.wallet}
                     type="button"
                     onClick={() => setExpanded(open ? null : l.wallet)}
-                    className="rounded-xl border p-5 text-left transition-shadow hover:shadow-md"
+                    className="rounded-xl border p-5 text-left transition-shadow hover:shadow-md max-md:p-4"
                     style={{
                       borderColor: `${INK}22`,
                       background: CARD,

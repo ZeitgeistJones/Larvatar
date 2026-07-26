@@ -322,7 +322,7 @@ function DeltaChip({
   if (prev === null || prev === 0) {
     return (
       <span
-        className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide"
+        className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide max-md:px-2 max-md:py-1 max-md:text-[10px]"
         style={{ background: `${accent}22`, color: accent }}
       >
         new
@@ -333,7 +333,7 @@ function DeltaChip({
   if (d === 0) {
     return (
       <span
-        className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide opacity-55"
+        className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide opacity-55 max-md:px-2 max-md:py-1 max-md:text-[10px]"
         style={{ background: `${INK}14` }}
       >
         = flat
@@ -344,7 +344,7 @@ function DeltaChip({
   const up = d > 0;
   return (
     <span
-      className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide"
+      className="rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide max-md:px-2 max-md:py-1 max-md:text-[10px]"
       style={{ background: `${accent}22`, color: accent }}
       title={`was ${prev} last check-in`}
     >

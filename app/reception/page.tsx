@@ -186,16 +186,16 @@ export default function ReceptionPage() {
                 <div className="space-y-3">
                   {qualifying.map((a) => (
                     <div key={a.wallet}>
-                      <div className="mb-1 flex items-baseline justify-between gap-2">
+                      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
                         <span className="min-w-0 truncate">
                           <span className="text-xs font-semibold">{label(a)}</span>
                           {a.name && (
-                            <span className="ml-2 font-mono text-[9px] opacity-40">
+                            <span className="ml-2 font-mono text-[9px] opacity-40 max-md:hidden">
                               {walletLine(a)}
                             </span>
                           )}
                         </span>
-                        <span className="shrink-0 font-mono text-[10px] uppercase tracking-widest opacity-45">
+                        <span className="shrink-0 font-mono text-[10px] uppercase tracking-widest opacity-45 max-md:w-full">
                           {a.posts} posts · {Math.round(a.nonNegativeRate * 100)}% non-neg
                         </span>
                       </div>

@@ -121,12 +121,12 @@ export default function GovernancePage() {
               </p>
             </section>
 
-            <div className="mb-4 flex gap-2">
+            <div className="mb-4 flex flex-wrap gap-2">
               {(["all", "vote", "rfc"] as const).map((k) => (
                 <button
                   key={k}
                   onClick={() => setFilter(k)}
-                  className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity"
+                  className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity max-md:min-h-11 max-md:text-[11px]"
                   style={{
                     borderColor: filter === k ? CORAL : `${INK}22`,
                     background: filter === k ? `${CORAL}12` : CARD,

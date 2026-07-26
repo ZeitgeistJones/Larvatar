@@ -178,14 +178,14 @@ export default function CredibilityPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="find a larva…"
-                className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
+                className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 max-md:min-h-11 max-md:basis-full"
                 style={{ borderColor: `${INK}25`, background: CARD }}
               />
               {(["winRate", "conviction", "posts", "name"] as SortKey[]).map((k) => (
                 <button
                   key={k}
                   onClick={() => setSort(k)}
-                  className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity"
+                  className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity max-md:min-h-11 max-md:px-3.5 max-md:text-[11px]"
                   style={{
                     borderColor: sort === k ? CORAL : `${INK}22`,
                     background: sort === k ? `${CORAL}12` : CARD,
@@ -198,7 +198,7 @@ export default function CredibilityPage() {
               ))}
               <button
                 onClick={() => setShowAll((s) => !s)}
-                className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest opacity-65 transition-opacity hover:opacity-100"
+                className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest opacity-65 transition-opacity hover:opacity-100 max-md:min-h-11 max-md:text-[11px]"
                 style={{ borderColor: `${INK}22`, background: CARD }}
               >
                 {showAll ? "all" : `${MIN_POSTS}+ posts`}
@@ -217,7 +217,7 @@ export default function CredibilityPage() {
                   <div key={l.wallet} style={{ borderTop: i === 0 ? "none" : `1px solid ${INK}12` }}>
                     <button
                       onClick={() => setExpanded(isOpen ? null : l.wallet)}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-black/[0.02]"
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-black/[0.02] max-md:gap-2 max-md:px-3 max-md:py-3.5"
                     >
                       <span
                         className="w-6 shrink-0 font-mono text-xs font-bold tabular-nums"
@@ -245,7 +245,7 @@ export default function CredibilityPage() {
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-bold">{l.name}</span>
                         <span
-                          className="font-mono text-[10px] uppercase tracking-widest"
+                          className="font-mono text-[10px] uppercase tracking-widest max-md:hidden"
                           style={{ color: arch.color }}
                         >
                           {arch.label}
