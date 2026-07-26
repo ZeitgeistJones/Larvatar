@@ -1,7 +1,7 @@
 // app/trends/page.tsx
 //
 // Topic Trends — overall pulse from recurring “Checking in” forum posts,
-// with the top liked / complained / mixed themes per check-in, plus how each
+// with the top liked / complained themes per check-in, plus how each
 // theme moved versus the previous check-in.
 
 "use client";
@@ -45,14 +45,12 @@ type PulseWave = {
   link: string;
   positive?: PulseTheme[];
   negative?: PulseTheme[];
-  mixed_themes?: PulseTheme[];
 };
 
 type Payload = {
   waves: PulseWave[];
   positive: PulseTheme[];
   negative: PulseTheme[];
-  mixed_themes: PulseTheme[];
   prompt?: string;
   meta: {
     builtAt: string;
@@ -93,11 +91,7 @@ export default function TopicTrendsPage() {
   }, []);
 
   const hasPerWave = data?.waves.some(
-    (w) =>
-      (w.positive?.length || 0) +
-        (w.negative?.length || 0) +
-        (w.mixed_themes?.length || 0) >
-      0
+    (w) => (w.positive?.length || 0) + (w.negative?.length || 0) > 0
   );
 
   return (
@@ -113,7 +107,7 @@ export default function TopicTrendsPage() {
           <p className="mt-2 max-w-2xl text-sm opacity-75">
             The swarm gets the same check-in every month. Here is the overall
             mood each time, the topics people liked and complained about, and how
-            those topics moved since the check-in before.
+            those topics moved versus the check-in before.
           </p>
         </header>
 
@@ -253,15 +247,6 @@ export default function TopicTrendsPage() {
                     accent={CORAL}
                     side="pushback"
                     empty="No clear complaints in this wave."
-                  />
-                  <ThemeList
-                    title="Mixed takes"
-                    blurb="Topics the swarm both liked and complained about."
-                    items={w.mixed_themes || []}
-                    accent={GOLD}
-                    side="praise"
-                    mixed
-                    empty="No clearly divisive topics this wave."
                     last
                   />
                 </section>
@@ -281,13 +266,6 @@ export default function TopicTrendsPage() {
                   items={data.negative}
                   accent={CORAL}
                   empty="Not enough repeated complaints yet."
-                />
-                <ThemeSection
-                  title="Mixed takes"
-                  blurb="Rebuild pulse to get per-check-in boards."
-                  items={data.mixed_themes}
-                  accent={GOLD}
-                  empty="No clearly divisive topics yet."
                 />
               </>
             )}
@@ -361,7 +339,6 @@ function ThemeList({
   accent,
   side,
   empty,
-  mixed,
   last,
 }: {
   title: string;
@@ -370,7 +347,6 @@ function ThemeList({
   accent: string;
   side: Side;
   empty: string;
-  mixed?: boolean;
   last?: boolean;
 }) {
   const { colors } = useTheme();
@@ -397,20 +373,13 @@ function ThemeList({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-sm font-semibold">{item.label}</p>
-                  {!mixed && <DeltaChip delta={item.delta} side={side} accent={accent} />}
+                  <DeltaChip delta={item.delta} side={side} accent={accent} />
                 </div>
-                {mixed && (
-                  <p className="mt-0.5 text-xs opacity-60">
-                    {item.praise ?? item.n} liked · {item.pushback ?? 0} complained
-                  </p>
-                )}
               </div>
               <p className="shrink-0 text-right text-xs font-bold" style={{ color: accent }}>
-                {mixed
-                  ? `${item.praise ?? item.n}/${item.pushback ?? 0}`
-                  : side === "praise"
-                    ? `${item.praise ?? item.n} liked`
-                    : `${item.pushback ?? item.n} complained`}
+                {side === "praise"
+                  ? `${item.praise ?? item.n} liked`
+                  : `${item.pushback ?? item.n} complained`}
               </p>
             </li>
           ))}

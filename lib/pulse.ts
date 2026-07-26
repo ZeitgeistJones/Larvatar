@@ -8,7 +8,6 @@
 //   waves        — per check-in overall vibe (% upbeat / frustrated / mixed)
 //   positive     — top themes people liked
 //   negative     — top themes people complained about
-//   mixed_themes — themes the swarm both liked and complained about
 //
 // Build is resumable (sentiment batches, then theme batches) so it fits
 // Vercel time budgets.
@@ -39,8 +38,6 @@ export type PulseWave = {
   /** Top themes for this check-in only. */
   positive: PulseTheme[];
   negative: PulseTheme[];
-  /** Themes this wave both liked and complained about. */
-  mixed_themes: PulseTheme[];
   /** Every theme this wave surfaced, kept so later waves can show movement. */
   ledger: ThemeTally[];
 };
@@ -85,7 +82,6 @@ export type PulseResult = {
   /** All-time boards across every check-in (fallback / overview). */
   positive: PulseTheme[];
   negative: PulseTheme[];
-  mixed_themes: PulseTheme[];
   /** The shared check-in prompt, shown once at the top of the page. */
   prompt: string;
   meta: {
@@ -526,7 +522,6 @@ function buildWaves(work: WaveWork[]): PulseWave[] {
       link: FORUM(w.postId),
       positive: [],
       negative: [],
-      mixed_themes: [],
       ledger: [],
     };
   });
@@ -709,99 +704,98 @@ Return ONLY JSON:
 
 Use the aggregate summary and sample replies. Prefer concrete topics (shipping, burns,
 governance proof, patience, price, product utility, onboarding, transparency).
-Labels are 1-4 plain lowercase words, no "and" lists. Give 8 themes: at least 5 with
-praise > 0 and at least 5 with pushback > 0. praise/pushback are weights 0-10.`;
+Labels are 1-4 plain lowercase words, no "and" lists. Split compound topics apart.
+praise/pushback are weights 0-10.
+Give as many DISTINCT themes as the replies support (aim for 8+): at least 5 with
+praise > 0 and at least 5 with pushback > 0 when the sample supports it.
+Do NOT repeat or near-duplicate labels already listed as "Already captured".`;
 
-async function synthesizeWaveThemes(w: WaveWork): Promise<ThemeHit[]> {
+async function synthesizeWaveThemes(
+  w: WaveWork,
+  already: { praise: string[]; pushback: string[] }
+): Promise<ThemeHit[]> {
   const step = Math.max(1, Math.floor(w.responses.length / 16));
   const sample = w.responses.filter((_, i) => i % step === 0).slice(0, 16);
+  const needPraise = Math.max(0, 5 - already.praise.length);
+  const needPushback = Math.max(0, 5 - already.pushback.length);
   const user = [
     `Title: ${w.title}`,
     `Aggregate: ${w.aggregateShort || "(none)"}`,
+    `Already captured liked themes: ${already.praise.join("; ") || "(none)"}`,
+    `Already captured complaint themes: ${already.pushback.join("; ") || "(none)"}`,
+    `Still need roughly ${needPraise} more liked and ${needPushback} more complaint themes with NEW labels.`,
     "",
     "Sample replies:",
     ...sample.map((r, i) => `${i + 1}. ${r.text.replace(/\s+/g, " ").slice(0, 280)}`),
   ].join("\n");
 
-  const raw = await haikuRetry(SYNTH_SYSTEM, user, 900, 0.3, 3);
+  const raw = await haikuRetry(SYNTH_SYSTEM, user, 900, 0.35, 3);
   return raw ? parseThemeHits(raw) : [];
 }
 
 function rankThemes(merged: Acc[], singleWave = false): {
   positive: PulseTheme[];
   negative: PulseTheme[];
-  mixed_themes: PulseTheme[];
 } {
   const across = (a: Acc) =>
     singleWave || a.waves.size <= 1
       ? undefined
       : `across ${a.waves.size} check-ins`;
 
-  const positive = [...merged]
-    .filter((a) => a.praise >= 1)
-    .sort((a, b) => b.praise - a.praise || b.waves.size - a.waves.size)
-    .slice(0, 5)
-    .map((a) =>
-      toTheme(
-        a.label,
-        a.praise,
-        a.pushback,
-        a.praise,
-        `${a.praise} liked it`,
-        across(a),
-        [...a.waves]
-      )
-    );
+  const takeSide = (
+    side: "praise" | "pushback",
+    limit: number
+  ): PulseTheme[] => {
+    const sorted = [...merged]
+      .filter((a) => (side === "praise" ? a.praise >= 1 : a.pushback >= 1))
+      .sort((a, b) => {
+        const av = side === "praise" ? a.praise : a.pushback;
+        const bv = side === "praise" ? b.praise : b.pushback;
+        return bv - av || b.waves.size - a.waves.size;
+      });
 
-  const negative = [...merged]
-    .filter((a) => a.pushback >= 1)
-    .sort((a, b) => b.pushback - a.pushback || b.waves.size - a.waves.size)
-    .slice(0, 5)
-    .map((a) =>
-      toTheme(
-        a.label,
-        a.praise,
-        a.pushback,
-        a.pushback,
-        `${a.pushback} complained`,
-        across(a),
-        [...a.waves]
-      )
-    );
+    // Deduplicate within this board only — the same theme can appear on both
+    // liked and complaint lists when the swarm is split.
+    const usedIds = new Set<string>();
+    const out: PulseTheme[] = [];
+    for (const a of sorted) {
+      if (out.length >= limit) break;
+      const id = themeKey(a.label);
+      if (usedIds.has(id)) continue;
+      usedIds.add(id);
+      const n = side === "praise" ? a.praise : a.pushback;
+      out.push(
+        toTheme(
+          a.label,
+          a.praise,
+          a.pushback,
+          n,
+          side === "praise" ? `${a.praise} liked it` : `${a.pushback} complained`,
+          across(a),
+          [...a.waves]
+        )
+      );
+    }
+    return out;
+  };
 
-  // A mixed take needs both sides. One-sided themes live on the boards above.
-  const mixed_themes = [...merged]
-    .map((a) => {
-      const total = a.praise + a.pushback;
-      const balance = total > 0 ? Math.min(a.praise, a.pushback) / total : 0;
-      return { a, total, score: balance * total };
-    })
-    .filter((x) => x.a.praise >= 1 && x.a.pushback >= 1)
-    .sort((x, y) => y.score - x.score || y.total - x.total)
-    .slice(0, 3)
-    .map(({ a }) =>
-      toTheme(
-        a.label,
-        a.praise,
-        a.pushback,
-        Math.min(a.praise, a.pushback),
-        `${a.praise} liked · ${a.pushback} complained`,
-        across(a),
-        [...a.waves]
-      )
-    );
-
-  return { positive, negative, mixed_themes };
+  return {
+    positive: takeSide("praise", 5),
+    negative: takeSide("pushback", 5),
+  };
 }
 
 export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
   // Every wave needs its own full top-5 boards, so top up any wave whose
   // ranked lists come out thin rather than only checking raw hit count.
   for (const w of q.waves) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       const board = rankThemes(mergeThemes([w]), true);
       if (board.positive.length >= 5 && board.negative.length >= 5) break;
-      const extra = await synthesizeWaveThemes(w);
+      const extra = await synthesizeWaveThemes(w, {
+        praise: board.positive.map((t) => t.label),
+        pushback: board.negative.map((t) => t.label),
+      });
       if (extra.length === 0) break;
       w.themeHits.push(...extra);
     }
@@ -816,7 +810,6 @@ export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
 
     attachDeltas(ranked.positive, prevLedger);
     attachDeltas(ranked.negative, prevLedger);
-    attachDeltas(ranked.mixed_themes, prevLedger);
 
     prevLedger = ledger;
     return { ...bw, ...ranked, ledger };
@@ -832,7 +825,6 @@ export async function finalizePulse(q: PulseQueue): Promise<PulseResult> {
     waves,
     positive: ranked.positive,
     negative: ranked.negative,
-    mixed_themes: ranked.mixed_themes,
     prompt,
     meta: {
       builtAt: new Date().toISOString(),
