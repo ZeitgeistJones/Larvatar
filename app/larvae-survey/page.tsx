@@ -702,12 +702,17 @@ export default function LarvaeSurveyPage() {
                     <p>
                       Swarm Rush unlock · {FM_UNLOCK}+ · up to {FM_QUESTIONS} Q · {FM_TIMER}s each
                     </p>
-                    <p>{boards.length} boards ready</p>
+                    <p>
+                      {boards.length} board{boards.length === 1 ? "" : "s"} ready
+                      {(brewing || boards.length < 24) && boards.length > 0
+                        ? " · brewing more in the background"
+                        : ""}
+                    </p>
                     {(brewing || boards.length < MAIN_ROUNDS + FM_QUESTIONS) && (
                       <p className="normal-case tracking-normal opacity-80">
                         {boards.length < MAIN_ROUNDS
                           ? "Hive is brewing boards — Play unlocks at 3. Leave this page open."
-                          : "Brewing more boards in the background for a fuller Swarm Rush."}
+                          : "Leave this page open — new boards unlock as they finish brewing."}
                       </p>
                     )}
                   </div>
@@ -960,20 +965,34 @@ export default function LarvaeSurveyPage() {
               const last = boardAnswers
                 .slice()
                 .sort((a, b) => b.rank - a.rank)[0];
+              const fold = (s: string) =>
+                s
+                  .toLowerCase()
+                  .replace(/[^a-z0-9\s]/g, " ")
+                  .replace(/\s+/g, " ")
+                  .trim();
+              const echoesLabel = (answer: string) => {
+                const a = fold(answer);
+                const l = fold(last.label || "");
+                return !a || !l || a === l || a.includes(l) || l.includes(a);
+              };
+              const isTemplateWhy = (r: string) =>
+                !r ||
+                /landed here/i.test(r) ||
+                /put it plainly/i.test(r) ||
+                /\be\.g\.\s*["']/i.test(r);
+
               const maxQuotes = Math.min(2, Math.max(1, last.count || 1));
-              const quotes =
-                (last.quotes && last.quotes.length > 0
-                  ? last.quotes
-                  : (last.voices || [])
-                      .slice(0, maxQuotes)
-                      .map((name) => ({
-                        name,
-                        answer: last.sample || last.label,
-                      }))
-                ).slice(0, maxQuotes);
-              const why =
-                (last.rationale || "").trim() ||
-                `Only ${last.count} larva${last.count === 1 ? "" : "e"} went here — rare pick.`;
+              const quotes = (last.quotes || [])
+                .filter((q) => q?.name && q?.answer && !echoesLabel(q.answer))
+                .slice(0, maxQuotes);
+              const names = (last.voices || []).filter(Boolean).slice(0, maxQuotes);
+              const rawWhy = (last.rationale || "").trim();
+              const why = !isTemplateWhy(rawWhy)
+                ? rawWhy
+                : last.count <= 1
+                  ? "A lone larva took this swing — rare enough to spotlight."
+                  : `Only ${last.count} larvae went this way — a fringe call from the hive.`;
 
               return (
                 <div
@@ -992,7 +1011,7 @@ export default function LarvaeSurveyPage() {
                   <p className="mt-2 text-sm leading-snug opacity-75">
                     Let’s see what they were thinking — {why}
                   </p>
-                  {quotes.length > 0 && (
+                  {quotes.length > 0 ? (
                     <div className="mt-3 space-y-2">
                       {quotes.map((q, i) => (
                         <div
@@ -1007,7 +1026,12 @@ export default function LarvaeSurveyPage() {
                         </div>
                       ))}
                     </div>
-                  )}
+                  ) : names.length > 0 ? (
+                    <p className="mt-3 text-sm opacity-70">
+                      Voiced by{" "}
+                      <span className="font-semibold">{names.join(" · ")}</span>
+                    </p>
+                  ) : null}
                 </div>
               );
             })()}

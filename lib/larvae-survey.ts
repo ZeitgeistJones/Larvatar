@@ -108,8 +108,8 @@ export const MAX_SURVEY_QUESTIONS = 60;
 
 const QUESTIONS_KEY = "lpp:survey:questions";
 const MAX_BOARD_ANSWERS = 8;
-/** Ideal playable pool (3 main + 5 Swarm Rush). Auto-brew fills toward this. */
-export const TARGET_BOARD_COUNT = 8;
+/** Ideal playable pool. Auto-brew fills toward this (seeds go to 36). */
+export const TARGET_BOARD_COUNT = 24;
 
 function seedAsQuestions(): SurveyQuestion[] {
   const stamp = "2026-01-01";
@@ -369,38 +369,69 @@ function plainLabel(label: string): string {
   return (kept.length > 0 ? kept : words).join(" ").toUpperCase().slice(0, 40);
 }
 
-function fallbackRationale(a: { count: number; sample?: string; label: string }): string {
-  return `${a.count} larva${a.count === 1 ? "" : "e"} landed here — e.g. "${(a.sample || a.label).slice(0, 80)}".`;
+/** Template/echo rationales that just restate the board label — useless in UI. */
+function isTemplateRationale(
+  rationale: string,
+  label: string,
+  sample?: string
+): boolean {
+  const r = (rationale || "").trim();
+  if (!r) return true;
+  if (/landed here/i.test(r)) return true;
+  if (/put it plainly/i.test(r)) return true;
+  const echo = foldText(sample || label);
+  if (echo && foldText(r) === echo) return true;
+  // "… — e.g. \"Mr. Brightside\"." style
+  if (/\be\.g\.\s*["']/i.test(r)) return true;
+  return false;
 }
 
-/** Prefer two distinct answer phrasings; fall back to two different voices. */
+function fallbackRationale(a: { count: number; label: string }): string {
+  const n = a.count;
+  if (n <= 1) return "A lone larva took this swing — rare enough to spotlight.";
+  if (n <= 3) return `Only ${n} larvae went this way — a fringe call from the hive.`;
+  return `A smaller pocket of the hive (${n}) clustered here.`;
+}
+
+/** True when a quote is just the board label restated. */
+function quoteEchoesLabel(answer: string, label: string): boolean {
+  const a = foldText(answer);
+  const l = foldText(label);
+  if (!a || !l) return true;
+  if (a === l) return true;
+  if (sameAnswerFamily(a, l) && Math.abs(a.length - l.length) <= 12) return true;
+  return false;
+}
+
+/** Prefer two distinct answer phrasings that aren't just the board label. */
 function pickQuotes(
-  members: { name: string; answer: string }[]
+  members: { name: string; answer: string }[],
+  label = ""
 ): { name: string; answer: string }[] {
   if (members.length === 0) return [];
   const out: { name: string; answer: string }[] = [];
   const seenAnswers = new Set<string>();
   const seenNames = new Set<string>();
 
-  for (const m of members) {
-    if (out.length >= 2) break;
+  const tryPush = (m: { name: string; answer: string }, requireDistinct: boolean) => {
+    if (out.length >= 2) return;
     const key = foldText(m.answer);
-    if (!key || seenAnswers.has(key)) continue;
+    if (!key || seenAnswers.has(key)) return;
+    if (requireDistinct && label && quoteEchoesLabel(m.answer, label)) return;
     seenAnswers.add(key);
     seenNames.add(m.name);
     out.push({ name: m.name, answer: m.answer.slice(0, 80) });
-  }
+  };
 
+  // Pass 1: distinct wording vs the board label
+  for (const m of members) tryPush(m, true);
+  // Pass 2: any unused voice with distinct answer text
   for (const m of members) {
     if (out.length >= 2) break;
     if (seenNames.has(m.name)) continue;
-    seenNames.add(m.name);
-    out.push({ name: m.name, answer: m.answer.slice(0, 80) });
+    tryPush(m, true);
   }
-
-  if (out.length === 0 && members[0]) {
-    out.push({ name: members[0].name, answer: members[0].answer.slice(0, 80) });
-  }
+  // Never invent a quote that just repeats the label — UI will name-drop instead.
   return out;
 }
 
@@ -410,16 +441,15 @@ function quotesFromLegacy(a: {
   label?: string;
   quotes?: { name: string; answer: string }[];
 }): { name: string; answer: string }[] {
+  const label = a.label || "";
   if (Array.isArray(a.quotes) && a.quotes.length > 0) {
     return a.quotes
-      .filter((q) => q?.name && q?.answer)
+      .filter((q) => q?.name && q?.answer && !quoteEchoesLabel(String(q.answer), label))
       .slice(0, 2)
       .map((q) => ({ name: String(q.name), answer: String(q.answer).slice(0, 80) }));
   }
-  const sample = (a.sample || a.label || "").slice(0, 80);
-  const voices = (a.voices || []).filter(Boolean);
-  if (voices.length === 0 || !sample) return [];
-  return voices.slice(0, Math.min(2, voices.length)).map((name) => ({ name, answer: sample }));
+  // Old boards only have sample === label — don't fabricate fake quote cards.
+  return [];
 }
 
 /**
@@ -433,6 +463,7 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
   for (const a of raw) {
     const label = plainLabel(a.label || "");
     if (!label) continue;
+    const rawRationale = (a.rationale || "").trim();
     const next: BoardAnswer = {
       rank: a.rank,
       label,
@@ -440,8 +471,10 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
       points: a.points ?? a.count,
       voices: [...(a.voices || [])],
       sample: a.sample || label,
-      rationale: (a.rationale || "").trim() || fallbackRationale(a),
-      quotes: quotesFromLegacy(a),
+      rationale: isTemplateRationale(rawRationale, label, a.sample)
+        ? fallbackRationale({ count: a.count, label })
+        : rawRationale,
+      quotes: quotesFromLegacy({ ...a, label }),
     };
     const hit = merged.find((o) => sameAnswerFamily(o.label, next.label));
     if (!hit) {
@@ -458,10 +491,16 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
     if (!hit.sample || next.sample.length < hit.sample.length) hit.sample = next.sample;
     if (next.rationale.length > hit.rationale.length) hit.rationale = next.rationale;
     // Keep up to two quotes after merge, preferring distinct answers.
-    hit.quotes = pickQuotes([
-      ...hit.quotes.map((q) => ({ name: q.name, answer: q.answer })),
-      ...next.quotes.map((q) => ({ name: q.name, answer: q.answer })),
-    ]);
+    hit.quotes = pickQuotes(
+      [
+        ...hit.quotes.map((q) => ({ name: q.name, answer: q.answer })),
+        ...next.quotes.map((q) => ({ name: q.name, answer: q.answer })),
+      ],
+      hit.label
+    );
+    if (isTemplateRationale(hit.rationale, hit.label, hit.sample)) {
+      hit.rationale = fallbackRationale({ count: hit.count, label: hit.label });
+    }
   }
 
   const ranked = merged
@@ -479,7 +518,9 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
         !b ||
         a.label !== plainLabel(b.label || "") ||
         a.count !== b.count ||
-        !(b.rationale || "").trim()
+        a.rationale !== (b.rationale || "").trim() ||
+        JSON.stringify(a.quotes || []) !== JSON.stringify(b.quotes || []) ||
+        isTemplateRationale(b.rationale || "", a.label, b.sample)
       );
     });
 
@@ -819,7 +860,7 @@ async function clusterResponses(
       const answer = responses[i - 1].answer;
       clusters.push({
         label: answer.toUpperCase().slice(0, 40),
-        rationale: `One larva put it plainly: "${answer.slice(0, 80)}".`,
+        rationale: "A lone larva took this swing — rare enough to spotlight.",
         members: [i],
       });
     }
@@ -881,18 +922,20 @@ export async function buildBoard(questionId: string): Promise<SurveyBoard | null
   const answers: BoardAnswer[] = ranked.map((c, i) => {
     const members = c.members.map((n) => responses[n - 1]).filter(Boolean);
     const sample = members[0]?.answer || c.label;
-    const rationale =
-      c.rationale ||
-      `${members.length} larva${members.length === 1 ? "" : "e"} landed here — e.g. "${sample.slice(0, 80)}".`;
+    const label = plainLabel(c.label) || c.label;
+    const rawRationale = (c.rationale || "").trim();
+    const rationale = isTemplateRationale(rawRationale, label, sample)
+      ? fallbackRationale({ count: members.length, label })
+      : rawRationale;
     return {
       rank: i + 1,
-      label: c.label,
+      label,
       count: members.length,
       points: members.length,
       voices: members.map((m) => m.name),
       sample,
       rationale,
-      quotes: pickQuotes(members),
+      quotes: pickQuotes(members, label),
     };
   });
 

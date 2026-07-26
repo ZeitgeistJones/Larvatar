@@ -224,17 +224,34 @@ export function playSurveyCue(cue: Cue) {
 }
 
 /* ─── Announcer (browser TTS) ─────────────────────────────────────── */
+// Prefer a warm female English voice. Browser TTS can't do real vocal fry,
+// but lower pitch + slightly slower rate reads more sultry than the default
+// male/robotic pick this used to prefer.
+
+const FEMALE_VOICE_RE =
+  /samantha|karen|moira|fiona|tessa|victoria|veena|zira|aria|jenny|emma|sara|sonia|hazel|susan|catherine|serena|google uk english female|microsoft (zira|aria|jenny|emma)|female/i;
+const MALE_VOICE_RE =
+  /male|daniel|david|alex|fred|tom|mark|guy|ravi|george|google us english$|microsoft (david|mark|guy|james)/i;
+
+function scoreVoice(v: SpeechSynthesisVoice): number {
+  let s = 0;
+  if (/^en/i.test(v.lang)) s += 10;
+  if (/en(-|_)US/i.test(v.lang)) s += 3;
+  if (/en(-|_)GB/i.test(v.lang)) s += 4; // often warmer for this vibe
+  if (FEMALE_VOICE_RE.test(v.name)) s += 50;
+  if (MALE_VOICE_RE.test(v.name)) s -= 40;
+  if (/compact|novelty|whisper|bad news|bells|zarvox|trinoids|boing/i.test(v.name)) s -= 30;
+  // Prefer cloud/neural-sounding names when present
+  if (/neural|online|natural|premium/i.test(v.name)) s += 8;
+  return s;
+}
 
 function pickVoice(): SpeechSynthesisVoice | null {
   if (typeof window === "undefined" || !window.speechSynthesis) return null;
   const voices = window.speechSynthesis.getVoices();
   if (!voices.length) return null;
-  const prefer = voices.find(
-    (v) =>
-      /en(-|_)?(US|GB|AU)?/i.test(v.lang) &&
-      /male|daniel|david|alex|fred|google us english|microsoft (david|mark|guy)/i.test(v.name)
-  );
-  return prefer || voices.find((v) => v.lang.startsWith("en")) || voices[0];
+  const ranked = [...voices].sort((a, b) => scoreVoice(b) - scoreVoice(a));
+  return ranked[0] || null;
 }
 
 function duckBed(duck: boolean) {
@@ -250,15 +267,38 @@ export function announce(line: string) {
   try {
     window.speechSynthesis.cancel();
     duckBed(true);
-    const u = new SpeechSynthesisUtterance(line);
-    u.rate = 1.02;
-    u.pitch = 0.92;
-    u.volume = 0.9;
-    const voice = pickVoice();
-    if (voice) u.voice = voice;
-    u.onend = () => duckBed(false);
-    u.onerror = () => duckBed(false);
-    window.speechSynthesis.speak(u);
+    // Light pause cues help the delivery feel less flat/robotic.
+    const spoken = line
+      .replace(/\s*—\s*/g, ". ")
+      .replace(/\s*\.\.\.\s*/g, "... ")
+      .trim();
+
+    const speak = () => {
+      const u = new SpeechSynthesisUtterance(spoken);
+      u.rate = 0.92; // a touch languid
+      u.pitch = 0.88; // lower = closer to fry / sultry (API is coarse)
+      u.volume = 0.95;
+      const voice = pickVoice();
+      if (voice) u.voice = voice;
+      u.onend = () => duckBed(false);
+      u.onerror = () => duckBed(false);
+      window.speechSynthesis.speak(u);
+    };
+
+    // Voices often load async on first visit.
+    if (!window.speechSynthesis.getVoices().length) {
+      const onReady = () => {
+        window.speechSynthesis.removeEventListener("voiceschanged", onReady);
+        speak();
+      };
+      window.speechSynthesis.addEventListener("voiceschanged", onReady);
+      window.setTimeout(() => {
+        window.speechSynthesis.removeEventListener("voiceschanged", onReady);
+        speak();
+      }, 300);
+      return;
+    }
+    speak();
   } catch {
     duckBed(false);
   }
