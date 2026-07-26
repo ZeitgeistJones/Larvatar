@@ -29,6 +29,8 @@ export type BoardAnswer = {
   sample: string;
   /** One sentence on why the hive clustered here. */
   rationale: string;
+  /** Up to two larva quotes for the "least picked" spotlight. */
+  quotes: { name: string; answer: string }[];
 };
 
 /** A complete playable board. */
@@ -87,7 +89,19 @@ export const SURVEY_QUESTIONS: { id: string; text: string }[] = [
   { id: "q22", text: "Name the fictional job title a larva puts on LinkedIn." },
   { id: "q23", text: "Name a magic spell that would fix every roadmap." },
   { id: "q24", text: "Name the last thing a larva would say before rage-quitting." },
-];
+  { id: "q25", text: "Name the karaoke hangover the hive regrets most." },
+  { id: "q26", text: "If wallet security was airport security, what gets confiscated?" },
+  { id: "q27", text: "Name the cooking show a larva would host." },
+  { id: "q28", text: "Name the RPG class every larva pretends to main." },
+  { id: "q29", text: "Name the museum exhibit that explains the hive." },
+  { id: "q30", text: "Name a fairy tale that matches a typical proposal thread." },
+  { id: "q31", text: "Name the gym machine a larva uses to cope with FUD." },
+  { id: "q32", text: "If the hive was a breakfast cereal, which one would it be?" },
+  { id: "q33", text: "Name the group chat nickname nobody asked for but everyone uses." },
+  { id: "q34", text: "Name a haunted house attraction based on Discord drama." },
+  { id: "q35", text: "Name the playlist a larva queues while waiting for quorum." },
+  { id: "q36", text: "Name the escape room theme that feels like claiming rewards." },
+]
 
 /** Soft cap so weekly minting doesn't grow forever. */
 export const MAX_SURVEY_QUESTIONS = 60;
@@ -359,6 +373,55 @@ function fallbackRationale(a: { count: number; sample?: string; label: string })
   return `${a.count} larva${a.count === 1 ? "" : "e"} landed here — e.g. "${(a.sample || a.label).slice(0, 80)}".`;
 }
 
+/** Prefer two distinct answer phrasings; fall back to two different voices. */
+function pickQuotes(
+  members: { name: string; answer: string }[]
+): { name: string; answer: string }[] {
+  if (members.length === 0) return [];
+  const out: { name: string; answer: string }[] = [];
+  const seenAnswers = new Set<string>();
+  const seenNames = new Set<string>();
+
+  for (const m of members) {
+    if (out.length >= 2) break;
+    const key = foldText(m.answer);
+    if (!key || seenAnswers.has(key)) continue;
+    seenAnswers.add(key);
+    seenNames.add(m.name);
+    out.push({ name: m.name, answer: m.answer.slice(0, 80) });
+  }
+
+  for (const m of members) {
+    if (out.length >= 2) break;
+    if (seenNames.has(m.name)) continue;
+    seenNames.add(m.name);
+    out.push({ name: m.name, answer: m.answer.slice(0, 80) });
+  }
+
+  if (out.length === 0 && members[0]) {
+    out.push({ name: members[0].name, answer: members[0].answer.slice(0, 80) });
+  }
+  return out;
+}
+
+function quotesFromLegacy(a: {
+  voices?: string[];
+  sample?: string;
+  label?: string;
+  quotes?: { name: string; answer: string }[];
+}): { name: string; answer: string }[] {
+  if (Array.isArray(a.quotes) && a.quotes.length > 0) {
+    return a.quotes
+      .filter((q) => q?.name && q?.answer)
+      .slice(0, 2)
+      .map((q) => ({ name: String(q.name), answer: String(q.answer).slice(0, 80) }));
+  }
+  const sample = (a.sample || a.label || "").slice(0, 80);
+  const voices = (a.voices || []).filter(Boolean);
+  if (voices.length === 0 || !sample) return [];
+  return voices.slice(0, Math.min(2, voices.length)).map((name) => ({ name, answer: sample }));
+}
+
 /**
  * Fix already-cached boards without a rebuild: strip decorative adjectives,
  * merge near-duplicate rows, backfill rationale.
@@ -378,6 +441,7 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
       voices: [...(a.voices || [])],
       sample: a.sample || label,
       rationale: (a.rationale || "").trim() || fallbackRationale(a),
+      quotes: quotesFromLegacy(a),
     };
     const hit = merged.find((o) => sameAnswerFamily(o.label, next.label));
     if (!hit) {
@@ -393,6 +457,11 @@ function sanitizeBoard(board: SurveyBoard): { board: SurveyBoard; changed: boole
     }
     if (!hit.sample || next.sample.length < hit.sample.length) hit.sample = next.sample;
     if (next.rationale.length > hit.rationale.length) hit.rationale = next.rationale;
+    // Keep up to two quotes after merge, preferring distinct answers.
+    hit.quotes = pickQuotes([
+      ...hit.quotes.map((q) => ({ name: q.name, answer: q.answer })),
+      ...next.quotes.map((q) => ({ name: q.name, answer: q.answer })),
+    ]);
   }
 
   const ranked = merged
@@ -823,6 +892,7 @@ export async function buildBoard(questionId: string): Promise<SurveyBoard | null
       voices: members.map((m) => m.name),
       sample,
       rationale,
+      quotes: pickQuotes(members),
     };
   });
 

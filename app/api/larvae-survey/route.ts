@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
       voices: match.voices,
       sample: match.sample,
       rationale: match.rationale || "",
+      quotes: match.quotes || [],
     },
     strike: false,
   });

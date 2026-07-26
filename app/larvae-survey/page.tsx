@@ -37,6 +37,7 @@ type Answer = {
   voices: string[];
   sample: string;
   rationale?: string;
+  quotes?: { name: string; answer: string }[];
 };
 
 type LeaderboardEntry = {
@@ -954,35 +955,62 @@ export default function LarvaeSurveyPage() {
               })}
             </div>
 
-            {pendingReveal.length === 0 && boardAnswers.length > 0 && (
-              <div className="mb-5 space-y-4 rounded-xl border p-4" style={{ borderColor: `${GOLD}33`, background: CARD }}>
-                <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: GOLD }}>
-                  why the hive
-                </p>
-                {boardAnswers
-                  .slice()
-                  .sort((a, b) => a.rank - b.rank)
-                  .map((a) => {
-                    const why =
-                      (a.rationale || "").trim() ||
-                      `${a.count} larva${a.count === 1 ? "" : "e"} landed here — e.g. "${(a.sample || a.label).slice(0, 80)}"`;
-                    return (
-                      <div key={a.rank} className="border-t pt-3 first:border-t-0 first:pt-0" style={{ borderColor: `${INK}12` }}>
-                        <p className="text-sm font-bold">
-                          {a.rank}. {a.label}{" "}
-                          <span className="font-mono text-xs font-normal opacity-50">
-                            {a.points} pts · ×{a.count}
-                          </span>
-                        </p>
-                        <p className="mt-1 text-sm leading-snug opacity-75">{why}</p>
-                        {a.voices?.length > 0 && (
-                          <p className="mt-1 text-[11px] opacity-40">{a.voices.join(" · ")}</p>
-                        )}
-                      </div>
-                    );
-                  })}
-              </div>
-            )}
+            {pendingReveal.length === 0 && boardAnswers.length > 0 && (() => {
+              // Last board answer only (highest rank = least popular).
+              const last = boardAnswers
+                .slice()
+                .sort((a, b) => b.rank - a.rank)[0];
+              const maxQuotes = Math.min(2, Math.max(1, last.count || 1));
+              const quotes =
+                (last.quotes && last.quotes.length > 0
+                  ? last.quotes
+                  : (last.voices || [])
+                      .slice(0, maxQuotes)
+                      .map((name) => ({
+                        name,
+                        answer: last.sample || last.label,
+                      }))
+                ).slice(0, maxQuotes);
+              const why =
+                (last.rationale || "").trim() ||
+                `Only ${last.count} larva${last.count === 1 ? "" : "e"} went here — rare pick.`;
+
+              return (
+                <div
+                  className="mb-5 rounded-xl border p-4"
+                  style={{ borderColor: `${GOLD}44`, background: CARD }}
+                >
+                  <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: GOLD }}>
+                    Least picked
+                  </p>
+                  <p className="mt-1 text-lg font-bold">
+                    {last.label}{" "}
+                    <span className="font-mono text-xs font-normal opacity-50">
+                      {last.points} pts · ×{last.count}
+                    </span>
+                  </p>
+                  <p className="mt-2 text-sm leading-snug opacity-75">
+                    Let’s see what they were thinking — {why}
+                  </p>
+                  {quotes.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {quotes.map((q, i) => (
+                        <div
+                          key={`${q.name}-${i}`}
+                          className="rounded-lg border px-3 py-2"
+                          style={{ borderColor: `${INK}15`, background: `${INK}06` }}
+                        >
+                          <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+                            {q.name}
+                          </p>
+                          <p className="mt-0.5 text-sm font-semibold">“{q.answer}”</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {pendingReveal.length > 0 ? (
               <p className="text-center font-mono text-xs uppercase tracking-widest opacity-50">
