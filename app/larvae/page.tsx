@@ -396,33 +396,6 @@ export default function LarvaePage() {
                       </div>
                     </div>
 
-                    {l.profile.catchphrase && (
-                      <p className="mt-3 text-sm font-medium leading-snug opacity-90">
-                        “{l.profile.catchphrase}”
-                      </p>
-                    )}
-
-                    {l.profile.hottestTake && (
-                      <div className="mt-2">
-                        <p className={`text-sm leading-snug opacity-75 ${open ? "" : "line-clamp-2"}`}>
-                          <span aria-hidden className="mr-1">
-                            🔥
-                          </span>
-                          {l.profile.hottestTake}
-                        </p>
-                        {open && (
-                          <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-40">
-                            hottest take
-                            {l.profile.hottestTakeSource === "outlier"
-                              ? " · outlier test"
-                              : l.profile.hottestTakeSource === "history"
-                                ? " · from history"
-                                : ""}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       <span
                         className="rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-white"
@@ -452,6 +425,24 @@ export default function LarvaePage() {
 
                     {open && (
                       <div className="mt-4 space-y-3 text-sm">
+                        {l.profile.hottestTake && (
+                          <div>
+                            <p className="text-sm leading-snug opacity-85">
+                              <span aria-hidden className="mr-1">
+                                🔥
+                              </span>
+                              {l.profile.hottestTake}
+                            </p>
+                            <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-40">
+                              hottest take
+                              {l.profile.hottestTakeSource === "outlier"
+                                ? " · outlier test"
+                                : l.profile.hottestTakeSource === "history"
+                                  ? " · from history"
+                                  : ""}
+                            </p>
+                          </div>
+                        )}
                         <p className="opacity-85">{l.profile.summary}</p>
                         {l.profile.quirks.length > 0 && (
                           <p className="text-xs opacity-60">
