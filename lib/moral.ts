@@ -113,16 +113,31 @@ export function labelFromAxes(lawChaos: number, goodEvil: number): MoralLabel {
   return `${law} ${moral}` as MoralLabel;
 }
 
-export async function getMoralResult(wallet: string): Promise<MoralResult | null> {
-  const raw = await redis.get<string | MoralResult>(RESULT_KEY(wallet));
-  if (!raw) return null;
-  return typeof raw === "string" ? JSON.parse(raw) : raw;
+export async function getMoralIndex(): Promise<string[]> {
+  try {
+    const raw = await redis.get<string | string[]>(INDEX_KEY);
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.map(String);
+    if (typeof raw === "string") {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    }
+    return [];
+  } catch (e) {
+    console.error("getMoralIndex", e);
+    return [];
+  }
 }
 
-export async function getMoralIndex(): Promise<string[]> {
-  const raw = await redis.get<string | string[]>(INDEX_KEY);
-  if (!raw) return [];
-  return typeof raw === "string" ? JSON.parse(raw) : raw;
+export async function getMoralResult(wallet: string): Promise<MoralResult | null> {
+  try {
+    const raw = await redis.get<string | MoralResult>(RESULT_KEY(wallet));
+    if (!raw) return null;
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch (e) {
+    console.error("getMoralResult", wallet, e);
+    return null;
+  }
 }
 
 export async function saveMoralResult(result: MoralResult) {
