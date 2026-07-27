@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function UpDownRedirect() {
-  redirect("/over-under");
+  redirect("/hive-shark");
 }
