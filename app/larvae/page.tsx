@@ -159,7 +159,7 @@ export default function LarvaePage() {
             </button>
           </div>
           <p className="mt-2 text-xs opacity-50">
-            Answers come from the top 5 most active larvae, in character.
+            Answers come from 5 random larvae, in character.
           </p>
 
           {askError && (

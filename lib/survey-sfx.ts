@@ -55,9 +55,7 @@ export function setSurveyMuted(next: boolean) {
   }
   if (next) {
     stopBedMusic();
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
+    stopAnnounceAudio();
   }
 }
 
@@ -223,25 +221,23 @@ export function playSurveyCue(cue: Cue) {
   }
 }
 
-/* ─── Announcer (browser TTS) ─────────────────────────────────────── */
-// Prefer a warm female English voice. Browser TTS can't do real vocal fry,
-// but lower pitch + slightly slower rate reads more sultry than the default
-// male/robotic pick this used to prefer.
+/* ─── Announcer (neural TTS → browser fallback) ───────────────────── */
+// Prefer /api/larvae-survey/announce (ElevenLabs or Gemini neural voice).
+// Browser speechSynthesis is only the fallback when the API is unavailable.
 
 const FEMALE_VOICE_RE =
-  /samantha|karen|moira|fiona|tessa|victoria|veena|zira|aria|jenny|emma|sara|sonia|hazel|susan|catherine|serena|google uk english female|microsoft (zira|aria|jenny|emma)|female/i;
+  /samantha|karen|moira|fiona|tessa|victoria|veena|aria|jenny|emma|sara|sonia|hazel|susan|catherine|serena|google uk english female|microsoft (aria|jenny|emma)|female/i;
 const MALE_VOICE_RE =
-  /male|daniel|david|alex|fred|tom|mark|guy|ravi|george|google us english$|microsoft (david|mark|guy|james)/i;
+  /male|daniel|david|alex|fred|tom|mark|guy|ravi|george|google us english$|microsoft (david|mark|guy|james|zira)/i;
 
 function scoreVoice(v: SpeechSynthesisVoice): number {
   let s = 0;
   if (/^en/i.test(v.lang)) s += 10;
   if (/en(-|_)US/i.test(v.lang)) s += 3;
-  if (/en(-|_)GB/i.test(v.lang)) s += 4; // often warmer for this vibe
+  if (/en(-|_)GB/i.test(v.lang)) s += 4;
   if (FEMALE_VOICE_RE.test(v.name)) s += 50;
   if (MALE_VOICE_RE.test(v.name)) s -= 40;
-  if (/compact|novelty|whisper|bad news|bells|zarvox|trinoids|boing/i.test(v.name)) s -= 30;
-  // Prefer cloud/neural-sounding names when present
+  if (/zira|compact|novelty|whisper|bad news|bells|zarvox|trinoids|boing/i.test(v.name)) s -= 50;
   if (/neural|online|natural|premium/i.test(v.name)) s += 8;
   return s;
 }
@@ -261,13 +257,32 @@ function duckBed(duck: boolean) {
   bedGain.gain.linearRampToValueAtTime(duck ? 0.02 : 0.055, t + 0.12);
 }
 
-/** Short game-show line. No-op when muted. */
-export function announce(line: string) {
-  if (muted || typeof window === "undefined" || !window.speechSynthesis) return;
+let announceAudio: HTMLAudioElement | null = null;
+let announceToken = 0;
+
+function stopAnnounceAudio() {
+  if (announceAudio) {
+    try {
+      announceAudio.pause();
+      announceAudio.src = "";
+    } catch {
+      /* ignore */
+    }
+    announceAudio = null;
+  }
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+function announceBrowser(line: string) {
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    duckBed(false);
+    return;
+  }
   try {
     window.speechSynthesis.cancel();
     duckBed(true);
-    // Light pause cues help the delivery feel less flat/robotic.
     const spoken = line
       .replace(/\s*—\s*/g, ". ")
       .replace(/\s*\.\.\.\s*/g, "... ")
@@ -275,8 +290,8 @@ export function announce(line: string) {
 
     const speak = () => {
       const u = new SpeechSynthesisUtterance(spoken);
-      u.rate = 0.92; // a touch languid
-      u.pitch = 0.88; // lower = closer to fry / sultry (API is coarse)
+      u.rate = 1.0;
+      u.pitch = 1.0;
       u.volume = 0.95;
       const voice = pickVoice();
       if (voice) u.voice = voice;
@@ -285,7 +300,6 @@ export function announce(line: string) {
       window.speechSynthesis.speak(u);
     };
 
-    // Voices often load async on first visit.
     if (!window.speechSynthesis.getVoices().length) {
       const onReady = () => {
         window.speechSynthesis.removeEventListener("voiceschanged", onReady);
@@ -302,6 +316,47 @@ export function announce(line: string) {
   } catch {
     duckBed(false);
   }
+}
+
+/** Short game-show line. Neural TTS when available; browser fallback otherwise. */
+export function announce(line: string) {
+  if (muted || typeof window === "undefined") return;
+  const spoken = line.trim();
+  if (!spoken) return;
+
+  const token = ++announceToken;
+  stopAnnounceAudio();
+  duckBed(true);
+
+  void (async () => {
+    try {
+      const res = await fetch("/api/larvae-survey/announce", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: spoken }),
+      });
+      if (token !== announceToken) return;
+      if (!res.ok) throw new Error(`tts ${res.status}`);
+      const blob = await res.blob();
+      if (token !== announceToken) return;
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      announceAudio = audio;
+      audio.onended = () => {
+        if (token === announceToken) duckBed(false);
+        URL.revokeObjectURL(url);
+        if (announceAudio === audio) announceAudio = null;
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        if (announceAudio === audio) announceAudio = null;
+        if (token === announceToken) announceBrowser(spoken);
+      };
+      await audio.play();
+    } catch {
+      if (token === announceToken) announceBrowser(spoken);
+    }
+  })();
 }
 
 /* ─── Soft bed music loop ─────────────────────────────────────────── */

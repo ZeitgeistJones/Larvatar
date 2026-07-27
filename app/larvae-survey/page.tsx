@@ -80,6 +80,33 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+const PLAYED_BOARDS_KEY = "larvae-survey-played-v1";
+
+function loadPlayedBoardIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = JSON.parse(localStorage.getItem(PLAYED_BOARDS_KEY) || "[]");
+    return Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberPlayedBoardIds(ids: string[]) {
+  if (typeof window === "undefined" || ids.length === 0) return;
+  const merged = [...new Set([...loadPlayedBoardIds(), ...ids])].slice(-120);
+  localStorage.setItem(PLAYED_BOARDS_KEY, JSON.stringify(merged));
+}
+
+/** Prefer boards the player hasn't seen; only reuse when the fresh pool runs out. */
+function pickFreshBoards(all: BoardStub[], need: number): BoardStub[] {
+  const played = new Set(loadPlayedBoardIds());
+  const fresh = shuffle(all.filter((b) => !played.has(b.id)));
+  if (fresh.length >= need) return fresh.slice(0, need);
+  const reused = shuffle(all.filter((b) => played.has(b.id)));
+  return [...fresh, ...reused].slice(0, need);
+}
+
 /* ─── Component ───────────────────────────────────────────────────── */
 
 export default function LarvaeSurveyPage() {
@@ -352,10 +379,11 @@ export default function LarvaeSurveyPage() {
       setError(`Hive still brewing — need ${MAIN_ROUNDS} boards (have ${boards.length}). Hang tight.`);
       return;
     }
-    const picked = shuffle(boards);
+    const picked = pickFreshBoards(boards, MAIN_ROUNDS + FM_QUESTIONS);
     const mains = picked.slice(0, MAIN_ROUNDS).map((b) => b.id);
     // Swarm Rush uses leftover boards (up to FM_QUESTIONS) — don't block Play for it.
     const fms = picked.slice(MAIN_ROUNDS, MAIN_ROUNDS + FM_QUESTIONS).map((b) => b.id);
+    rememberPlayedBoardIds([...mains, ...fms]);
     setMainIds(mains);
     setFmIds(fms);
     setRoundIndex(0);

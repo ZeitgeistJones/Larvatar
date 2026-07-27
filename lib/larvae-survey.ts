@@ -320,6 +320,12 @@ const LABEL_DECORATIVE = new Set([
   "burnt", "burned", "cold", "hot", "broken", "failed", "failing", "collapsing",
   "collapse", "collapsed", "decay", "decaying", "rotting", "rotten", "variant",
   "versions", "version", "style", "vibes", "energy", "core", "mode",
+  // verb/state pads bolted onto animals / nouns ("salmon upstream")
+  "upstream", "downstream", "swimming", "flying", "crawling", "running",
+  "jumping", "diving", "lurking", "hiding", "sleeping", "working",
+  // job / metaphor pads ("accountant ant")
+  "accountant", "lawyer", "banker", "ceo", "intern", "manager", "consultant",
+  "engineer", "artist", "poet", "warrior", "soldier", "ninja", "wizard",
 ]);
 const LABEL_FILLER = new Set([...LABEL_ARTICLES, ...LABEL_DECORATIVE]);
 
@@ -364,7 +370,14 @@ function sameAnswerFamily(a: string, b: string): boolean {
 /** Board label: drop decorative/state fluff, keep the plain noun/title. */
 function plainLabel(label: string): string {
   const folded = foldText(label);
-  const words = folded.split(" ").filter(Boolean);
+  let words = folded.split(" ").filter(Boolean);
+  // Drop trailing redundant type words ("remora fish" → "remora")
+  if (words.length >= 2) {
+    const last = words[words.length - 1];
+    if (["fish", "bird", "bug", "insect", "animal", "creature"].includes(last)) {
+      words = words.slice(0, -1);
+    }
+  }
   const kept = words.filter((w) => !LABEL_DECORATIVE.has(w));
   return (kept.length > 0 ? kept : words).join(" ").toUpperCase().slice(0, 40);
 }
@@ -819,15 +832,16 @@ function pickRespondents(
 
 const SURVEY_SYSTEM = `You are a larva — a personal AI governance agent in the $CLAWD ecosystem — answering a survey question in character.
 
-Answer with a SHORT phrase: usually 1-4 words (movie titles, animal names, song names, and proper nouns are fine). Not a sentence. Not an explanation. Just the answer itself.
+Answer with a SHORT phrase: usually 1-3 words (movie titles, animal names, song names, and proper nouns are fine). Not a sentence. Not an explanation. Just the answer itself.
 
 Rules:
-- Name the thing itself. Do NOT pad with state/adjective fluff ("overcooked soufflé", "fierce honey badger") — say "soufflé" / "honey badger".
+- Name the thing itself. Do NOT pad with jobs, verbs, or state fluff ("accountant ant", "salmon upstream", "fierce honey badger") — say "ant" / "salmon" / "honey badger".
+- Prefer a real, recognizable answer in the question's category (real animals, real songs, real shows).
 - No filler like "definitely", "probably", "obviously", "lowkey", "collapse", "variant", "broken".
-- Answer must actually fit the question category (toy → a real toy; food → a real food).
+- Answer must actually fit the question category (toy → a real toy; food → a real food; animal → a real animal).
 
-Good: "The Social Network" / "honey badger" / "soufflé" / "Tamagotchi"
-Bad: "overcooked soufflé" / "soufflé collapse" / "fierce honey badger" / "ponzi pyramid scheme" (not a toy)
+Good: "The Social Network" / "honey badger" / "soufflé" / "Tamagotchi" / "salmon"
+Bad: "accountant ant" / "salmon upstream" / "overcooked soufflé" / "fierce honey badger"
 
 Answer from YOUR personality, not the obvious general answer. Unusual picks are fine — decorative wording is not.
 

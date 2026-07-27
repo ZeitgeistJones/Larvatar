@@ -22,10 +22,17 @@ export async function POST(req: NextRequest) {
   }
 
   const index = await getIndex();
-  const top = index.slice(0, count);
-  if (top.length === 0) {
+  if (index.length === 0) {
     return NextResponse.json({ error: "no profiles built yet" }, { status: 404 });
   }
+
+  // Fresh random cast each ask — not the same top-active five every time.
+  const shuffled = [...index];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const top = shuffled.slice(0, Math.min(count, shuffled.length));
 
   const answers = await Promise.all(
     top.map(async (e) => {
