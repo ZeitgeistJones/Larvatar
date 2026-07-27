@@ -1,7 +1,0 @@
----
-alwaysApply: true
----
-
-Always begin by checking whether the current tools, rules, and context are enough for the task.
-
-If not, look for a better existing tool or workflow before attempting implementation. Prefer lightweight, verified, already-available tools. Avoid adding new tools unless they clearly improve the result.
