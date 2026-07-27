@@ -3,8 +3,9 @@ import type { Metadata } from "next";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 export const metadata: Metadata = {
-  title: "Larvatar — Larva Specimens",
-  description: "Personality profiles and avatars for every larva in the CLAWD ecosystem",
+  title: "Larvatar — Your larva would hate this",
+  description:
+    "Your larva would probably hate this website. Specimens, maps, and governance theatre for the CLAWD hive.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

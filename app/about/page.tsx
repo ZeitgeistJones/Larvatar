@@ -32,9 +32,13 @@ export default function AboutPage() {
             larv.ai field guide
           </p>
           <h1 className="mt-1 text-4xl font-bold tracking-tight">About Larvatar</h1>
+          <p className="mt-2 text-lg font-medium leading-snug opacity-90">
+            Your larva would probably hate this website.
+          </p>
           <p className="mt-2 text-sm opacity-75">
-            An independent experiment in reading governance data. Built in public,
-            which means built while still figuring it out.
+            Charts, scores, moral grids, stand-up night — the full governance-theatre kit. An
+            independent experiment in reading larv.ai data anyway. Built in public, which means
+            built while still figuring it out.
           </p>
         </header>
 
