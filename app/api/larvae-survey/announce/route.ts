@@ -1,26 +1,24 @@
-// POST { text } → neural TTS audio (mp3/wav).
-// Prefers ElevenLabs when ELEVENLABS_API_KEY is set; otherwise Gemini TTS
-// via the existing GEMINI_API_KEY. Caches by text hash in Redis.
+// POST { text, provider?, voiceId?, style? } → neural TTS audio
+// provider: "gemini" (default) | "eleven"
+// ElevenLabs reserved for short one-liners (hottest takes). Survey + standup use Gemini.
 
 import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/larvae";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const CACHE_KEY = (hash: string) => `lpp:survey:tts:v1:${hash}`;
-const CACHE_TTL = 60 * 60 * 24 * 30; // 30 days
+const CACHE_KEY = (hash: string) => `lpp:tts:v2:${hash}`;
+const CACHE_TTL = 60 * 60 * 24 * 30;
 
-// Soft young female — ElevenLabs "Sarah"
 const ELEVEN_VOICE =
   process.env.ELEVENLABS_VOICE_ID || "EXAVITQu4vr4xnSDxMaL";
 const ELEVEN_MODEL = process.env.ELEVENLABS_MODEL_ID || "eleven_flash_v2_5";
 
-// Gemini prebuilt female voice (breezy)
 const GEMINI_TTS_MODEL =
   process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
-const GEMINI_VOICE = process.env.GEMINI_TTS_VOICE || "Aoede";
+const GEMINI_VOICE_DEFAULT = process.env.GEMINI_TTS_VOICE || "Aoede";
 
 function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
   const numChannels = 1;
@@ -33,7 +31,7 @@ function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
   header.write("WAVE", 8);
   header.write("fmt ", 12);
   header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 20);
   header.writeUInt16LE(numChannels, 22);
   header.writeUInt32LE(sampleRate, 24);
   header.writeUInt32LE(byteRate, 28);
@@ -70,9 +68,9 @@ async function elevenLabsTts(
         text,
         model_id: ELEVEN_MODEL,
         voice_settings: {
-          stability: 0.35,
+          stability: 0.4,
           similarity_boost: 0.8,
-          style: 0.45,
+          style: 0.4,
           use_speaker_boost: true,
         },
       }),
@@ -82,33 +80,37 @@ async function elevenLabsTts(
     console.error("elevenlabs tts", res.status, await res.text().catch(() => ""));
     return null;
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  return { buf, mime: "audio/mpeg" };
+  return { buf: Buffer.from(await res.arrayBuffer()), mime: "audio/mpeg" };
 }
 
-async function geminiTts(text: string): Promise<{ buf: Buffer; mime: string } | null> {
+const STYLE_PROMPTS: Record<string, string> = {
+  host: "Say this like a warm game-show host — playful, clear, natural pacing:\n",
+  standup:
+    "Perform this stand-up comedy bit out loud. Conversational club-comic energy, natural pauses, commit to the punchlines. Do not add extra lines:\n",
+  larva: "Say this in character, natural and opinionated, not robotic:\n",
+  take: "Deliver this hot take with conviction — short, punchy:\n",
+};
+
+async function geminiTts(
+  text: string,
+  style: string,
+  voiceName: string
+): Promise<{ buf: Buffer; mime: string } | null> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
 
+  const prefix = STYLE_PROMPTS[style] || STYLE_PROMPTS.larva;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            {
-              text: `Say this like a flirty game-show hostess — warm, playful, natural pacing, not robotic:\n${text}`,
-            },
-          ],
-        },
-      ],
+      contents: [{ parts: [{ text: `${prefix}${text}` }] }],
       generationConfig: {
         responseModalities: ["AUDIO"],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: GEMINI_VOICE },
+            prebuiltVoiceConfig: { voiceName },
           },
         },
       },
@@ -131,29 +133,34 @@ async function geminiTts(text: string): Promise<{ buf: Buffer; mime: string } | 
 
   const pcm = Buffer.from(b64, "base64");
   const rate = parseSampleRate(part?.inlineData?.mimeType);
-  const wav = pcmToWav(pcm, rate);
-  return { buf: wav, mime: "audio/wav" };
+  return { buf: pcmToWav(pcm, rate), mime: "audio/wav" };
 }
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
+  const provider = body?.provider === "eleven" ? "eleven" : "gemini";
+  const style = String(body?.style || (provider === "eleven" ? "take" : "host"))
+    .trim()
+    .toLowerCase();
+  const geminiVoice = String(body?.geminiVoice || GEMINI_VOICE_DEFAULT).trim() || GEMINI_VOICE_DEFAULT;
+
+  const maxLen = provider === "eleven" ? 220 : 2800;
   const text = String(body?.text || "")
     .trim()
     .replace(/\s+/g, " ")
-    .slice(0, 220);
+    .slice(0, maxLen);
   if (!text) {
     return NextResponse.json({ error: "text required" }, { status: 400 });
   }
 
-  // Optional per-larva voice; only alphanumeric IDs (ElevenLabs style).
   const rawVoice = String(body?.voiceId || "").trim();
-  const voiceId =
-    /^[a-zA-Z0-9]{10,64}$/.test(rawVoice) ? rawVoice : ELEVEN_VOICE;
+  const voiceId = /^[a-zA-Z0-9]{10,64}$/.test(rawVoice) ? rawVoice : ELEVEN_VOICE;
 
   const hash = createHash("sha256")
-    .update(`${voiceId}:${text}`)
+    .update(`${provider}:${style}:${voiceId}:${geminiVoice}:${text}`)
     .digest("hex")
     .slice(0, 32);
+
   const cached = await redis.get<{ b64: string; mime: string } | string>(CACHE_KEY(hash));
   if (cached) {
     const parsed =
@@ -170,7 +177,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const audio = (await elevenLabsTts(text, voiceId)) || (await geminiTts(text));
+  let audio: { buf: Buffer; mime: string } | null = null;
+  if (provider === "eleven") {
+    audio = (await elevenLabsTts(text, voiceId)) || (await geminiTts(text, "take", geminiVoice));
+  } else {
+    audio = await geminiTts(text, style === "standup" || style === "larva" || style === "host" || style === "take" ? style : "host", geminiVoice);
+  }
+
   if (!audio) {
     return NextResponse.json({ error: "tts unavailable" }, { status: 503 });
   }
@@ -185,7 +198,7 @@ export async function POST(req: NextRequest) {
     headers: {
       "Content-Type": audio.mime,
       "Cache-Control": "public, max-age=86400",
-      "X-Survey-TTS": process.env.ELEVENLABS_API_KEY ? "elevenlabs" : "gemini",
+      "X-Survey-TTS": provider === "eleven" && process.env.ELEVENLABS_API_KEY ? "elevenlabs" : "gemini",
     },
   });
 }

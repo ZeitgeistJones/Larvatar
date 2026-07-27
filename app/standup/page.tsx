@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
-import { speakLarva, unlockSurveyAudio } from "@/lib/survey-sfx";
+import { speakStandup, unlockSurveyAudio } from "@/lib/survey-sfx";
 
 type CrowdReview = {
   wallet: string;
@@ -125,7 +125,8 @@ export default function StandupPage() {
   function playBit() {
     if (!set) return;
     unlockSurveyAudio();
-    speakLarva(set.bit.slice(0, 500), set.voiceId);
+    // Full bit via Gemini TTS (not ElevenLabs).
+    speakStandup(set.bit);
   }
 
   const wordCount = useMemo(
@@ -184,7 +185,7 @@ export default function StandupPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
-                  now on stage · {set.tone} · voice {set.voiceLabel}
+                  now on stage · {set.tone} · Gemini voice
                 </p>
                 <h2 className="text-2xl font-bold">{set.name}</h2>
               </div>
@@ -214,7 +215,7 @@ export default function StandupPage() {
                 className="rounded-lg border px-4 py-2 text-sm"
                 style={{ borderColor: `${INK}30` }}
               >
-                Play opener (TTS)
+                Play full bit (TTS)
               </button>
               {phase === "live" && (
                 <button

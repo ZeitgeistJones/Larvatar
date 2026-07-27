@@ -53,18 +53,7 @@ export async function GET(req: NextRequest) {
         withOutlier: seeded.withOutlier,
       });
     }
-    // Return after seed so the first visit doesn't also burn the whole budget
-    // on LLM fallbacks — next visit processes the queue.
-    if (justSeeded && Date.now() - start > 8_000) {
-      return NextResponse.json({
-        ok: true,
-        done: false,
-        justSeeded: true,
-        queued: queue.length,
-        withOutlier: seeded.withOutlier,
-        message: "Outlier threads cached. Visit again to write takes onto profiles.",
-      });
-    }
+    // Fall through and start writing takes on this same visit when time remains.
   }
 
   if (!map) {

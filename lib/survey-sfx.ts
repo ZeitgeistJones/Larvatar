@@ -318,8 +318,38 @@ function announceBrowser(line: string) {
   }
 }
 
-/** Short game-show line. Neural TTS when available; browser fallback otherwise. */
-export function announce(line: string, voiceId?: string) {
+type TtsOpts = {
+  provider?: "gemini" | "eleven";
+  style?: "host" | "standup" | "larva" | "take";
+  voiceId?: string;
+  geminiVoice?: string;
+};
+
+/** Short game-show line — Gemini TTS (free). Browser fallback otherwise. */
+export function announce(line: string, _voiceId?: string) {
+  void playNeural(line, { provider: "gemini", style: "host" });
+}
+
+/** Larva answer / long bit — Gemini (not ElevenLabs). */
+export function speakLarva(line: string, _voiceId?: string) {
+  void playNeural(line, { provider: "gemini", style: "larva" });
+}
+
+/** Full stand-up bit — Gemini, standup delivery. */
+export function speakStandup(line: string) {
+  void playNeural(line, { provider: "gemini", style: "standup" });
+}
+
+/** Hottest-take one-liner — ElevenLabs when keyed (Gemini fallback). */
+export function speakOneLiner(line: string, voiceId?: string) {
+  void playNeural(line, {
+    provider: "eleven",
+    style: "take",
+    voiceId,
+  });
+}
+
+function playNeural(line: string, opts: TtsOpts) {
   if (muted || typeof window === "undefined") return;
   const spoken = line.trim();
   if (!spoken) return;
@@ -335,7 +365,10 @@ export function announce(line: string, voiceId?: string) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           text: spoken,
-          ...(voiceId ? { voiceId } : {}),
+          provider: opts.provider || "gemini",
+          style: opts.style || "host",
+          ...(opts.voiceId ? { voiceId: opts.voiceId } : {}),
+          ...(opts.geminiVoice ? { geminiVoice: opts.geminiVoice } : {}),
         }),
       });
       if (token !== announceToken) return;
@@ -360,11 +393,6 @@ export function announce(line: string, voiceId?: string) {
       if (token === announceToken) announceBrowser(spoken);
     }
   })();
-}
-
-/** Play a larva answer in its assigned ElevenLabs voice (manual play — saves credits). */
-export function speakLarva(line: string, voiceId?: string) {
-  announce(line, voiceId);
 }
 
 /* ─── Soft bed music loop ─────────────────────────────────────────── */

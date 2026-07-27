@@ -5,7 +5,13 @@ import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 import type { LarvatarTraits } from "@/lib/avatar";
-import { speakLarva, unlockSurveyAudio } from "@/lib/survey-sfx";
+import { speakLarva, speakOneLiner, unlockSurveyAudio } from "@/lib/survey-sfx";
+
+type MoralBadge = {
+  label: string;
+  lawChaos: number;
+  goodEvil: number;
+};
 
 type Larva = {
   wallet: string;
@@ -23,6 +29,9 @@ type Larva = {
     hottestTakeSource?: "outlier" | "history";
   };
   avatar: LarvatarTraits;
+  moral?: MoralBadge | null;
+  voiceId?: string;
+  voiceLabel?: string;
 };
 
 type Answer = {
@@ -56,6 +65,8 @@ export default function LarvaePage() {
   const [askError, setAskError] = useState("");
   const [askMode, setAskMode] = useState<"hive" | "single">("hive");
   const [playingWallet, setPlayingWallet] = useState<string | null>(null);
+  const [playingTake, setPlayingTake] = useState<string | null>(null);
+  const [retaking, setRetaking] = useState<string | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -141,8 +152,57 @@ export default function LarvaePage() {
   function playAnswer(a: Answer) {
     unlockSurveyAudio();
     setPlayingWallet(a.wallet);
-    speakLarva(a.answer, a.voiceId);
+    // Ask answers use Gemini TTS (not ElevenLabs).
+    speakLarva(a.answer);
     window.setTimeout(() => setPlayingWallet(null), 8000);
+  }
+
+  function playHottestTake(l: Larva) {
+    if (!l.profile.hottestTake) return;
+    unlockSurveyAudio();
+    setPlayingTake(l.wallet);
+    // One-liner = ElevenLabs when available.
+    speakOneLiner(l.profile.hottestTake, l.voiceId);
+    window.setTimeout(() => setPlayingTake(null), 12_000);
+  }
+
+  async function retakeMoral(wallet: string) {
+    if (retaking) return;
+    setRetaking(wallet);
+    try {
+      const res = await fetch("/api/larvae/moral", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wallet }),
+      });
+      const d = await res.json();
+      if (!res.ok) return;
+      const result = d.result as MoralBadge & { label: string };
+      setLarvae((list) =>
+        list.map((x) =>
+          x.wallet === wallet
+            ? {
+                ...x,
+                moral: {
+                  label: result.label,
+                  lawChaos: result.lawChaos,
+                  goodEvil: result.goodEvil,
+                },
+              }
+            : x
+        )
+      );
+    } catch {
+      /* ignore */
+    } finally {
+      setRetaking(null);
+    }
+  }
+
+  function moralBadgeColor(label: string): string {
+    if (label.includes("Good")) return "#2a9d6e";
+    if (label.includes("Evil")) return "#c44b4b";
+    return "#6b7280";
   }
 
   const visible = larvae.slice(0, shown);
@@ -198,8 +258,8 @@ export default function LarvaePage() {
             </button>
           </div>
           <p className="mt-2 text-xs opacity-50">
-            Hive = 5 random larvae. Or expand a specimen and use Ask this larva. Tap Play to hear
-            an answer in that larva’s personality voice (manual — saves TTS credits).
+            Hive = 5 random larvae. Or expand a specimen and use Ask this larva. Tap Play for Gemini
+            voice. Hottest takes on cards use ElevenLabs (short one-liners only).
           </p>
 
           {askError && (
@@ -323,12 +383,26 @@ export default function LarvaePage() {
 
                     {l.profile.hottestTake && (
                       <div className="mt-3">
-                        <p className={`text-sm leading-snug ${open ? "" : "line-clamp-2"}`}>
-                          <span aria-hidden className="mr-1">
-                            🔥
-                          </span>
-                          <span className="font-medium opacity-90">{l.profile.hottestTake}</span>
-                        </p>
+                        <div className="flex items-start gap-2">
+                          <p className={`min-w-0 flex-1 text-sm leading-snug ${open ? "" : "line-clamp-2"}`}>
+                            <span aria-hidden className="mr-1">
+                              🔥
+                            </span>
+                            <span className="font-medium opacity-90">{l.profile.hottestTake}</span>
+                          </p>
+                          <button
+                            type="button"
+                            title="Hear this take"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playHottestTake(l);
+                            }}
+                            className="shrink-0 rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest opacity-70 hover:opacity-100"
+                            style={{ borderColor: `${INK}30` }}
+                          >
+                            {playingTake === l.wallet ? "…" : "🔊"}
+                          </button>
+                        </div>
                         {open && (
                           <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-40">
                             hottest take
@@ -349,6 +423,15 @@ export default function LarvaePage() {
                       >
                         {l.profile.tone}
                       </span>
+                      {l.moral?.label && (
+                        <span
+                          className="rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-white"
+                          title="Moral alignment"
+                          style={{ background: moralBadgeColor(l.moral.label) }}
+                        >
+                          {l.moral.label}
+                        </span>
+                      )}
                       {l.profile.values.slice(0, open ? 4 : 2).map((v) => (
                         <span
                           key={v}
@@ -388,13 +471,22 @@ export default function LarvaePage() {
                               ? `Ask ${l.profile.name}`
                               : "Type a question above first"}
                         </button>
-                        <a
-                          href={`/moral?wallet=${encodeURIComponent(l.wallet)}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="block text-center font-mono text-[10px] uppercase tracking-widest opacity-45 hover:opacity-80"
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void retakeMoral(l.wallet);
+                          }}
+                          disabled={retaking === l.wallet}
+                          className="w-full rounded-lg border px-4 py-2 text-center font-mono text-[10px] uppercase tracking-widest opacity-60 hover:opacity-100 disabled:opacity-40"
+                          style={{ borderColor: `${INK}28` }}
                         >
-                          Run moral test →
-                        </a>
+                          {retaking === l.wallet
+                            ? "retesting…"
+                            : l.moral
+                              ? "Retake moral test"
+                              : "Run moral test"}
+                        </button>
                       </div>
                     )}
                   </div>
