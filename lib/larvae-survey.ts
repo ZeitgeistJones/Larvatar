@@ -369,8 +369,8 @@ function plainLabel(label: string): string {
   return (kept.length > 0 ? kept : words).join(" ").toUpperCase().slice(0, 40);
 }
 
-/** Template/echo rationales that just restate the board label — useless in UI. */
-function isTemplateRationale(
+/** Template/echo/generic rationales that aren't real "thinking" copy. */
+function isWeakRationale(
   rationale: string,
   label: string,
   sample?: string
@@ -379,11 +379,24 @@ function isTemplateRationale(
   if (!r) return true;
   if (/landed here/i.test(r)) return true;
   if (/put it plainly/i.test(r)) return true;
+  if (/lone larva took this swing/i.test(r)) return true;
+  if (/fringe call from the hive/i.test(r)) return true;
+  if (/smaller pocket of the hive/i.test(r)) return true;
+  if (/only \d+ larva/i.test(r) && /went (here|this way)/i.test(r)) return true;
   const echo = foldText(sample || label);
   if (echo && foldText(r) === echo) return true;
   // "… — e.g. \"Mr. Brightside\"." style
   if (/\be\.g\.\s*["']/i.test(r)) return true;
   return false;
+}
+
+/** @deprecated alias — prefer isWeakRationale */
+function isTemplateRationale(
+  rationale: string,
+  label: string,
+  sample?: string
+): boolean {
+  return isWeakRationale(rationale, label, sample);
 }
 
 function fallbackRationale(a: { count: number; label: string }): string {
@@ -540,6 +553,99 @@ export async function getBoard(id: string): Promise<SurveyBoard | null> {
     await saveBoard(cleaned);
   }
   return cleaned;
+}
+
+/**
+ * Least-picked spotlight needs a real "what they were thinking" line.
+ * Survey answers are often 1–4 words that match the board label, so we can't
+ * quote them usefully — generate a grounded rationale (+ optional asides)
+ * once on reveal and cache it on the board.
+ */
+export async function enrichLeastPicked(board: SurveyBoard): Promise<SurveyBoard> {
+  const answers = [...(board.answers || [])];
+  if (answers.length === 0) return board;
+
+  const lastIdx = answers.reduce(
+    (best, a, i) => (a.rank > answers[best].rank ? i : best),
+    0
+  );
+  const last = answers[lastIdx];
+  const needWhy = isWeakRationale(last.rationale, last.label, last.sample);
+  const existingQuotes = (last.quotes || []).filter(
+    (q) => q?.name && q?.answer && !quoteEchoesLabel(q.answer, last.label)
+  );
+  const maxQuotes = Math.min(2, Math.max(1, last.count || 1));
+  const needQuotes = existingQuotes.length === 0;
+
+  if (!needWhy && !needQuotes) return board;
+
+  const voices = (last.voices || []).filter(Boolean).slice(0, maxQuotes);
+  const voiceLine =
+    voices.length > 0 ? voices.join(", ") : "a couple of fringe larvae";
+
+  try {
+    const raw = await haiku(
+      `You write the "least picked" reveal for a hive survey game.
+Return ONLY JSON (no markdown): {"rationale":"...","quotes":[{"name":"...","answer":"..."}]}
+
+Rules:
+- rationale: ONE punchy sentence on WHY this answer is a funny/fitting fringe pick for the question. Never restate the label alone. Never say "landed here", "e.g.", "smaller pocket", "fringe call", or "lone larva took this swing".
+- quotes: up to ${maxQuotes} short first-person asides (max 14 words) from the named larvae — their vibe for picking this, NOT just repeating the answer word. Use the provided names only.
+- If only one name is given, return one quote.
+- Keep it playful, specific to the question + answer.`,
+      `Question: ${board.question}
+Answer on the board: ${last.label}
+Sample phrasing: ${last.sample || last.label}
+How many larvae: ${last.count}
+Larva names to use: ${voiceLine}`,
+      280,
+      0.85
+    );
+
+    const clean = raw.replace(/```json|```/g, "").trim();
+    const start = clean.indexOf("{");
+    const end = clean.lastIndexOf("}");
+    if (start === -1 || end === -1) return board;
+
+    const parsed = JSON.parse(clean.slice(start, end + 1)) as {
+      rationale?: string;
+      quotes?: { name?: string; answer?: string }[];
+    };
+
+    let rationale = String(parsed.rationale || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 200);
+    if (!rationale || isWeakRationale(rationale, last.label, last.sample)) {
+      rationale = last.rationale; // keep prior if model failed
+    } else if (needWhy) {
+      last.rationale = rationale;
+    }
+
+    if (needQuotes && Array.isArray(parsed.quotes)) {
+      const allowed = new Set(voices.map((v) => v.toLowerCase()));
+      const quotes = parsed.quotes
+        .filter((q) => q?.name && q?.answer)
+        .map((q) => ({
+          name: String(q.name).trim(),
+          answer: String(q.answer).trim().slice(0, 80),
+        }))
+        .filter((q) => {
+          if (allowed.size > 0 && !allowed.has(q.name.toLowerCase())) return false;
+          // Reject asides that are just the board label again
+          return !quoteEchoesLabel(q.answer, last.label);
+        })
+        .slice(0, maxQuotes);
+      if (quotes.length > 0) last.quotes = quotes;
+    }
+
+    answers[lastIdx] = last;
+    const next = { ...board, answers };
+    await saveBoard(next);
+    return next;
+  } catch {
+    return board;
+  }
 }
 
 export async function getBoardIndex(): Promise<string[]> {
@@ -792,7 +898,9 @@ CRITICAL — do NOT leave state/adjective variants as separate rows. These are O
 Rules:
 - Merge aggressively on meaning and on shared head noun.
 - Never invent adjectives. Prefer the PLAINEST shared noun/phrase for the label (1-3 words, UPPERCASE).
-- For each cluster, write a "rationale": exactly ONE sentence grounded in what they said.
+- For each cluster, write a "rationale": exactly ONE vivid sentence explaining the JOKE / vibe / analogy — never restate the label, never say "N larvae landed here", never use "e.g.".
+  Good: "The hive kept describing governance as a soufflé that falls the second you look at it."
+  Bad: "4 larvae landed here — e.g. \"turtles\"." / "A smaller pocket clustered on turtles."
 - Return clusters sorted by size, largest first.
 - Include every respondent number exactly once, in exactly one cluster.
 - Answers that are NOT what the question asked for (e.g. "ponzi scheme" for a childhood-toy question) may stay as their own row — do not invent toys for them.

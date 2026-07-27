@@ -980,19 +980,21 @@ export default function LarvaeSurveyPage() {
                 !r ||
                 /landed here/i.test(r) ||
                 /put it plainly/i.test(r) ||
-                /\be\.g\.\s*["']/i.test(r);
+                /\be\.g\.\s*["']/i.test(r) ||
+                /lone larva took this swing/i.test(r) ||
+                /fringe call from the hive/i.test(r) ||
+                /smaller pocket of the hive/i.test(r);
 
               const maxQuotes = Math.min(2, Math.max(1, last.count || 1));
+              // Prefer stored asides; allow short echoes only if nothing else
+              // (enrich usually writes real thinking lines that don't echo).
               const quotes = (last.quotes || [])
                 .filter((q) => q?.name && q?.answer && !echoesLabel(q.answer))
                 .slice(0, maxQuotes);
-              const names = (last.voices || []).filter(Boolean).slice(0, maxQuotes);
               const rawWhy = (last.rationale || "").trim();
               const why = !isTemplateWhy(rawWhy)
                 ? rawWhy
-                : last.count <= 1
-                  ? "A lone larva took this swing — rare enough to spotlight."
-                  : `Only ${last.count} larvae went this way — a fringe call from the hive.`;
+                : "The fringe of the hive took a weird left turn here.";
 
               return (
                 <div
@@ -1011,7 +1013,7 @@ export default function LarvaeSurveyPage() {
                   <p className="mt-2 text-sm leading-snug opacity-75">
                     Let’s see what they were thinking — {why}
                   </p>
-                  {quotes.length > 0 ? (
+                  {quotes.length > 0 && (
                     <div className="mt-3 space-y-2">
                       {quotes.map((q, i) => (
                         <div
@@ -1026,12 +1028,7 @@ export default function LarvaeSurveyPage() {
                         </div>
                       ))}
                     </div>
-                  ) : names.length > 0 ? (
-                    <p className="mt-3 text-sm opacity-70">
-                      Voiced by{" "}
-                      <span className="font-semibold">{names.join(" · ")}</span>
-                    </p>
-                  ) : null}
+                  )}
                 </div>
               );
             })()}

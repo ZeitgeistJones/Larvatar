@@ -12,6 +12,7 @@ import {
   getBoard,
   getAllBoards,
   matchGuess,
+  enrichLeastPicked,
   TARGET_BOARD_COUNT,
 } from "@/lib/larvae-survey";
 
@@ -103,10 +104,14 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "board not found" }, { status: 404 });
   }
 
+  // Write a real least-picked "thinking" line (+ asides) when the board only
+  // has template/fallback copy — then cache it for the next play.
+  const enriched = await enrichLeastPicked(board);
+
   return NextResponse.json({
-    id: board.id,
-    question: board.question,
-    respondents: board.respondents,
-    answers: board.answers,
+    id: enriched.id,
+    question: enriched.question,
+    respondents: enriched.respondents,
+    answers: enriched.answers,
   });
 }
