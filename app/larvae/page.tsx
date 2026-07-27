@@ -27,6 +27,7 @@ type Larva = {
     summary: string;
     hottestTake?: string;
     hottestTakeSource?: "outlier" | "history";
+    catchphrase?: string;
   };
   avatar: LarvatarTraits;
   moral?: MoralBadge | null;
@@ -157,12 +158,11 @@ export default function LarvaePage() {
     window.setTimeout(() => setPlayingWallet(null), 8000);
   }
 
-  function playHottestTake(l: Larva) {
-    if (!l.profile.hottestTake) return;
+  function playCatchphrase(l: Larva) {
+    if (!l.profile.catchphrase) return;
     unlockSurveyAudio();
     setPlayingTake(l.wallet);
-    // One-liner = ElevenLabs when available.
-    speakOneLiner(l.profile.hottestTake, l.voiceId);
+    speakOneLiner(l.profile.catchphrase, l.voiceId);
     window.setTimeout(() => setPlayingTake(null), 12_000);
   }
 
@@ -258,8 +258,7 @@ export default function LarvaePage() {
             </button>
           </div>
           <p className="mt-2 text-xs opacity-50">
-            Hive = 5 random larvae. Or expand a specimen and use Ask this larva. Tap Play for Gemini
-            voice. Hottest takes on cards use ElevenLabs (short one-liners only).
+            Hive = 5 random larvae. Expand a specimen to ask one alone. Tap Play / Voice to hear them.
           </p>
 
           {askError && (
@@ -371,8 +370,24 @@ export default function LarvaePage() {
                         label={l.profile.name}
                         size={72}
                       />
-                      <div className="min-w-0">
-                        <p className="truncate text-lg font-bold">{l.profile.name}</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="truncate text-lg font-bold">{l.profile.name}</p>
+                          {l.profile.catchphrase && (
+                            <button
+                              type="button"
+                              title="Play catchphrase"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                playCatchphrase(l);
+                              }}
+                              className="shrink-0 rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-widest opacity-80 hover:opacity-100"
+                              style={{ borderColor: `${INK}35`, background: `${CORAL}14` }}
+                            >
+                              {playingTake === l.wallet ? "…" : "Voice"}
+                            </button>
+                          )}
+                        </div>
                         <p className="text-xs italic opacity-70">{l.profile.tagline}</p>
                         <p className="mt-1 font-mono text-[10px] opacity-50">
                           {l.ens || `${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}`} ·{" "}
@@ -381,28 +396,20 @@ export default function LarvaePage() {
                       </div>
                     </div>
 
+                    {l.profile.catchphrase && (
+                      <p className="mt-3 text-sm font-medium leading-snug opacity-90">
+                        “{l.profile.catchphrase}”
+                      </p>
+                    )}
+
                     {l.profile.hottestTake && (
-                      <div className="mt-3">
-                        <div className="flex items-start gap-2">
-                          <p className={`min-w-0 flex-1 text-sm leading-snug ${open ? "" : "line-clamp-2"}`}>
-                            <span aria-hidden className="mr-1">
-                              🔥
-                            </span>
-                            <span className="font-medium opacity-90">{l.profile.hottestTake}</span>
-                          </p>
-                          <button
-                            type="button"
-                            title="Hear this take"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              playHottestTake(l);
-                            }}
-                            className="shrink-0 rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest opacity-70 hover:opacity-100"
-                            style={{ borderColor: `${INK}30` }}
-                          >
-                            {playingTake === l.wallet ? "…" : "🔊"}
-                          </button>
-                        </div>
+                      <div className="mt-2">
+                        <p className={`text-sm leading-snug opacity-75 ${open ? "" : "line-clamp-2"}`}>
+                          <span aria-hidden className="mr-1">
+                            🔥
+                          </span>
+                          {l.profile.hottestTake}
+                        </p>
                         {open && (
                           <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-40">
                             hottest take

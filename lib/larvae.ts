@@ -17,6 +17,8 @@ export type LarvaProfile = {
     /** One spicy line — prefer Outlier Test / Test 2 answers, else personality. */
     hottestTake?: string;
     hottestTakeSource?: "outlier" | "history";
+    /** Punchy spoken catchphrase — distinct from tagline / take / values. */
+    catchphrase?: string;
   };
   avatar: LarvatarTraits;
   updatedAt: string;

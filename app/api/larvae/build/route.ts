@@ -888,6 +888,7 @@ export async function GET(req: NextRequest) {
                 hottestTakeSource: prev.profile.hottestTakeSource,
               }
             : {}),
+          ...(prev?.profile.catchphrase ? { catchphrase: prev.profile.catchphrase } : {}),
         },
         avatar,
         updatedAt: new Date().toISOString(),

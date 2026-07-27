@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-/** Old Card Sharks URL → Up/Down */
+/** Old Card Sharks URL → Over/Under */
 export default function CardSharksRedirect() {
-  redirect("/up-down");
+  redirect("/over-under");
 }
