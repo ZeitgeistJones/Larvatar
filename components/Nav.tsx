@@ -16,6 +16,7 @@ const LINKS = [
   { href: "/larvae", label: "Specimens" },
   { href: "/map", label: "Map" },
   { href: "/credibility", label: "Track Record" },
+  { href: "/moral", label: "Moral Test" },
   { href: "/reception", label: "Reception" },
   { href: "/governance", label: "Governance" },
   { href: "/trends", label: "Topic Trends" },
