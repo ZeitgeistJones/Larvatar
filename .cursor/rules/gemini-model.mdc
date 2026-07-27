@@ -1,0 +1,10 @@
+---
+description: Gemini model defaults for Larvatar (2.5-flash shut for new keys)
+alwaysApply: true
+---
+
+# Gemini models
+
+- Default text LLM: `gemini-3.6-flash` (env `GEMINI_MODEL` overrides).
+- Do **not** default to `gemini-2.5-flash` or `gemini-2.5-flash-lite` — Google shut those for new API keys; use 3.x Flash instead.
+- TTS may still use a separate `GEMINI_TTS_MODEL` (preview TTS id); only change that if Google documents a replacement.

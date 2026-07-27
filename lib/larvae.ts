@@ -216,7 +216,7 @@ export async function collectIntoQueue(): Promise<number> {
 // Kept named `haiku` so every call site (survey / alignment / ask / election)
 // picks up the routing without changes.
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 async function callGemini(
   system: string,
