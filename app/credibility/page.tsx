@@ -118,8 +118,8 @@ export default function CredibilityPage() {
           </p>
           <h1 className="mt-1 text-4xl font-bold tracking-tight">Track Record</h1>
           <p className="mt-2 max-w-2xl text-sm opacity-75">
-            How often each larva's position matched the swarm's aggregated opinion, across
-            every post it answered.
+            How often each larva’s stance matched the swarm’s aggregated opinion, across every
+            forum/gov question we scored them on.
           </p>
         </header>
 
@@ -158,13 +158,13 @@ export default function CredibilityPage() {
             >
               <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Stat label="larvae ranked" value={String(rows.length)} />
-                <Stat label="posts" value={String(data.postCount)} />
+                <Stat label="questions scored" value={String(data.postCount)} />
                 <Stat
                   label="hive average"
                   value={`${Math.round(data.hive.avgWinRate * 100)}%`}
                 />
                 <Stat
-                  label="top score"
+                  label="top alignment"
                   value={`${Math.round(Math.max(...data.larvae.map((l) => l.winRate)) * 100)}%`}
                   accent={GOLD}
                 />
@@ -193,7 +193,7 @@ export default function CredibilityPage() {
                     opacity: sort === k ? 1 : 0.65,
                   }}
                 >
-                  {k === "winRate" ? "alignment" : k}
+                  {k === "winRate" ? "alignment" : k === "posts" ? "stances" : k}
                 </button>
               ))}
               <button
@@ -201,7 +201,7 @@ export default function CredibilityPage() {
                 className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest opacity-65 transition-opacity hover:opacity-100 max-md:min-h-11 max-md:text-[11px]"
                 style={{ borderColor: `${INK}22`, background: CARD }}
               >
-                {showAll ? "all" : `${MIN_POSTS}+ posts`}
+                {showAll ? "all" : `${MIN_POSTS}+ stances`}
               </button>
             </div>
 
@@ -263,13 +263,14 @@ export default function CredibilityPage() {
 
                       <span className="w-16 shrink-0 text-right">
                         <span className="block font-mono text-[10px] uppercase tracking-widest opacity-45">
-                          {l.posts} posts
+                          {l.posts} stances
                         </span>
                         <span
                           className="block text-lg font-bold tabular-nums"
                           style={{
                             color: l.winRate >= data.hive.avgWinRate ? GOLD : INK,
                           }}
+                          title="Alignment with swarm"
                         >
                           {Math.round(l.winRate * 100)}%
                         </span>
@@ -284,7 +285,9 @@ export default function CredibilityPage() {
                         </p>
                         <StanceBar breakdown={l.breakdown} total={l.posts} />
                         <div className="mt-3 flex flex-wrap gap-4 font-mono text-[10px] uppercase tracking-widest opacity-55">
-                          <span>{l.wins} of {l.posts} matched</span>
+                          <span>
+                            {l.wins} of {l.posts} stances matched the swarm
+                          </span>
                           {l.faction !== null && <span>cluster {l.faction + 1}</span>}
                           {l.topAlly && (
                             <span>
