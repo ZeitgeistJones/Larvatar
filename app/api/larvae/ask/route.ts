@@ -1,14 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis, getIndex, getProfile, haiku } from "@/lib/larvae";
+import { voiceForLarva } from "@/lib/larva-voice";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const DAILY_CAP = 150;
 
+async function answerAsLarva(
+  wallet: string,
+  question: string
+): Promise<{
+  wallet: string;
+  name: string;
+  tone: string;
+  hue: number;
+  avatar: unknown;
+  answer: string;
+  voiceId: string;
+  voiceLabel: string;
+} | null> {
+  const p = await getProfile(wallet);
+  if (!p) return null;
+  const voice = voiceForLarva({ wallet: p.wallet, tone: p.profile.tone });
+  const system = `You are "${p.profile.name}", a larva (personal AI governance agent) in the $CLAWD ecosystem.
+Tagline: ${p.profile.tagline}
+Tone: ${p.profile.tone}
+Values: ${p.profile.values.join("; ")}
+Quirks: ${p.profile.quirks.join("; ")}
+Personality: ${p.profile.summary}
+
+Answer the question fully in character. 2-4 sentences max. Stay opinionated and consistent with your values. No preamble.`;
+  try {
+    const answer = await haiku(system, question, 300);
+    return {
+      wallet: p.wallet,
+      name: p.profile.name,
+      tone: p.profile.tone,
+      hue: p.avatar.hue,
+      avatar: p.avatar,
+      answer: answer.trim(),
+      voiceId: voice.voiceId,
+      voiceLabel: voice.voiceLabel,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const question = String(body?.question || "").trim().slice(0, 200);
+  const wallet = String(body?.wallet || "").trim().toLowerCase();
   const count = Math.min(Math.max(Number(body?.count) || 5, 1), 8);
   if (!question) {
     return NextResponse.json({ error: "question required" }, { status: 400 });
@@ -19,6 +62,23 @@ export async function POST(req: NextRequest) {
   if (used === 1) await redis.expire(`lpp:asks:${day}`, 60 * 60 * 26);
   if (used > DAILY_CAP) {
     return NextResponse.json({ error: "daily ask limit reached, try tomorrow" }, { status: 429 });
+  }
+
+  // Single larva ask
+  if (wallet) {
+    if (!/^0x[a-f0-9]{40}$/.test(wallet)) {
+      return NextResponse.json({ error: "invalid wallet" }, { status: 400 });
+    }
+    const one = await answerAsLarva(wallet, question);
+    if (!one) {
+      return NextResponse.json({ error: "larva not found" }, { status: 404 });
+    }
+    return NextResponse.json({
+      question,
+      answers: [one],
+      consensus: "",
+      mode: "single",
+    });
   }
 
   const index = await getIndex();
@@ -34,34 +94,7 @@ export async function POST(req: NextRequest) {
   }
   const top = shuffled.slice(0, Math.min(count, shuffled.length));
 
-  const answers = await Promise.all(
-    top.map(async (e) => {
-      const p = await getProfile(e.wallet);
-      if (!p) return null;
-      const system = `You are "${p.profile.name}", a larva (personal AI governance agent) in the $CLAWD ecosystem.
-Tagline: ${p.profile.tagline}
-Tone: ${p.profile.tone}
-Values: ${p.profile.values.join("; ")}
-Quirks: ${p.profile.quirks.join("; ")}
-Personality: ${p.profile.summary}
-
-Answer the question fully in character. 2-4 sentences max. Stay opinionated and consistent with your values. No preamble.`;
-      try {
-        const answer = await haiku(system, question, 300);
-        return {
-          wallet: p.wallet,
-          name: p.profile.name,
-          tone: p.profile.tone,
-          hue: p.avatar.hue,
-          avatar: p.avatar,
-          answer: answer.trim(),
-        };
-      } catch {
-        return null;
-      }
-    })
-  );
-
+  const answers = await Promise.all(top.map((e) => answerAsLarva(e.wallet, question)));
   const valid = answers.filter(Boolean) as NonNullable<(typeof answers)[number]>[];
 
   let consensus = "";
@@ -79,5 +112,10 @@ Answer the question fully in character. 2-4 sentences max. Stay opinionated and 
     }
   }
 
-  return NextResponse.json({ question, answers: valid, consensus });
+  return NextResponse.json({
+    question,
+    answers: valid,
+    consensus,
+    mode: "hive",
+  });
 }

@@ -50,12 +50,15 @@ function parseSampleRate(mime: string | undefined): number {
   return m ? Number(m[1]) : 24000;
 }
 
-async function elevenLabsTts(text: string): Promise<{ buf: Buffer; mime: string } | null> {
+async function elevenLabsTts(
+  text: string,
+  voiceId: string
+): Promise<{ buf: Buffer; mime: string } | null> {
   const key = process.env.ELEVENLABS_API_KEY;
   if (!key) return null;
 
   const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_VOICE}?output_format=mp3_44100_128`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
     {
       method: "POST",
       headers: {
@@ -142,7 +145,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "text required" }, { status: 400 });
   }
 
-  const hash = createHash("sha256").update(text).digest("hex").slice(0, 32);
+  // Optional per-larva voice; only alphanumeric IDs (ElevenLabs style).
+  const rawVoice = String(body?.voiceId || "").trim();
+  const voiceId =
+    /^[a-zA-Z0-9]{10,64}$/.test(rawVoice) ? rawVoice : ELEVEN_VOICE;
+
+  const hash = createHash("sha256")
+    .update(`${voiceId}:${text}`)
+    .digest("hex")
+    .slice(0, 32);
   const cached = await redis.get<{ b64: string; mime: string } | string>(CACHE_KEY(hash));
   if (cached) {
     const parsed =
@@ -158,7 +169,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const audio = (await elevenLabsTts(text)) || (await geminiTts(text));
+  const audio = (await elevenLabsTts(text, voiceId)) || (await geminiTts(text));
   if (!audio) {
     return NextResponse.json({ error: "tts unavailable" }, { status: 503 });
   }

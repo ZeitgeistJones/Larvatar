@@ -319,7 +319,7 @@ function announceBrowser(line: string) {
 }
 
 /** Short game-show line. Neural TTS when available; browser fallback otherwise. */
-export function announce(line: string) {
+export function announce(line: string, voiceId?: string) {
   if (muted || typeof window === "undefined") return;
   const spoken = line.trim();
   if (!spoken) return;
@@ -333,7 +333,10 @@ export function announce(line: string) {
       const res = await fetch("/api/larvae-survey/announce", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: spoken }),
+        body: JSON.stringify({
+          text: spoken,
+          ...(voiceId ? { voiceId } : {}),
+        }),
       });
       if (token !== announceToken) return;
       if (!res.ok) throw new Error(`tts ${res.status}`);
@@ -357,6 +360,11 @@ export function announce(line: string) {
       if (token === announceToken) announceBrowser(spoken);
     }
   })();
+}
+
+/** Play a larva answer in its assigned ElevenLabs voice (manual play — saves credits). */
+export function speakLarva(line: string, voiceId?: string) {
+  announce(line, voiceId);
 }
 
 /* ─── Soft bed music loop ─────────────────────────────────────────── */

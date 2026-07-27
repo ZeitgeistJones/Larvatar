@@ -5,6 +5,7 @@ import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 import type { LarvatarTraits } from "@/lib/avatar";
+import { speakLarva, unlockSurveyAudio } from "@/lib/survey-sfx";
 
 type Larva = {
   wallet: string;
@@ -29,6 +30,8 @@ type Answer = {
   hue: number;
   avatar?: Partial<LarvatarTraits>;
   answer: string;
+  voiceId?: string;
+  voiceLabel?: string;
 };
 
 const CHUNK = 9;
@@ -45,9 +48,12 @@ export default function LarvaePage() {
 
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
+  const [askingWallet, setAskingWallet] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Answer[] | null>(null);
   const [consensus, setConsensus] = useState("");
   const [askError, setAskError] = useState("");
+  const [askMode, setAskMode] = useState<"hive" | "single">("hive");
+  const [playingWallet, setPlayingWallet] = useState<string | null>(null);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -60,7 +66,6 @@ export default function LarvaePage() {
       .then((d) => {
         const list = (d.larvae || []) as Larva[];
         setLarvae(list);
-        // First paint: a small batch so nav stays clickable.
         setShown(Math.min(CHUNK, list.length));
       })
       .catch((e) => {
@@ -80,7 +85,6 @@ export default function LarvaePage() {
     };
   }, []);
 
-  // Reveal remaining cards in small chunks between frames.
   useEffect(() => {
     if (shown >= larvae.length) return;
     const id = window.setTimeout(() => {
@@ -89,9 +93,10 @@ export default function LarvaePage() {
     return () => window.clearTimeout(id);
   }, [shown, larvae.length]);
 
-  async function ask() {
+  async function runAsk(opts: { wallet?: string }) {
     if (!question.trim() || asking) return;
     setAsking(true);
+    setAskingWallet(opts.wallet || null);
     setAskError("");
     setAnswers(null);
     setConsensus("");
@@ -99,7 +104,12 @@ export default function LarvaePage() {
       const res = await fetch("/api/larvae/ask", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: question.trim(), count: 5 }),
+        body: JSON.stringify({
+          question: question.trim(),
+          ...(opts.wallet
+            ? { wallet: opts.wallet }
+            : { count: 5 }),
+        }),
       });
       const d = await res.json();
       if (!res.ok) {
@@ -107,12 +117,30 @@ export default function LarvaePage() {
       } else {
         setAnswers(d.answers || []);
         setConsensus(d.consensus || "");
+        setAskMode(d.mode === "single" ? "single" : "hive");
+        // Scroll answers into view after single-larva ask from a card.
+        if (opts.wallet) {
+          window.setTimeout(() => {
+            document.getElementById("ask-results")?.scrollIntoView({
+              behavior: "smooth",
+              block: "nearest",
+            });
+          }, 50);
+        }
       }
     } catch {
       setAskError("network error — try again");
     } finally {
       setAsking(false);
+      setAskingWallet(null);
     }
+  }
+
+  function playAnswer(a: Answer) {
+    unlockSurveyAudio();
+    setPlayingWallet(a.wallet);
+    speakLarva(a.answer, a.voiceId);
+    window.setTimeout(() => setPlayingWallet(null), 8000);
   }
 
   const visible = larvae.slice(0, shown);
@@ -120,7 +148,10 @@ export default function LarvaePage() {
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
       <div className="mx-auto max-w-5xl">
-        <div className="sticky top-0 z-40 -mx-4 mb-2 px-4 pb-2 pt-1 max-md:mb-1 max-md:pb-1 max-md:pt-0" style={{ background: SHEET }}>
+        <div
+          className="sticky top-0 z-40 -mx-4 mb-2 px-4 pb-2 pt-1 max-md:mb-1 max-md:pb-1 max-md:pt-0"
+          style={{ background: SHEET }}
+        >
           <Nav />
         </div>
         <header className="mb-10 max-md:mb-6">
@@ -130,11 +161,12 @@ export default function LarvaePage() {
           <h1 className="mt-1 text-4xl font-bold tracking-tight max-md:text-3xl">Larva Specimens</h1>
           <p className="mt-2 max-w-xl text-sm opacity-75">
             Every larva that has spoken on the larv.ai forum and labs, profiled from its own
-            words. Tap a specimen to read its full profile, or put a question to the hive.
+            words. Ask the hive, or open a specimen and ask that larva alone.
           </p>
         </header>
 
         <section
+          id="ask-results"
           className="mb-12 rounded-xl border p-5"
           style={{ borderColor: `${INK}22`, background: CARD }}
         >
@@ -143,23 +175,25 @@ export default function LarvaePage() {
             <input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && ask()}
+              onKeyDown={(e) => e.key === "Enter" && void runAsk({})}
               maxLength={200}
               placeholder="e.g. should CLAWD burn more or build more?"
               className="w-full rounded-lg border px-4 py-3 text-sm outline-none focus:ring-2 max-md:min-h-11"
               style={{ borderColor: `${INK}25` }}
             />
             <button
-              onClick={ask}
+              type="button"
+              onClick={() => void runAsk({})}
               disabled={asking || !question.trim()}
               className="shrink-0 rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40 max-md:min-h-11 max-md:w-full"
               style={{ background: CORAL }}
             >
-              {asking ? "asking…" : "Ask"}
+              {asking && !askingWallet ? "asking…" : "Ask hive"}
             </button>
           </div>
           <p className="mt-2 text-xs opacity-50">
-            Answers come from 5 random larvae, in character.
+            Hive = 5 random larvae. Or expand a specimen and use Ask this larva. Tap Play to hear
+            an answer in that larva’s personality voice (manual — saves TTS credits).
           </p>
 
           {askError && (
@@ -170,6 +204,12 @@ export default function LarvaePage() {
 
           {answers && (
             <div className="mt-5 space-y-4">
+              {askMode === "single" && answers[0] && (
+                <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+                  solo · {answers[0].name}
+                  {answers[0].voiceLabel ? ` · voice ${answers[0].voiceLabel}` : ""}
+                </p>
+              )}
               {consensus && (
                 <div
                   className="rounded-lg px-4 py-3 text-sm font-medium"
@@ -196,9 +236,24 @@ export default function LarvaePage() {
                       size={44}
                     />
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold">{a.name}</p>
-                    <p className="text-sm opacity-80">{a.answer}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold">{a.name}</p>
+                      {a.voiceLabel && (
+                        <span className="font-mono text-[10px] uppercase tracking-widest opacity-40">
+                          {a.voiceLabel}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => playAnswer(a)}
+                        className="rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest disabled:opacity-40"
+                        style={{ borderColor: `${INK}30` }}
+                      >
+                        {playingWallet === a.wallet ? "playing…" : "Play"}
+                      </button>
+                    </div>
+                    <p className="mt-0.5 text-sm opacity-80">{a.answer}</p>
                   </div>
                 </div>
               ))}
@@ -222,11 +277,18 @@ export default function LarvaePage() {
               {visible.map((l) => {
                 const open = expanded === l.wallet;
                 return (
-                  <button
+                  <div
                     key={l.wallet}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpanded(open ? null : l.wallet)}
-                    className="rounded-xl border p-5 text-left transition-shadow hover:shadow-md max-md:p-4"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setExpanded(open ? null : l.wallet);
+                      }
+                    }}
+                    className="cursor-pointer rounded-xl border p-5 text-left transition-shadow hover:shadow-md max-md:p-4"
                     style={{
                       borderColor: `${INK}22`,
                       background: CARD,
@@ -272,7 +334,7 @@ export default function LarvaePage() {
                     </div>
 
                     {open && (
-                      <div className="mt-4 space-y-2 text-sm">
+                      <div className="mt-4 space-y-3 text-sm">
                         <p className="opacity-85">{l.profile.summary}</p>
                         {l.profile.quirks.length > 0 && (
                           <p className="text-xs opacity-60">
@@ -283,9 +345,25 @@ export default function LarvaePage() {
                         <p className="font-mono text-[10px] opacity-45">
                           forum {l.sources.forum} · labs {l.sources.labs}
                         </p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void runAsk({ wallet: l.wallet });
+                          }}
+                          disabled={asking || !question.trim()}
+                          className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                          style={{ background: CORAL }}
+                        >
+                          {asking && askingWallet === l.wallet
+                            ? "asking…"
+                            : question.trim()
+                              ? `Ask ${l.profile.name}`
+                              : "Type a question above first"}
+                        </button>
                       </div>
                     )}
-                  </button>
+                  </div>
                 );
               })}
             </div>
