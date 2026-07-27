@@ -19,6 +19,8 @@ type Larva = {
     values: string[];
     quirks: string[];
     summary: string;
+    hottestTake?: string;
+    hottestTakeSource?: "outlier" | "history";
   };
   avatar: LarvatarTraits;
 };
@@ -314,6 +316,27 @@ export default function LarvaePage() {
                         </p>
                       </div>
                     </div>
+
+                    {l.profile.hottestTake && (
+                      <div className="mt-3">
+                        <p className={`text-sm leading-snug ${open ? "" : "line-clamp-2"}`}>
+                          <span aria-hidden className="mr-1">
+                            🔥
+                          </span>
+                          <span className="font-medium opacity-90">{l.profile.hottestTake}</span>
+                        </p>
+                        {open && (
+                          <p className="mt-1 font-mono text-[10px] uppercase tracking-widest opacity-40">
+                            hottest take
+                            {l.profile.hottestTakeSource === "outlier"
+                              ? " · outlier test"
+                              : l.profile.hottestTakeSource === "history"
+                                ? " · from history"
+                                : ""}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       <span

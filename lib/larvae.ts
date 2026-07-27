@@ -14,6 +14,9 @@ export type LarvaProfile = {
     values: string[];
     quirks: string[];
     summary: string;
+    /** One spicy line — prefer Outlier Test / Test 2 answers, else personality. */
+    hottestTake?: string;
+    hottestTakeSource?: "outlier" | "history";
   };
   avatar: LarvatarTraits;
   updatedAt: string;

@@ -869,6 +869,7 @@ export async function GET(req: NextRequest) {
       const hue = walletHue(item.wallet);
       const avatar = parseAvatarFromLlm(parsed, hue, tone, item.wallet);
 
+      const prev = await getProfile(item.wallet);
       const profile: LarvaProfile = {
         wallet: item.wallet,
         responseCount: count,
@@ -880,6 +881,13 @@ export async function GET(req: NextRequest) {
           values: (Array.isArray(parsed.values) ? parsed.values : []).slice(0, 4).map(String),
           quirks,
           summary: String(parsed.summary || "").slice(0, 500),
+          // Keep prior hottest take across rebuilds (filled by /hottest/build).
+          ...(prev?.profile.hottestTake
+            ? {
+                hottestTake: prev.profile.hottestTake,
+                hottestTakeSource: prev.profile.hottestTakeSource,
+              }
+            : {}),
         },
         avatar,
         updatedAt: new Date().toISOString(),
