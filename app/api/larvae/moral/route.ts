@@ -37,16 +37,18 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
-  let wallet = String(body?.wallet || "")
+  const explicit = String(body?.wallet || "")
     .trim()
     .toLowerCase();
 
-  if (body?.random || !wallet) {
+  // Prefer an explicit wallet; only randomize when none was sent.
+  let wallet = explicit;
+  if (!wallet) {
     wallet = (await pickRandomWallet()) || "";
   }
 
   if (!/^0x[a-f0-9]{40}$/.test(wallet)) {
-    return NextResponse.json({ error: "wallet required (or random: true)" }, { status: 400 });
+    return NextResponse.json({ error: "wallet required (or omit for random)" }, { status: 400 });
   }
 
   const profile = await getProfile(wallet);

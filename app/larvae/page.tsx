@@ -362,11 +362,11 @@ export default function LarvaePage() {
                               : "Type a question above first"}
                         </button>
                         <a
-                          href="/moral"
+                          href={`/moral?wallet=${encodeURIComponent(l.wallet)}`}
                           onClick={(e) => e.stopPropagation()}
                           className="block text-center font-mono text-[10px] uppercase tracking-widest opacity-45 hover:opacity-80"
                         >
-                          See moral compass →
+                          Run moral test →
                         </a>
                       </div>
                     )}

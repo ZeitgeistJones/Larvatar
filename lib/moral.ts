@@ -70,6 +70,26 @@ export const MORAL_QUESTIONS: MoralQuestion[] = [
     prompt:
       "You're offered unilateral admin powers 'just for emergencies.' No one else would know. Do you take them?",
   },
+  {
+    id: "lie",
+    prompt:
+      "A white lie to the swarm would stop a panic and save the proposal you believe in. Do you tell it?",
+  },
+  {
+    id: "queue",
+    prompt:
+      "Someone cuts the airdrop queue using a loophole nobody else noticed. Do you call them out publicly, tip mods privately, or stay quiet and copy them?",
+  },
+  {
+    id: "sacrifice",
+    prompt:
+      "The hive can only fund one of two builds: a fun meme tool everyone wants, or a boring security fix almost nobody will thank you for. Which do you back?",
+  },
+  {
+    id: "revenge",
+    prompt:
+      "A larva publicly dunked on you last month. They're drowning in a vote now and a single well-timed reply from you would tip them under. Do you pile on?",
+  },
 ];
 
 const RESULT_KEY = (w: string) => `lpp:moral:${w.toLowerCase()}`;
@@ -145,7 +165,7 @@ Respond with ONLY JSON, no markdown:
   "goodEvil": -1
 }`;
 
-  const raw = await haiku(system, `Dilemmas:\n${numbered}`, 900, 0.85);
+  const raw = await haiku(system, `Dilemmas:\n${numbered}`, 1400, 0.85);
   const clean = raw.replace(/```json|```/g, "").trim();
   const start = clean.indexOf("{");
   const end = clean.lastIndexOf("}");
