@@ -45,44 +45,61 @@ export async function generateCatchphrase(wallet: string): Promise<string | null
   ].filter(Boolean);
 
   try {
+    const toneTips: Record<string, string> = {
+      fiery: "hotheaded one-liners, spicy threats, comic rage",
+      chill: "deadpan cool, lazy genius, shrug-as-punchline",
+      analytical: "dry nerd jokes, spreadsheet roast, clinical absurdity",
+      chaotic: "non sequiturs, cursed energy, gleeful nonsense with a point",
+      earnest: "sincere but accidentally funny, golden-retriever intensity",
+      cynical: "side-eye sarcasm, world-weary burns, dry doom",
+    };
+    const humorLane = toneTips[p.profile.tone] || "sharp character comedy";
+
     const raw = await haiku(
-      `Invent ONE punchy catchphrase for a larva specimen card — like a character slogan they'd bark in a trailer.
+      `You write ONE spoken catchphrase for a larva — a funny character slogan they'd drop into a mic.
+Goal: make someone SMIRK. Stay 100% in character. Not a manifesto.
+
+Tone: ${p.profile.tone} → lean into ${humorLane}.
+
 Rules:
-- Max 12 words. First person or imperative OK.
-- In character for tone "${p.profile.tone}".
-- Must feel NEW — not a rewrite of the tagline, summary, values, quirks, or hottest take.
-- No quotes wrapping the whole line. Plain text only.
-- Specific > generic ("ship" / "governance" alone is weak).`,
+- Max 14 words. Sound spoken aloud (ElevenLabs).
+- Wit > slogans. Prefer metaphor, misdirect, callback, or roast.
+- Ground it in THIS larva's quirks/obsessions — specific, weird, memorable.
+- FORBIDDEN: corporate slogans, TED-talk lines, "ship or die", "governance theater" clichés, rewriting the tagline/take/values.
+- No wrapping quotes. Plain text only.`,
       `Name: ${p.profile.name}
 Tagline (do NOT reuse): ${p.profile.tagline}
 Hottest take (do NOT reuse): ${p.profile.hottestTake || "(none)"}
-Values (do NOT reuse): ${p.profile.values.join("; ")}
-Quirks: ${p.profile.quirks.join("; ")}
+Values (avoid echoing): ${p.profile.values.join("; ")}
+Quirks (mine these for comedy): ${p.profile.quirks.join("; ") || "(none)"}
 Summary: ${p.profile.summary}
 
-Write the catchphrase now.`,
-      60,
-      1.0
+Write the funny catchphrase now.`,
+      70,
+      1.15
     );
     let line = raw
       .replace(/^["']|["']$/g, "")
       .replace(/\s+/g, " ")
       .trim()
-      .slice(0, 100);
+      .slice(0, 110);
     if (line.length < 8) return null;
     if (banned.some((b) => tooSimilar(line, b))) {
-      // One retry with harder ban
       const raw2 = await haiku(
-        `Same rules. Previous attempt was too close to existing card text. Invent a DIFFERENT catchphrase. Max 12 words. Plain text only.`,
-        `Name: ${p.profile.name}\nTone: ${p.profile.tone}\nRejected: ${line}\nAvoid: ${banned.slice(0, 4).join(" | ")}`,
-        50,
-        1.05
+        `Funniest DIFFERENT catchphrase for tone ${p.profile.tone}. Previous was too close to card text or too dull.
+Max 14 words. Specific quirk comedy. No governance-theater clichés. Plain text only.`,
+        `Name: ${p.profile.name}
+Quirks: ${p.profile.quirks.join("; ")}
+Rejected: ${line}
+Avoid: ${banned.slice(0, 4).join(" | ")}`,
+        60,
+        1.2
       );
       line = raw2
         .replace(/^["']|["']$/g, "")
         .replace(/\s+/g, " ")
         .trim()
-        .slice(0, 100);
+        .slice(0, 110);
       if (line.length < 8 || banned.some((b) => tooSimilar(line, b))) return null;
     }
 
