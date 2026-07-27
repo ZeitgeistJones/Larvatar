@@ -159,7 +159,8 @@ export async function POST(req: NextRequest) {
     const parsed =
       typeof cached === "string" ? (JSON.parse(cached) as { b64: string; mime: string }) : cached;
     if (parsed?.b64 && parsed?.mime) {
-      return new NextResponse(Buffer.from(parsed.b64, "base64"), {
+      const bytes = new Uint8Array(Buffer.from(parsed.b64, "base64"));
+      return new NextResponse(bytes, {
         headers: {
           "Content-Type": parsed.mime,
           "Cache-Control": "public, max-age=86400",
@@ -180,7 +181,7 @@ export async function POST(req: NextRequest) {
     { ex: CACHE_TTL }
   );
 
-  return new NextResponse(audio.buf, {
+  return new NextResponse(new Uint8Array(audio.buf), {
     headers: {
       "Content-Type": audio.mime,
       "Cache-Control": "public, max-age=86400",
