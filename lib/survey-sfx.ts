@@ -1,5 +1,5 @@
 // lib/survey-sfx.ts
-// Soft game-show cues for the survey game (knockoff vibe, not a real franchise).
+// Soft game-show cues for the survey game + Hive Card Sharks (knockoff vibe).
 // Web Audio stings + optional speechSynthesis announcer + quiet bed music.
 
 "use client";

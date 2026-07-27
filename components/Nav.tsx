@@ -22,6 +22,7 @@ const LINKS = [
   { href: "/governance", label: "Governance" },
   { href: "/trends", label: "Topic Trends" },
   { href: "/larvae-survey", label: "Survey Game" },
+  { href: "/card-sharks", label: "Card Sharks" },
   { href: "/about", label: "About" },
 ];
 
