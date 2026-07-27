@@ -1,4 +1,4 @@
-// POST { wallet? } — start a Hive Card Sharks match vs a larva
+// POST { wallet? } — start an Over/Under match vs a larva
 
 import { NextRequest, NextResponse } from "next/server";
 import { publicMatch, startMatch } from "@/lib/card-sharks";
@@ -14,7 +14,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ match: publicMatch(match) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "failed to start";
-    const status = msg.includes("survey boards") ? 503 : 400;
-    return NextResponse.json({ error: msg }, { status });
+    return NextResponse.json({ error: msg }, { status: 400 });
   }
 }

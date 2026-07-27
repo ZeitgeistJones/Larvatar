@@ -213,8 +213,8 @@ export default function OverUnderPage() {
             Over/Under
           </h1>
           <p className="mx-auto mt-2 max-w-lg text-sm opacity-70">
-            Out of 100 larvae — guess, then over/under. Winner climbs crypto caps: higher or lower
-            market cap (CoinGecko top 100, names only). Final is the long run. Opponent is a larva.
+            Spicy hive polls — out of 100, how many say yes? Guess, then over/under. Winner climbs
+            crypto caps (higher/lower market cap). Final is the long run. Opponent is a larva.
           </p>
         </header>
 
@@ -365,10 +365,10 @@ export default function OverUnderPage() {
                   style={{ borderColor: `${INK}22`, background: CARD }}
                 >
                   <p className="font-mono text-xs uppercase tracking-widest opacity-50">
-                    survey · out of 100
+                    hive poll · out of 100
                   </p>
                   <p className="mt-2 text-lg font-semibold leading-snug">
-                    Out of 100 larvae, how many landed on{" "}
+                    Out of 100 larvae, how many say yes to{" "}
                     <span style={{ color: CORAL }}>{match.survey.label}</span>?
                   </p>
                   <p className="mt-1 text-sm opacity-60">{match.survey.question}</p>

@@ -1,8 +1,8 @@
-// Hive Card Sharks — survey out-of-100 + crypto market-cap ladder vs a larva.
+// Over/Under — out-of-100 hive polls + crypto market-cap ladder vs a larva.
 
 import { randomBytes } from "crypto";
 import { redis, haiku, getIndex, getProfile, parseJsonLoose } from "@/lib/larvae";
-import { getAllBoards, type SurveyBoard } from "@/lib/larvae-survey";
+import { inventOverUnderClaim } from "@/lib/over-under-polls";
 import {
   coinFaceUp,
   coinPublic,
@@ -36,7 +36,7 @@ export type MatchState = {
   rowsCleared: { human: number; larva: number };
   control: Seat | null;
   usedCoinIds: string[];
-  usedBoardIds: string[];
+  usedPromptIds: string[];
   guesser: Seat;
   survey: {
     question: string;
@@ -130,35 +130,6 @@ export function publicMatch(m: MatchState) {
   };
 }
 
-type SurveyClaim = {
-  boardId: string;
-  question: string;
-  label: string;
-  trueN: number;
-};
-
-async function pickSurveyClaim(usedBoardIds: string[]): Promise<SurveyClaim | null> {
-  const boards = await getAllBoards();
-  const eligible = boards.filter((b) => b.answers?.length > 0 && b.respondents > 0);
-  const fresh = eligible.filter((b) => !usedBoardIds.includes(b.id));
-  const pool = fresh.length > 0 ? fresh : eligible;
-  if (pool.length === 0) return null;
-  return claimFromBoard(pool[Math.floor(Math.random() * pool.length)]);
-}
-
-function claimFromBoard(board: SurveyBoard): SurveyClaim {
-  const answers = [...board.answers].sort((a, b) => a.rank - b.rank);
-  const mid = answers.slice(0, Math.min(4, answers.length));
-  const pick = mid[Math.floor(Math.random() * mid.length)] || answers[0];
-  const pct = Math.round((pick.count / Math.max(1, board.respondents)) * 100);
-  return {
-    boardId: board.id,
-    question: board.question,
-    label: pick.label,
-    trueN: Math.max(1, Math.min(99, pct)),
-  };
-}
-
 async function larvaGuess(
   wallet: string,
   question: string,
@@ -168,9 +139,9 @@ async function larvaGuess(
   try {
     const raw = await haiku(
       `You are "${p?.profile.name || "a larva"}"${p ? `, tone ${p.profile.tone}` : ""}.
-Guess how many larvae OUT OF 100 land on a survey answer.
+Guess how many larvae OUT OF 100 would say YES to the dilemma (claim: ${label}).
 ONLY JSON: {"guess":0-100,"jab":"max 12 words"}`,
-      `Question: ${question}\nBoard answer: ${label}`,
+      `Dilemma: ${question}`,
       120,
       0.9
     );
@@ -194,9 +165,9 @@ async function larvaCall(
   try {
     const raw = await haiku(
       `You are "${p?.profile.name || "a larva"}"${p ? `, tone ${p.profile.tone}` : ""}.
-Opponent guessed ${guess}/100. Say OVER or UNDER (not equal).
+Opponent guessed ${guess}/100 would say YES to "${label}". Say OVER or UNDER (not equal).
 ONLY JSON: {"call":"over"|"under","jab":"max 12 words"}`,
-      `Question: ${question}\nAnswer: ${label}\nGuess: ${guess}`,
+      `Dilemma: ${question}\nGuess: ${guess}`,
       100,
       0.9
     );
@@ -271,9 +242,10 @@ async function startCryptoRun(m: MatchState, isFinal: boolean): Promise<void> {
 }
 
 async function beginSurvey(m: MatchState): Promise<void> {
-  const claim = await pickSurveyClaim(m.usedBoardIds);
-  if (!claim) throw new Error("no survey boards — run /api/larvae-survey/build first");
-  m.usedBoardIds.push(claim.boardId);
+  if (!m.usedPromptIds) m.usedPromptIds = [];
+  const claim = await inventOverUnderClaim(m.usedPromptIds);
+  if (!claim) throw new Error("could not build an Over/Under poll — need specimen profiles");
+  m.usedPromptIds.push(claim.id);
   m.guesser = m.surveyIndex % 2 === 0 ? "human" : "larva";
   m.survey = {
     question: claim.question,
@@ -343,7 +315,7 @@ export async function startMatch(opponentWallet?: string): Promise<MatchState> {
     rowsCleared: { human: 0, larva: 0 },
     control: null,
     usedCoinIds: [],
-    usedBoardIds: [],
+    usedPromptIds: [],
     guesser: "human",
     survey: null,
     crypto: null,
