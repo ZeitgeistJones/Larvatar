@@ -17,6 +17,7 @@ const LINKS = [
   { href: "/map", label: "Map" },
   { href: "/credibility", label: "Track Record" },
   { href: "/moral", label: "Moral Test" },
+  { href: "/standup", label: "Stand-Up" },
   { href: "/reception", label: "Reception" },
   { href: "/governance", label: "Governance" },
   { href: "/trends", label: "Topic Trends" },
