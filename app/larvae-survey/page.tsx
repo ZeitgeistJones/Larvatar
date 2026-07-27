@@ -12,7 +12,6 @@ import {
   getSurveyMuted,
   playSurveyCue,
   setSurveyMuted,
-  startBedMusic,
   stopBedMusic,
   unlockSurveyAudio,
 } from "@/lib/survey-sfx";
@@ -400,7 +399,6 @@ export default function LarvaeSurveyPage() {
       await loadBoard(mains[0]);
       setSecondsLeft(ANSWER_TIMER);
       playSurveyCue("start");
-      startBedMusic();
       announce("Let's play Larvae Survey!");
       setPhase("round");
     } catch (e) {
@@ -653,7 +651,6 @@ export default function LarvaeSurveyPage() {
     setSurveyMuted(next);
     if (!next) {
       playSurveyCue("hit");
-      if (phase !== "title") startBedMusic();
     } else {
       stopBedMusic();
     }

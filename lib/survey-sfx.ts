@@ -415,26 +415,9 @@ function playBedBar(ac: AudioContext, dest: AudioNode) {
   }
 }
 
+/** Bed music disabled — SFX cues only. Kept as no-ops so call sites stay safe. */
 export function startBedMusic() {
-  if (muted) return;
-  const ac = getCtx();
-  if (!ac || bedRunning) return;
-  bedRunning = true;
-
-  bedGain = ac.createGain();
-  bedGain.gain.value = 0.055;
-  const filter = ac.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.value = 1800;
-  bedGain.connect(filter);
-  filter.connect(ac.destination);
-  bedNodes = [bedGain, filter];
-
-  playBedBar(ac, bedGain);
-  bedTimer = setInterval(() => {
-    if (!bedRunning || muted || !bedGain) return;
-    playBedBar(ac, bedGain);
-  }, 2900);
+  // intentionally empty
 }
 
 export function stopBedMusic() {
