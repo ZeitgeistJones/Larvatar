@@ -245,16 +245,18 @@ export default function StandupPage() {
             {phase === "encore" && (
               <div className="mt-8 border-t pt-6" style={{ borderColor: `${INK}15` }}>
                 <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
-                  larva jury
+                  larva jury · comedy only
                 </p>
                 {jurying && (
-                  <p className="mt-2 text-sm opacity-70">Five larvae in the back are scoring…</p>
+                  <p className="mt-2 text-sm opacity-70">
+                    Five larvae scoring punchlines — not whether they agree with the bit…
+                  </p>
                 )}
                 {set.avg != null && (
                   <p className="mt-2 text-lg font-bold" style={{ color: GOLD }}>
                     Room avg {set.avg}/10
                     <span className="ml-2 text-sm font-normal opacity-50">
-                      ({set.scoreCount} larvae)
+                      ({set.scoreCount} larvae · funny meter)
                     </span>
                   </p>
                 )}
@@ -269,11 +271,11 @@ export default function StandupPage() {
                         <p className="text-sm font-semibold">
                           {r.name}{" "}
                           <span className="font-mono text-[10px] font-normal uppercase tracking-widest opacity-45">
-                            {r.tone}
+                            {r.tone} voice
                           </span>
                         </p>
                         <p className="font-mono text-sm font-bold" style={{ color: CORAL }}>
-                          {r.score}/10
+                          {r.score}/10 funny
                         </p>
                       </div>
                       <p className="mt-1 text-sm opacity-80">“{r.reaction}”</p>

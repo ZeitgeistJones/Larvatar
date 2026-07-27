@@ -228,23 +228,32 @@ export async function juryRateStandup(id: string): Promise<StandupSet | null> {
     .join("\n");
 
   const raw = await haiku(
-    `You simulate a comedy-club audience of CLAWD larvae.
-Each jury member scores the comic's bit 1–10 for FUNNINESS ONLY (not politics, not vibes-alone).
-React in that larva's voice — short, sharp, one line. Stay in character.
+    `You simulate a comedy-club audience of CLAWD larvae at Stand-Up Night.
+
+CRITICAL — score FUNNINESS ONLY (1–10):
+- Did the bit make you laugh? Timing, punchlines, callbacks, exaggeration, surprise.
+- Tone/personality only colors HOW they roast the comedy — never WHAT they grade.
+- NEVER grade agreement with the comic's politics, treasury takes, governance opinions, or "correctness."
+- NEVER say they should ship blueprints, audit, fix architecture, stop whining about policy, etc.
+- Bad reaction: "Treasury discipline isn't comedy, start auditing."
+- Good reaction: "Sump-pump bit landed; the lemonade tag died on arrival."
+- Good reaction: "Dry delivery saved a thin premise — still chuckled twice."
+
+Each juror: one sharp comedy-critic line in their voice (max ~20 words).
 Return ONLY JSON array (no markdown):
 [{"wallet":"0x...","name":"...","score":7,"reaction":"..."}]
-Use the exact wallets and names from the roster. One entry per juror.`,
+Use exact wallets and names from the roster. One entry per juror.`,
     `Comic on stage: ${set.name} (${set.tone})
 
-Bit:
+Bit (judge the jokes, not the politics):
 """
 ${set.bit}
 """
 
-Jury roster:
+Jury roster (voice only — do not score their politics):
 ${roster}`,
-    700,
-    0.8
+    750,
+    0.85
   );
 
   const clean = raw.replace(/```json|```/g, "").trim();
