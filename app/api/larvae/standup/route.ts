@@ -1,14 +1,14 @@
 // GET  → list recent sets / ?id=
 // POST → { random?: true, wallet?: string } — generate a new 90s bit
-// PUT  → { id, score, voterId } — audience rating 1–10
+// PUT  → { id } — other larvae jury the bit (in character)
 
 import { NextRequest, NextResponse } from "next/server";
 import {
   avgScore,
   getStandupSet,
+  juryRateStandup,
   listStandupSets,
   performStandup,
-  rateStandup,
 } from "@/lib/standup";
 
 export const maxDuration = 60;
@@ -46,14 +46,12 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const id = String(body?.id || "").trim();
-  const score = Number(body?.score);
-  const voterId = String(body?.voterId || "").trim().slice(0, 64);
-  if (!id || !voterId) {
-    return NextResponse.json({ error: "id and voterId required" }, { status: 400 });
+  if (!id) {
+    return NextResponse.json({ error: "id required" }, { status: 400 });
   }
-  const set = await rateStandup(id, score, voterId);
+  const set = await juryRateStandup(id);
   if (!set) {
-    return NextResponse.json({ error: "rate failed" }, { status: 400 });
+    return NextResponse.json({ error: "jury failed" }, { status: 400 });
   }
   return NextResponse.json({ set, avg: avgScore(set) });
 }

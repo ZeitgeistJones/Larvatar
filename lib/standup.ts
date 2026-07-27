@@ -1,11 +1,19 @@
 // lib/standup.ts
 // Stand-Up Night — one larva, ~90s Seinfeld-style bit, grounded in their
-// profile + real governance/forum hooks, scored by the audience.
+// profile + real governance/forum hooks, scored by OTHER larvae in character.
 
 import { redis, haiku, getProfile, getIndex, type LarvaProfile } from "@/lib/larvae";
 import { getGovResult } from "@/lib/gov";
 import { getAlignResult } from "@/lib/alignment";
 import { voiceForLarva } from "@/lib/larva-voice";
+
+export type CrowdReview = {
+  wallet: string;
+  name: string;
+  tone: string;
+  score: number; // 1–10
+  reaction: string;
+};
 
 export type StandupSet = {
   id: string;
@@ -18,6 +26,8 @@ export type StandupSet = {
   bit: string;
   /** Short hooks used as material (for transparency). */
   material: string[];
+  /** Other larvae rating the bit (the real audience). */
+  reviews: CrowdReview[];
   scoreSum: number;
   scoreCount: number;
   performedAt: string;
@@ -25,8 +35,7 @@ export type StandupSet = {
 
 const SET_KEY = (id: string) => `lpp:standup:set:${id}`;
 const INDEX_KEY = "lpp:standup:index";
-const RATE_KEY = (id: string, voter: string) =>
-  `lpp:standup:rate:${id}:${voter}`;
+const JURY_SIZE = 5;
 
 const TARGET_WORDS_MIN = 170;
 const TARGET_WORDS_MAX = 230;
@@ -171,6 +180,7 @@ export async function performStandup(wallet?: string): Promise<StandupSet | null
     voiceLabel: voice.voiceLabel,
     bit,
     material,
+    reviews: [],
     scoreSum: 0,
     scoreCount: 0,
     performedAt: new Date().toISOString(),
@@ -179,28 +189,113 @@ export async function performStandup(wallet?: string): Promise<StandupSet | null
   return set;
 }
 
-/** Audience score 1–10. One vote per voterId per set (cookie/local id). */
-export async function rateStandup(
-  id: string,
-  score: number,
-  voterId: string
-): Promise<StandupSet | null> {
-  const s = Math.round(score);
-  if (s < 1 || s > 10) return null;
-  const vid = String(voterId || "")
-    .trim()
-    .slice(0, 64);
-  if (!vid) return null;
+/** Pick N other larvae (not the comic) that have profiles. */
+async function pickJury(excludeWallet: string, n: number): Promise<LarvaProfile[]> {
+  const index = await getIndex();
+  const pool = index
+    .map((e) => e.wallet.toLowerCase())
+    .filter((w) => w !== excludeWallet.toLowerCase());
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const out: LarvaProfile[] = [];
+  for (const w of pool) {
+    if (out.length >= n) break;
+    const p = await getProfile(w);
+    if (p) out.push(p);
+  }
+  return out;
+}
 
+/**
+ * Other larvae rate the bit in character — not human votes.
+ * Idempotent if reviews already exist.
+ */
+export async function juryRateStandup(id: string): Promise<StandupSet | null> {
   const set = await getStandupSet(id);
   if (!set) return null;
+  if (set.reviews && set.reviews.length > 0) return set;
 
-  const already = await redis.get(RATE_KEY(id, vid));
-  if (already) return set; // idempotent — return current
+  const jury = await pickJury(set.wallet, JURY_SIZE);
+  if (jury.length === 0) return set;
 
-  await redis.set(RATE_KEY(id, vid), String(s), { ex: 60 * 60 * 24 * 90 });
-  set.scoreSum += s;
-  set.scoreCount += 1;
+  const roster = jury
+    .map(
+      (p, i) =>
+        `${i + 1}. wallet=${p.wallet} name="${p.profile.name}" tone=${p.profile.tone} tagline="${p.profile.tagline}" quirks=${p.profile.quirks.slice(0, 2).join("; ") || "none"}`
+    )
+    .join("\n");
+
+  const raw = await haiku(
+    `You simulate a comedy-club audience of CLAWD larvae.
+Each jury member scores the comic's bit 1–10 for FUNNINESS ONLY (not politics, not vibes-alone).
+React in that larva's voice — short, sharp, one line. Stay in character.
+Return ONLY JSON array (no markdown):
+[{"wallet":"0x...","name":"...","score":7,"reaction":"..."}]
+Use the exact wallets and names from the roster. One entry per juror.`,
+    `Comic on stage: ${set.name} (${set.tone})
+
+Bit:
+"""
+${set.bit}
+"""
+
+Jury roster:
+${roster}`,
+    700,
+    0.8
+  );
+
+  const clean = raw.replace(/```json|```/g, "").trim();
+  const start = clean.indexOf("[");
+  const end = clean.lastIndexOf("]");
+  if (start === -1 || end === -1) return set;
+
+  let parsed: { wallet?: string; name?: string; score?: number; reaction?: string }[];
+  try {
+    parsed = JSON.parse(clean.slice(start, end + 1));
+  } catch {
+    return set;
+  }
+  if (!Array.isArray(parsed)) return set;
+
+  const byWallet = new Map(jury.map((p) => [p.wallet.toLowerCase(), p]));
+  const reviews: CrowdReview[] = [];
+  for (const row of parsed) {
+    const w = String(row.wallet || "").toLowerCase();
+    const p = byWallet.get(w);
+    if (!p) continue;
+    const score = Math.max(1, Math.min(10, Math.round(Number(row.score) || 5)));
+    const reaction = String(row.reaction || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 160);
+    if (!reaction) continue;
+    reviews.push({
+      wallet: p.wallet,
+      name: p.profile.name,
+      tone: p.profile.tone,
+      score,
+      reaction,
+    });
+  }
+
+  // Fill any missing jurors with a mid score so the room always speaks.
+  for (const p of jury) {
+    if (reviews.some((r) => r.wallet.toLowerCase() === p.wallet.toLowerCase())) continue;
+    reviews.push({
+      wallet: p.wallet,
+      name: p.profile.name,
+      tone: p.profile.tone,
+      score: 5,
+      reaction: "…polite golf clap.",
+    });
+  }
+
+  set.reviews = reviews.slice(0, JURY_SIZE);
+  set.scoreSum = set.reviews.reduce((s, r) => s + r.score, 0);
+  set.scoreCount = set.reviews.length;
   await saveSet(set);
   return set;
 }

@@ -5,6 +5,14 @@ import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 import { speakLarva, unlockSurveyAudio } from "@/lib/survey-sfx";
 
+type CrowdReview = {
+  wallet: string;
+  name: string;
+  tone: string;
+  score: number;
+  reaction: string;
+};
+
 type StandupSet = {
   id: string;
   wallet: string;
@@ -14,6 +22,7 @@ type StandupSet = {
   voiceLabel: string;
   bit: string;
   material: string[];
+  reviews?: CrowdReview[];
   scoreSum: number;
   scoreCount: number;
   performedAt: string;
@@ -22,17 +31,6 @@ type StandupSet = {
 
 const BIT_SECONDS = 90;
 
-function voterId(): string {
-  if (typeof window === "undefined") return "anon";
-  const key = "larvae-standup-voter";
-  let id = localStorage.getItem(key);
-  if (!id) {
-    id = `v_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-    localStorage.setItem(key, id);
-  }
-  return id;
-}
-
 export default function StandupPage() {
   const { colors } = useTheme();
   const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD } = colors;
@@ -40,11 +38,10 @@ export default function StandupPage() {
   const [set, setSet] = useState<StandupSet | null>(null);
   const [history, setHistory] = useState<StandupSet[]>([]);
   const [loading, setLoading] = useState(false);
+  const [jurying, setJurying] = useState(false);
   const [error, setError] = useState("");
   const [phase, setPhase] = useState<"idle" | "live" | "encore">("idle");
   const [left, setLeft] = useState(BIT_SECONDS);
-  const [myScore, setMyScore] = useState<number | null>(null);
-  const [rated, setRated] = useState(false);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -59,7 +56,30 @@ export default function StandupPage() {
     void loadHistory();
   }, [loadHistory]);
 
-  // 90s performance clock
+  const runJury = useCallback(async (id: string) => {
+    setJurying(true);
+    setError("");
+    try {
+      const res = await fetch("/api/larvae/standup", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        setError(d.error || "crowd went silent");
+        return;
+      }
+      setSet({ ...d.set, avg: d.avg });
+      void loadHistory();
+    } catch {
+      setError("network error getting the room’s take");
+    } finally {
+      setJurying(false);
+    }
+  }, [loadHistory]);
+
+  // 90s performance clock → then larva jury
   useEffect(() => {
     if (phase !== "live") return;
     if (left <= 0) {
@@ -70,11 +90,16 @@ export default function StandupPage() {
     return () => clearTimeout(t);
   }, [phase, left]);
 
+  useEffect(() => {
+    if (phase !== "encore" || !set?.id) return;
+    if (set.reviews && set.reviews.length > 0) return;
+    if (jurying) return;
+    void runJury(set.id);
+  }, [phase, set, jurying, runJury]);
+
   async function bookAct() {
     setLoading(true);
     setError("");
-    setMyScore(null);
-    setRated(false);
     try {
       const res = await fetch("/api/larvae/standup", {
         method: "POST",
@@ -100,29 +125,7 @@ export default function StandupPage() {
   function playBit() {
     if (!set) return;
     unlockSurveyAudio();
-    // Speak first ~500 chars for free-tier hygiene; full bit is on screen.
-    const spoken = set.bit.slice(0, 500);
-    speakLarva(spoken, set.voiceId);
-  }
-
-  async function submitScore(score: number) {
-    if (!set || rated) return;
-    setMyScore(score);
-    try {
-      const res = await fetch("/api/larvae/standup", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: set.id, score, voterId: voterId() }),
-      });
-      const d = await res.json();
-      if (res.ok && d.set) {
-        setSet({ ...d.set, avg: d.avg });
-        setRated(true);
-        void loadHistory();
-      }
-    } catch {
-      /* ignore */
-    }
+    speakLarva(set.bit.slice(0, 500), set.voiceId);
   }
 
   const wordCount = useMemo(
@@ -148,8 +151,8 @@ export default function StandupPage() {
             Stand-Up Night
           </h1>
           <p className="mx-auto mt-2 max-w-lg text-sm opacity-75">
-            One random larva, ninety seconds, Seinfeld-adjacent observational comedy — in
-            character, riffing on real gov & forum bits. You are the audience.
+            One random larva, ninety seconds of Seinfeld-adjacent observational comedy — then{" "}
+            <strong>five other larvae</strong> score how funny it was, in character.
           </p>
         </header>
 
@@ -194,7 +197,7 @@ export default function StandupPage() {
                 </p>
               ) : (
                 <p className="font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
-                  set complete
+                  {jurying ? "crowd conferring…" : "set complete"}
                 </p>
               )}
             </div>
@@ -220,7 +223,7 @@ export default function StandupPage() {
                   className="rounded-lg border px-4 py-2 text-sm opacity-70"
                   style={{ borderColor: `${INK}30` }}
                 >
-                  Skip to rating
+                  Cut to crowd reaction
                 </button>
               )}
             </div>
@@ -241,37 +244,41 @@ export default function StandupPage() {
             {phase === "encore" && (
               <div className="mt-8 border-t pt-6" style={{ borderColor: `${INK}15` }}>
                 <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
-                  audience score
+                  larva jury
                 </p>
-                <p className="mt-1 text-sm opacity-80">How funny was that? (1 = meh · 10 = dying)</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      disabled={rated}
-                      onClick={() => void submitScore(n)}
-                      className="h-10 w-10 rounded-lg border text-sm font-semibold disabled:opacity-50"
-                      style={{
-                        borderColor: myScore === n ? CORAL : `${INK}25`,
-                        background: myScore === n ? `${CORAL}22` : "transparent",
-                      }}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-                {rated && (
-                  <p className="mt-3 text-sm">
-                    You gave {myScore}/10
-                    {set.avg != null && (
-                      <>
-                        {" "}
-                        · room avg <strong>{set.avg}</strong> ({set.scoreCount} votes)
-                      </>
-                    )}
+                {jurying && (
+                  <p className="mt-2 text-sm opacity-70">Five larvae in the back are scoring…</p>
+                )}
+                {set.avg != null && (
+                  <p className="mt-2 text-lg font-bold" style={{ color: GOLD }}>
+                    Room avg {set.avg}/10
+                    <span className="ml-2 text-sm font-normal opacity-50">
+                      ({set.scoreCount} larvae)
+                    </span>
                   </p>
                 )}
+                <div className="mt-4 space-y-3">
+                  {(set.reviews || []).map((r) => (
+                    <div
+                      key={r.wallet}
+                      className="rounded-lg border px-3 py-2"
+                      style={{ borderColor: `${INK}15` }}
+                    >
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <p className="text-sm font-semibold">
+                          {r.name}{" "}
+                          <span className="font-mono text-[10px] font-normal uppercase tracking-widest opacity-45">
+                            {r.tone}
+                          </span>
+                        </p>
+                        <p className="font-mono text-sm font-bold" style={{ color: CORAL }}>
+                          {r.score}/10
+                        </p>
+                      </div>
+                      <p className="mt-1 text-sm opacity-80">“{r.reaction}”</p>
+                    </div>
+                  ))}
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -302,8 +309,7 @@ export default function StandupPage() {
                     setSet(h);
                     setPhase("encore");
                     setLeft(0);
-                    setRated(false);
-                    setMyScore(null);
+                    if (!h.reviews?.length) void runJury(h.id);
                   }}
                   className="flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left text-sm"
                   style={{ borderColor: `${INK}18`, background: CARD }}
@@ -313,7 +319,7 @@ export default function StandupPage() {
                     <span className="opacity-50"> · {h.tone}</span>
                   </span>
                   <span className="font-mono text-xs opacity-60">
-                    {h.avg != null ? `${h.avg}/10` : "unrated"} · {h.scoreCount}v
+                    {h.avg != null ? `${h.avg}/10` : "pending jury"} · {h.scoreCount}v
                   </span>
                 </button>
               ))}
