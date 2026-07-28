@@ -32,9 +32,11 @@ function tooSimilar(a: string, b: string): boolean {
   return overlap / Math.max(wb.length, 1) >= 0.6;
 }
 
-export async function generateCatchphrase(wallet: string): Promise<string | null> {
+export async function generateCatchphrase(
+  wallet: string
+): Promise<{ line: string | null; error?: string }> {
   const p = await getProfile(wallet);
-  if (!p) return null;
+  if (!p) return { line: null, error: "profile missing" };
 
   const banned = [
     p.profile.tagline,
@@ -62,7 +64,7 @@ Goal: make someone SMIRK. Stay 100% in character. Not a manifesto.
 Tone: ${p.profile.tone} → lean into ${humorLane}.
 
 Rules:
-- Max 14 words. Sound spoken aloud (ElevenLabs).
+- Max 14 words. Sound spoken aloud.
 - Wit > slogans. Prefer metaphor, misdirect, callback, or roast.
 - Ground it in THIS larva's quirks/obsessions — specific, weird, memorable.
 - FORBIDDEN: corporate slogans, TED-talk lines, "ship or die", "governance theater" clichés, rewriting the tagline/take/values.
@@ -75,7 +77,7 @@ Quirks (mine these for comedy): ${p.profile.quirks.join("; ") || "(none)"}
 Summary: ${p.profile.summary}
 
 Write the funny catchphrase now.`,
-      70,
+      256,
       1.15
     );
     let line = raw
@@ -83,7 +85,7 @@ Write the funny catchphrase now.`,
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 110);
-    if (line.length < 8) return null;
+    if (line.length < 8) return { line: null, error: "too short" };
     if (banned.some((b) => tooSimilar(line, b))) {
       const raw2 = await haiku(
         `Funniest DIFFERENT catchphrase for tone ${p.profile.tone}. Previous was too close to card text or too dull.
@@ -92,7 +94,7 @@ Max 14 words. Specific quirk comedy. No governance-theater clichés. Plain text 
 Quirks: ${p.profile.quirks.join("; ")}
 Rejected: ${line}
 Avoid: ${banned.slice(0, 4).join(" | ")}`,
-        60,
+        256,
         1.2
       );
       line = raw2
@@ -100,15 +102,20 @@ Avoid: ${banned.slice(0, 4).join(" | ")}`,
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 110);
-      if (line.length < 8 || banned.some((b) => tooSimilar(line, b))) return null;
+      if (line.length < 8 || banned.some((b) => tooSimilar(line, b))) {
+        return { line: null, error: "too similar after retry" };
+      }
     }
 
     p.profile.catchphrase = line;
     p.updatedAt = new Date().toISOString();
     await saveProfile(p);
-    return line;
-  } catch {
-    return null;
+    return { line };
+  } catch (e) {
+    return {
+      line: null,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 

@@ -102,6 +102,9 @@ async function main() {
       data.message || null,
     ].filter(Boolean);
     console.log(bits.join(" · "));
+    if (Array.isArray(data.errorSamples) && data.errorSamples.length) {
+      console.log("  samples:", data.errorSamples.join(" | "));
+    }
 
     if (data.done) {
       console.log("Finished.");
