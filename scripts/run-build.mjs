@@ -86,16 +86,19 @@ async function main() {
     process.exit(1);
   }
 
-  const qs = new URLSearchParams({ secret });
-  if (has("--force") || has("--reset")) qs.set("force", "true");
-  if (has("--reset")) qs.set("reset", "true");
+  const wantForce = has("--force") || has("--reset");
+  const wantReset = has("--reset") || has("--force");
 
-  const url = `${base}${PATHS[kind]}?${qs}`;
   console.log(`Looping ${kind} → ${base}${PATHS[kind]}`);
   let n = 0;
 
   for (;;) {
     n += 1;
+    const qs = new URLSearchParams({ secret });
+    // Only wipe/reseed on the first hit — later chunks must keep the queue.
+    if (n === 1 && wantForce) qs.set("force", "true");
+    if (n === 1 && wantReset) qs.set("reset", "true");
+    const url = `${base}${PATHS[kind]}?${qs}`;
     process.stdout.write(`#${n}… `);
     let res;
     try {

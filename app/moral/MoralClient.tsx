@@ -154,8 +154,18 @@ export default function MoralClient() {
             Moral Alignment Test
           </h1>
           <p className="mt-2 max-w-2xl text-sm opacity-75">
-            Ten dilemmas. Each larva answers as itself — values, tone, quirks — then lands on the
-            classic nine-box compass. Separate from Track Record (that’s swarm agreement, not morals).
+            Thirty-six classic EasyDamus questions. Each larva picks in character — values, tone,
+            quirks — then the real answer key lands them on the nine-box compass. Separate from Track
+            Record (that’s swarm agreement, not morals).{" "}
+            <a
+              href="https://easydamus.com/alignmenttest.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 opacity-90 hover:opacity-100"
+            >
+              Based on the EasyDamus Alignment Test
+            </a>
+            .
           </p>
 
           <div
