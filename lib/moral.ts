@@ -772,6 +772,8 @@ export function scoreAlignment(choices: number[]): {
   };
 }
 
+export { moralMapCoords, moralMargin } from "@/lib/moral-map";
+
 /** @deprecated kept for any old callers — prefer scoreAlignment. */
 export function labelFromAxes(lawChaos: number, goodEvil: number): MoralLabel {
   const law = lawChaos <= -1 ? "Lawful" : lawChaos >= 1 ? "Chaotic" : "Neutral";
