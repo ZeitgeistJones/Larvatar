@@ -463,7 +463,7 @@ export default function MoralClient() {
     void runTest(autoWallet);
   }, [autoWallet, runTest]);
 
-  const filtered = useMemo(() => {
+  const specimenOptions = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return specimens.slice(0, 120);
     return specimens
@@ -489,7 +489,7 @@ export default function MoralClient() {
     return m;
   }, [results]);
 
-  const filtered = useMemo(() => {
+  const quadrantLarvae = useMemo(() => {
     if (!filterLabel) return results;
     return byLabel.get(filterLabel) || [];
   }, [results, filterLabel, byLabel]);
@@ -570,7 +570,7 @@ export default function MoralClient() {
               style={{ borderColor: `${INK}25`, background: SHEET }}
             >
               <option value="">Select a specimen…</option>
-              {filtered.map((s) => (
+              {specimenOptions.map((s) => (
                 <option key={s.wallet} value={s.wallet}>
                   {s.profile.name} · {s.profile.tone}
                 </option>
@@ -616,7 +616,7 @@ export default function MoralClient() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
               hive compass · {results.length} tested
-              {filterLabel ? ` · viewing ${filtered.length}` : ""}
+              {filterLabel ? ` · viewing ${quadrantLarvae.length}` : ""}
             </p>
             {filterLabel && (
               <button
@@ -669,29 +669,21 @@ export default function MoralClient() {
           </div>
         </section>
 
-        {!loading && results.length > 0 && (
-          <MoralScatter
-            results={filtered}
-            active={active}
-            onSelect={setActive}
-            filterLabel={filterLabel}
-          />
-        )}
-
-        {/* Roster — only when a quadrant is selected; sits above answers */}
-        {filterLabel && filtered.length > 0 && (
+        {/* Roster right under compass — only the selected quadrant */}
+        {filterLabel && quadrantLarvae.length > 0 && (
           <section
-            className="mb-8 rounded-xl border p-4"
-            style={{ borderColor: `${INK}18`, background: CARD }}
+            className="mb-6 rounded-xl border p-4"
+            style={{ borderColor: `${CORAL}55`, background: CARD }}
           >
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
-                {filterLabel} · {filtered.length} larva{filtered.length === 1 ? "" : "e"}
+              <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: CORAL }}>
+                {filterLabel} · {quadrantLarvae.length} larva
+                {quadrantLarvae.length === 1 ? "" : "e"}
               </p>
-              <p className="text-xs opacity-55">Tap a name to open answers</p>
+              <p className="text-xs opacity-55">Tap a name · map below is filtered to these</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {filtered.map((r) => (
+              {quadrantLarvae.map((r) => (
                 <button
                   key={r.wallet}
                   type="button"
@@ -708,6 +700,15 @@ export default function MoralClient() {
               ))}
             </div>
           </section>
+        )}
+
+        {!loading && results.length > 0 && (
+          <MoralScatter
+            results={quadrantLarvae}
+            active={active}
+            onSelect={setActive}
+            filterLabel={filterLabel}
+          />
         )}
 
         {loading && !active ? (

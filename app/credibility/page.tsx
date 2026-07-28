@@ -189,13 +189,6 @@ export default function CredibilityPage() {
           align === "right" ? "justify-end text-right" : "justify-start text-left"
         }`}
         style={{ color: active ? CORAL : INK, opacity: active ? 1 : 0.5 }}
-        title={
-          active
-            ? `${METRIC_DEFS.find((m) => m.key === col)?.def || SORT_LABELS[col]} · Sorted ${
-                sortDir === "asc" ? "lowest → highest" : "highest → lowest"
-              } — click to flip`
-            : METRIC_DEFS.find((m) => m.key === col)?.def || `Sort by ${SORT_LABELS[col]}`
-        }
       >
         <span>{SORT_LABELS[col]}</span>
         <span className="inline-block w-3 tabular-nums" aria-hidden>
@@ -289,11 +282,6 @@ export default function CredibilityPage() {
                   color: showAll ? CORAL : INK,
                   opacity: showAll ? 1 : 0.7,
                 }}
-                title={
-                  showAll
-                    ? "Showing everyone — click for 5+ stances only"
-                    : "Showing 5+ stances — click to include everyone"
-                }
               >
                 {showAll ? "all larvae" : `${MIN_POSTS}+ stances`}
               </button>
@@ -346,7 +334,6 @@ export default function CredibilityPage() {
                 onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
                 className="min-h-11 shrink-0 rounded-lg border px-3 py-2 font-mono text-xs"
                 style={{ borderColor: `${INK}25`, background: CARD }}
-                title={sortDir === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
               >
                 {sortDir === "asc" ? "↑ Low→High" : "↓ High→Low"}
               </button>
