@@ -389,6 +389,8 @@ export default function MoralClient() {
   ]);
   const [active, setActive] = useState<MoralResult | null>(null);
   const [filterLabel, setFilterLabel] = useState<MoralLabel | null>(null);
+  /** Peek another option’s wording without leaving this larva — `{ qId, choice }`. */
+  const [peek, setPeek] = useState<{ qId: string; choice: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
@@ -511,6 +513,25 @@ export default function MoralClient() {
     }
     return map;
   }, [results]);
+
+  /** First-seen wording for each question×choice (from whoever picked it). */
+  const choiceWording = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of results) {
+      for (const a of r.answers || []) {
+        const c = Math.round(Number(a.choice));
+        if (c < 1 || c > 4 || !a.answer) continue;
+        const key = `${a.id}:${c}`;
+        if (!m.has(key)) m.set(key, a.answer);
+      }
+    }
+    return m;
+  }, [results]);
+
+  // Drop peek when switching larvae
+  useEffect(() => {
+    setPeek(null);
+  }, [active?.wallet]);
 
   function selectQuadrant(label: MoralLabel) {
     const cell = byLabel.get(label) || [];
@@ -767,6 +788,13 @@ export default function MoralClient() {
                   chosen >= 1 && chosen <= 4 ? tallies[chosen - 1] : 0;
                 const pct =
                   total > 0 ? Math.round((chosenN / total) * 100) : 0;
+                const peeking =
+                  peek?.qId === a.id && peek.choice >= 1 && peek.choice <= 4
+                    ? peek.choice
+                    : null;
+                const peekText = peeking
+                  ? choiceWording.get(`${a.id}:${peeking}`)
+                  : null;
                 return (
                   <div key={a.id} className="border-t pt-3" style={{ borderColor: `${INK}12` }}>
                     <p className="text-xs font-medium opacity-55">{a.prompt}</p>
@@ -775,45 +803,102 @@ export default function MoralClient() {
                       <div className="mt-2 space-y-1.5">
                         <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
                           {chosenN} of {total} chose this · {pct}%
+                          <span className="normal-case tracking-normal opacity-70">
+                            {" "}
+                            · tap A–D to read that option
+                          </span>
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {tallies.map((n, i) => {
                             const letter = "ABCD"[i];
-                            const isChosen = i + 1 === chosen;
+                            const opt = i + 1;
+                            const isChosen = opt === chosen;
+                            const isPeek = peeking === opt;
                             const share = total > 0 ? Math.round((n / total) * 100) : 0;
+                            const wording =
+                              choiceWording.get(`${a.id}:${opt}`) ||
+                              `Option ${letter} (no larva picked this)`;
                             return (
-                              <span
+                              <button
                                 key={letter}
-                                className="inline-flex items-baseline gap-1.5 rounded-md border px-2 py-1"
+                                type="button"
+                                title={wording}
+                                onClick={() =>
+                                  setPeek((prev) =>
+                                    prev?.qId === a.id && prev.choice === opt
+                                      ? null
+                                      : { qId: a.id, choice: opt }
+                                  )
+                                }
+                                className="inline-flex items-baseline gap-1.5 rounded-md border px-2 py-1 text-left"
                                 style={{
-                                  borderColor: isChosen ? CORAL : `${INK}18`,
-                                  background: isChosen ? `${CORAL}12` : "transparent",
+                                  borderColor: isPeek
+                                    ? GOLD
+                                    : isChosen
+                                      ? CORAL
+                                      : `${INK}18`,
+                                  background: isPeek
+                                    ? `${GOLD}14`
+                                    : isChosen
+                                      ? `${CORAL}12`
+                                      : "transparent",
                                 }}
                               >
                                 <span
                                   className="font-mono text-[9px] font-bold uppercase tracking-widest"
                                   style={{
-                                    color: isChosen ? CORAL : `${INK}55`,
+                                    color: isPeek
+                                      ? GOLD
+                                      : isChosen
+                                        ? CORAL
+                                        : `${INK}55`,
                                   }}
                                 >
                                   {letter}
                                 </span>
                                 <span
                                   className="text-xs font-semibold tabular-nums"
-                                  style={{ color: isChosen ? CORAL : INK }}
+                                  style={{
+                                    color: isPeek
+                                      ? GOLD
+                                      : isChosen
+                                        ? CORAL
+                                        : INK,
+                                  }}
                                 >
                                   {n}
                                 </span>
                                 <span
                                   className="font-mono text-[10px] tabular-nums"
-                                  style={{ color: isChosen ? CORAL : `${INK}66` }}
+                                  style={{
+                                    color: isPeek
+                                      ? GOLD
+                                      : isChosen
+                                        ? CORAL
+                                        : `${INK}66`,
+                                  }}
                                 >
                                   {share}%
                                 </span>
-                              </span>
+                              </button>
                             );
                           })}
                         </div>
+                        {peeking && (
+                          <p className="text-xs leading-snug opacity-75">
+                            <span
+                              className="mr-1.5 font-mono text-[10px] font-bold uppercase tracking-widest"
+                              style={{ color: GOLD }}
+                            >
+                              {"ABCD"[peeking - 1]}
+                            </span>
+                            {peekText ? (
+                              <>“{peekText}”</>
+                            ) : (
+                              <span className="opacity-60">Nobody picked this option.</span>
+                            )}
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
