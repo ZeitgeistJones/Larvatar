@@ -67,7 +67,10 @@ export async function GET(req: NextRequest) {
 
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY not configured" },
+        {
+          error: "GEMINI_API_KEY not configured",
+          hint: "Add GEMINI_API_KEY in Vercel → Project → Settings → Environment Variables for Production, then Redeploy. LARVAE_BUILD_SECRET alone is not enough.",
+        },
         { status: 503 }
       );
     }

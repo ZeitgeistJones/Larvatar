@@ -105,7 +105,9 @@ async function main() {
 
     if (data.done) {
       console.log("Finished.");
-      process.exit(0);
+      // Avoid Windows Node UV_HANDLE_CLOSING assert on hard exit.
+      setTimeout(() => process.exit(0), 50);
+      return;
     }
     await sleep(800);
   }

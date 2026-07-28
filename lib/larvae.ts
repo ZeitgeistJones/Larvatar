@@ -233,11 +233,16 @@ async function callGemini(
     contents: [{ role: "user", parts: [{ text: user }] }],
   };
 
-  // Prefer no-thinking config for short survey/profile calls. If the model
-  // rejects thinkingConfig, retry once without it before failing.
+  // Gemini 3.x can spend output budget on thinking. Floor maxOutputTokens so
+  // short calls (catchphrases, etc.) don't return empty.
+  const outTokens = Math.max(maxTokens, 1024);
   const configs = [
-    { maxOutputTokens: maxTokens, temperature, thinkingConfig: { thinkingBudget: 0 } },
-    { maxOutputTokens: maxTokens, temperature },
+    {
+      maxOutputTokens: outTokens,
+      temperature,
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+    { maxOutputTokens: Math.max(outTokens, 2048), temperature },
   ];
 
   let lastErr = "";
@@ -252,13 +257,17 @@ async function callGemini(
       continue;
     }
     const data = await res.json();
-    const text = (data.candidates || [])
-      .flatMap((c: any) => c.content?.parts || [])
+    const parts = (data.candidates || []).flatMap(
+      (c: any) => c.content?.parts || []
+    );
+    const text = parts
+      .filter((p: any) => p?.text && !p.thought)
       .map((p: any) => p.text || "")
       .join("")
       .trim();
     if (!text) {
-      lastErr = "gemini returned empty";
+      const reason = data.candidates?.[0]?.finishReason || "unknown";
+      lastErr = `gemini returned empty (finishReason=${reason})`;
       continue;
     }
     return text;
