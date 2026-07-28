@@ -218,6 +218,18 @@ export async function collectIntoQueue(): Promise<number> {
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function parseRetryMs(body: string): number {
+  const m =
+    body.match(/"retryDelay"\s*:\s*"([\d.]+)s"/i) ||
+    body.match(/Please retry in ([\d.]+)s/i);
+  if (!m) return 25_000;
+  return Math.min(60_000, Math.max(5_000, Math.ceil(parseFloat(m[1]) * 1000) + 500));
+}
+
 async function callGemini(
   system: string,
   user: string,
@@ -247,30 +259,38 @@ async function callGemini(
 
   let lastErr = "";
   for (const generationConfig of configs) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...baseBody, generationConfig }),
-    });
-    if (!res.ok) {
-      lastErr = `gemini ${res.status}: ${await res.text()}`;
-      continue;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...baseBody, generationConfig }),
+      });
+      if (res.status === 429) {
+        const body = await res.text();
+        lastErr = `gemini 429: ${body}`;
+        await sleep(parseRetryMs(body));
+        continue;
+      }
+      if (!res.ok) {
+        lastErr = `gemini ${res.status}: ${await res.text()}`;
+        break; // try next generationConfig
+      }
+      const data = await res.json();
+      const parts = (data.candidates || []).flatMap(
+        (c: any) => c.content?.parts || []
+      );
+      const text = parts
+        .filter((p: any) => p?.text && !p.thought)
+        .map((p: any) => p.text || "")
+        .join("")
+        .trim();
+      if (!text) {
+        const reason = data.candidates?.[0]?.finishReason || "unknown";
+        lastErr = `gemini returned empty (finishReason=${reason})`;
+        break;
+      }
+      return text;
     }
-    const data = await res.json();
-    const parts = (data.candidates || []).flatMap(
-      (c: any) => c.content?.parts || []
-    );
-    const text = parts
-      .filter((p: any) => p?.text && !p.thought)
-      .map((p: any) => p.text || "")
-      .join("")
-      .trim();
-    if (!text) {
-      const reason = data.candidates?.[0]?.finishReason || "unknown";
-      lastErr = `gemini returned empty (finishReason=${reason})`;
-      continue;
-    }
-    return text;
   }
   throw new Error(lastErr || "gemini failed");
 }

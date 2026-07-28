@@ -143,7 +143,8 @@ async function main() {
       setTimeout(() => process.exit(0), 50);
       return;
     }
-    await sleep(800);
+    // Free-tier Gemini ~15 RPM — pause between chunks (longer after 429).
+    await sleep(data.rateLimited ? 25_000 : 5_000);
   }
 }
 

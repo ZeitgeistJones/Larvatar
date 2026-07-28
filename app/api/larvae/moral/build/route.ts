@@ -14,8 +14,18 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const QUEUE_KEY = "lpp:moral:build:queue";
-const TIME_BUDGET_MS = 40_000;
+const TIME_BUDGET_MS = 50_000;
+const GAP_MS = 4_200; // free-tier Gemini ~15 RPM
 const BATCH = 20;
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRateLimit(err: unknown) {
+  const s = err instanceof Error ? err.message : String(err || "");
+  return s.includes("429") || /RESOURCE_EXHAUSTED|quota/i.test(s);
+}
 
 async function getQueue(): Promise<string[]> {
   try {
@@ -107,6 +117,7 @@ export async function GET(req: NextRequest) {
     const start = Date.now();
     let ok = 0;
     let fail = 0;
+    let rateLimited = false;
     const failSamples: string[] = [];
 
     while (queue.length > 0 && Date.now() - start < TIME_BUDGET_MS) {
@@ -119,15 +130,30 @@ export async function GET(req: NextRequest) {
           if (failSamples.length < 5) failSamples.push(wallet);
         }
       } catch (e) {
+        if (isRateLimit(e)) {
+          queue.unshift(wallet);
+          rateLimited = true;
+          if (failSamples.length < 3) {
+            failSamples.push(`${wallet.slice(0, 10)}… rate limited`);
+          }
+          try {
+            await setQueue(queue);
+          } catch (qe) {
+            console.error("moral build setQueue", qe);
+          }
+          break;
+        }
         fail += 1;
         console.error("moral build wallet", wallet, e);
         if (failSamples.length < 5) failSamples.push(wallet);
       }
-      // Persist progress even if the next call blows up
       try {
         await setQueue(queue);
       } catch (e) {
         console.error("moral build setQueue", e);
+      }
+      if (queue.length > 0 && Date.now() - start < TIME_BUDGET_MS) {
+        await sleep(GAP_MS);
       }
     }
 
@@ -147,8 +173,11 @@ export async function GET(req: NextRequest) {
       tested: ok,
       failed: fail,
       remaining: queue.length,
+      rateLimited,
       failSamples,
-      message: "Not finished — visit this same URL again.",
+      message: rateLimited
+        ? "Rate limited — wait ~25s then hit again."
+        : "Not finished — visit this same URL again.",
     });
   } catch (e) {
     console.error("moral build fatal", e);

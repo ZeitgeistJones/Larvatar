@@ -14,7 +14,17 @@ import {
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const TIME_BUDGET_MS = 45_000;
+// Free tier is ~15 RPM on some Gemini models — stay under that.
+const TIME_BUDGET_MS = 50_000;
+const GAP_MS = 4_200;
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRateLimit(err?: string) {
+  return !!err && (err.includes("429") || /RESOURCE_EXHAUSTED|quota/i.test(err));
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -63,19 +73,31 @@ export async function GET(req: NextRequest) {
     const start = Date.now();
     let ok = 0;
     let fail = 0;
+    let rateLimited = false;
     const errorSamples: string[] = [];
 
     while (queue.length > 0 && Date.now() - start < TIME_BUDGET_MS) {
       const wallet = queue.shift()!;
       const result = await generateCatchphrase(wallet);
       if (result.line) ok += 1;
-      else {
+      else if (isRateLimit(result.error)) {
+        queue.unshift(wallet);
+        rateLimited = true;
+        if (errorSamples.length < 3 && result.error) {
+          errorSamples.push(`${wallet.slice(0, 10)}… rate limited — will retry`);
+        }
+        await setCatchphraseQueue(queue);
+        break;
+      } else {
         fail += 1;
         if (errorSamples.length < 5 && result.error) {
           errorSamples.push(`${wallet.slice(0, 10)}… ${result.error}`);
         }
       }
       await setCatchphraseQueue(queue);
+      if (queue.length > 0 && Date.now() - start < TIME_BUDGET_MS) {
+        await sleep(GAP_MS);
+      }
     }
 
     if (queue.length === 0) {
@@ -93,8 +115,11 @@ export async function GET(req: NextRequest) {
       written: ok,
       failed: fail,
       remaining: queue.length,
+      rateLimited,
       errorSamples,
-      message: "Visit again to continue.",
+      message: rateLimited
+        ? "Rate limited — wait ~25s then hit again."
+        : "Visit again to continue.",
     });
   } catch (e) {
     return NextResponse.json(
