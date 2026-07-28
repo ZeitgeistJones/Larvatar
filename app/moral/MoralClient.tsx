@@ -778,22 +778,38 @@ export default function MoralClient() {
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {tallies.map((n, i) => {
-                            const opt = i + 1;
-                            const isChosen = opt === chosen;
+                            const letter = "ABCD"[i];
+                            const isChosen = i + 1 === chosen;
                             const share = total > 0 ? Math.round((n / total) * 100) : 0;
                             return (
                               <span
-                                key={opt}
-                                className="rounded-md border px-2 py-0.5 font-mono text-[10px] tabular-nums"
+                                key={letter}
+                                className="inline-flex items-baseline gap-1.5 rounded-md border px-2 py-1"
                                 style={{
                                   borderColor: isChosen ? CORAL : `${INK}18`,
                                   background: isChosen ? `${CORAL}12` : "transparent",
-                                  color: isChosen ? CORAL : `${INK}99`,
                                 }}
-                                title={`Option ${opt}: ${n} larvae (${share}%)`}
                               >
-                                {opt} · {n}
-                                <span className="opacity-60"> ({share}%)</span>
+                                <span
+                                  className="font-mono text-[9px] font-bold uppercase tracking-widest"
+                                  style={{
+                                    color: isChosen ? CORAL : `${INK}55`,
+                                  }}
+                                >
+                                  {letter}
+                                </span>
+                                <span
+                                  className="text-xs font-semibold tabular-nums"
+                                  style={{ color: isChosen ? CORAL : INK }}
+                                >
+                                  {n}
+                                </span>
+                                <span
+                                  className="font-mono text-[10px] tabular-nums"
+                                  style={{ color: isChosen ? CORAL : `${INK}66` }}
+                                >
+                                  {share}%
+                                </span>
                               </span>
                             );
                           })}
