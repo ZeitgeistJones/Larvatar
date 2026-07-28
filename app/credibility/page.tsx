@@ -54,6 +54,18 @@ type Payload = {
 const MIN_POSTS = 5;
 
 type SortKey = "winRate" | "conviction" | "posts" | "name";
+type SortDir = "asc" | "desc";
+
+const SORT_LABELS: Record<SortKey, string> = {
+  winRate: "Alignment",
+  conviction: "Conviction",
+  posts: "Stances",
+  name: "Name",
+};
+
+/** Shared desktop columns: rank | specimen | conviction | stances | alignment */
+const ROW_GRID =
+  "grid grid-cols-[2rem_minmax(0,1fr)_5.5rem_4.5rem_5.5rem] items-center gap-x-3 px-4";
 
 export default function CredibilityPage() {
   const { colors } = useTheme();
@@ -65,19 +77,44 @@ export default function CredibilityPage() {
    */
   function archetype(l: Larva, avgWin: number, avgConv: number) {
     const passive = l.breakdown.neutral / (l.posts || 1) > 0.45;
-    if (passive) return { label: "Tracker", color: `${INK}77`, note: "mostly abstains; scores by following the room" };
+    if (passive)
+      return {
+        label: "Tracker",
+        color: `${INK}77`,
+        note: "mostly abstains; scores by following the room",
+      };
     const hiWin = l.winRate >= avgWin;
     const hiConv = l.conviction >= avgConv;
-    if (hiWin && hiConv) return { label: "Hard takes, with the room", color: GOLD, note: "commits hard and still lands with the swarm" };
-    if (hiWin && !hiConv) return { label: "Soft takes, with the room", color: SEA, note: "hedges, and the hedge is usually where consensus lands" };
-    if (!hiWin && hiConv) return { label: "Hard takes, against the room", color: CORAL, note: "takes strong positions the swarm doesn't follow" };
-    return { label: "Soft takes, against the room", color: `${INK}88`, note: "neither commits nor converges" };
+    if (hiWin && hiConv)
+      return {
+        label: "Hard takes, with the room",
+        color: GOLD,
+        note: "commits hard and still lands with the swarm",
+      };
+    if (hiWin && !hiConv)
+      return {
+        label: "Soft takes, with the room",
+        color: SEA,
+        note: "hedges, and the hedge is usually where consensus lands",
+      };
+    if (!hiWin && hiConv)
+      return {
+        label: "Hard takes, against the room",
+        color: CORAL,
+        note: "takes strong positions the swarm doesn't follow",
+      };
+    return {
+      label: "Soft takes, against the room",
+      color: `${INK}88`,
+      note: "neither commits nor converges",
+    };
   }
 
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sort, setSort] = useState<SortKey>("winRate");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [showAll, setShowAll] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -93,6 +130,15 @@ export default function CredibilityPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  function chooseSort(key: SortKey) {
+    if (key === sort) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSort(key);
+    setSortDir(key === "name" ? "asc" : "desc");
+  }
+
   const rows = useMemo(() => {
     if (!data) return [];
     let r = data.larvae.filter((l) => showAll || l.posts >= MIN_POSTS);
@@ -102,11 +148,42 @@ export default function CredibilityPage() {
         (l) => l.name.toLowerCase().includes(q) || l.wallet.toLowerCase().includes(q)
       );
     }
+    const dir = sortDir === "asc" ? 1 : -1;
     return [...r].sort((a, b) => {
-      if (sort === "name") return a.name.localeCompare(b.name);
-      return b[sort] - a[sort];
+      if (sort === "name") return dir * a.name.localeCompare(b.name);
+      return dir * (a[sort] - b[sort]);
     });
-  }, [data, sort, showAll, query]);
+  }, [data, sort, sortDir, showAll, query]);
+
+  function SortHead({
+    col,
+    align = "right",
+  }: {
+    col: SortKey;
+    align?: "left" | "right";
+  }) {
+    const active = sort === col;
+    return (
+      <button
+        type="button"
+        onClick={() => chooseSort(col)}
+        className={`flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest transition-opacity hover:opacity-100 ${
+          align === "right" ? "justify-end text-right" : "justify-start text-left"
+        }`}
+        style={{ color: active ? CORAL : INK, opacity: active ? 1 : 0.5 }}
+        title={
+          active
+            ? `Sorted ${sortDir === "asc" ? "lowest → highest" : "highest → lowest"} — click to flip`
+            : `Sort by ${SORT_LABELS[col]}`
+        }
+      >
+        <span>{SORT_LABELS[col]}</span>
+        <span className="inline-block w-3 tabular-nums" aria-hidden>
+          {active ? (sortDir === "asc" ? "↑" : "↓") : ""}
+        </span>
+      </button>
+    );
+  }
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
@@ -132,7 +209,6 @@ export default function CredibilityPage() {
 
         {data && (
           <>
-            {/* ── The caveat, stated up front ── */}
             <section
               className="mb-6 rounded-xl border p-5"
               style={{ borderColor: `${GOLD}55`, background: CARD }}
@@ -144,14 +220,13 @@ export default function CredibilityPage() {
                 Alignment is not accuracy. A high score means a larva tends to land where the
                 swarm lands — which rewards agreeing with the room, not being right about
                 outcomes. A larva that abstains often will score well against a mostly-neutral
-                aggregate without ever committing to anything, so the archetype column
+                aggregate without ever committing to anything, so the archetype under each name
                 separates that from genuine conviction. Judging who was actually{" "}
-                <em>correct</em> needs shipped-versus-stalled outcome data, which this doesn't
+                <em>correct</em> needs shipped-versus-stalled outcome data, which this doesn&apos;t
                 have yet.
               </p>
             </section>
 
-            {/* ── Distribution ── */}
             <section
               className="mb-6 rounded-xl border p-5"
               style={{ borderColor: `${INK}22`, background: CARD }}
@@ -169,108 +244,191 @@ export default function CredibilityPage() {
                   accent={GOLD}
                 />
               </div>
-              <Histogram larvae={data.larvae.filter((l) => l.posts >= MIN_POSTS)} avg={data.hive.avgWinRate} />
+              <Histogram
+                larvae={data.larvae.filter((l) => l.posts >= MIN_POSTS)}
+                avg={data.hive.avgWinRate}
+              />
             </section>
 
-            {/* ── Controls ── */}
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            {/* Search + filter (not sort) */}
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="find a larva…"
-                className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 max-md:min-h-11 max-md:basis-full"
+                className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 max-md:min-h-11"
                 style={{ borderColor: `${INK}25`, background: CARD }}
               />
-              {(["winRate", "conviction", "posts", "name"] as SortKey[]).map((k) => (
-                <button
-                  key={k}
-                  onClick={() => setSort(k)}
-                  className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity max-md:min-h-11 max-md:px-3.5 max-md:text-[11px]"
-                  style={{
-                    borderColor: sort === k ? CORAL : `${INK}22`,
-                    background: sort === k ? `${CORAL}12` : CARD,
-                    color: sort === k ? CORAL : INK,
-                    opacity: sort === k ? 1 : 0.65,
-                  }}
-                >
-                  {k === "winRate" ? "alignment" : k === "posts" ? "stances" : k}
-                </button>
-              ))}
               <button
+                type="button"
                 onClick={() => setShowAll((s) => !s)}
-                className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest opacity-65 transition-opacity hover:opacity-100 max-md:min-h-11 max-md:text-[11px]"
-                style={{ borderColor: `${INK}22`, background: CARD }}
+                className="rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-widest transition-opacity hover:opacity-100 max-md:min-h-11"
+                style={{
+                  borderColor: showAll ? CORAL : `${INK}22`,
+                  background: showAll ? `${CORAL}12` : CARD,
+                  color: showAll ? CORAL : INK,
+                  opacity: showAll ? 1 : 0.7,
+                }}
+                title={
+                  showAll
+                    ? "Showing everyone — click for 5+ stances only"
+                    : "Showing 5+ stances — click to include everyone"
+                }
               >
-                {showAll ? "all" : `${MIN_POSTS}+ stances`}
+                {showAll ? "all larvae" : `${MIN_POSTS}+ stances`}
               </button>
             </div>
 
-            {/* ── Table ── */}
+            {/* Mobile sort control */}
+            <div
+              className="mb-3 flex items-center gap-2 sm:hidden"
+              style={{ color: INK }}
+            >
+              <label className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+                Sort
+              </label>
+              <select
+                value={sort}
+                onChange={(e) => {
+                  const key = e.target.value as SortKey;
+                  setSort(key);
+                  setSortDir(key === "name" ? "asc" : "desc");
+                }}
+                className="min-h-11 flex-1 rounded-lg border px-3 py-2 text-sm outline-none"
+                style={{ borderColor: `${INK}25`, background: CARD }}
+              >
+                {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                  <option key={k} value={k}>
+                    {SORT_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                className="min-h-11 shrink-0 rounded-lg border px-3 py-2 font-mono text-xs"
+                style={{ borderColor: `${INK}25`, background: CARD }}
+                title={sortDir === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
+              >
+                {sortDir === "asc" ? "↑ Low→High" : "↓ High→Low"}
+              </button>
+            </div>
+
             <section
               className="overflow-hidden rounded-xl border"
               style={{ borderColor: `${INK}22`, background: CARD }}
             >
+              {/* Desktop column headers — align with row cells */}
+              <div
+                className={`${ROW_GRID} sticky top-0 z-10 hidden border-b py-2.5 sm:grid`}
+                style={{ borderColor: `${INK}14`, background: CARD }}
+              >
+                <span className="font-mono text-[10px] uppercase tracking-widest opacity-40">#</span>
+                <SortHead col="name" align="left" />
+                <SortHead col="conviction" />
+                <SortHead col="posts" />
+                <SortHead col="winRate" />
+              </div>
+
               {rows.map((l, i) => {
                 const arch = archetype(l, data.hive.avgWinRate, data.hive.avgConviction);
                 const isOpen = expanded === l.wallet;
+                const topHighlight =
+                  i < 3 && sort === "winRate" && sortDir === "desc";
                 return (
-                  <div key={l.wallet} style={{ borderTop: i === 0 ? "none" : `1px solid ${INK}12` }}>
+                  <div
+                    key={l.wallet}
+                    style={{ borderTop: i === 0 ? "none" : `1px solid ${INK}12` }}
+                  >
                     <button
+                      type="button"
                       onClick={() => setExpanded(isOpen ? null : l.wallet)}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-black/[0.02] max-md:gap-2 max-md:px-3 max-md:py-3.5"
+                      className="w-full text-left transition-colors hover:bg-black/[0.02]"
                     >
-                      <span
-                        className="w-6 shrink-0 font-mono text-xs font-bold tabular-nums"
-                        style={{ color: i < 3 && sort === "winRate" ? GOLD : `${INK}55` }}
-                      >
-                        {i + 1}
+                      {/* Desktop row */}
+                      <span className={`${ROW_GRID} hidden py-3 sm:grid`}>
+                        <span
+                          className="font-mono text-xs font-bold tabular-nums"
+                          style={{ color: topHighlight ? GOLD : `${INK}55` }}
+                        >
+                          {i + 1}
+                        </span>
+
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          {l.avatar ? (
+                            <LarvaAvatar
+                              hue={l.avatar.hue}
+                              tone={l.avatar.tone}
+                              traits={l.avatar}
+                              size={32}
+                            />
+                          ) : (
+                            <span
+                              className="h-8 w-8 shrink-0 rounded-full"
+                              style={{ background: `${INK}12` }}
+                            />
+                          )}
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-bold">{l.name}</span>
+                            <span
+                              className="block truncate font-mono text-[10px] uppercase tracking-widest"
+                              style={{ color: arch.color }}
+                            >
+                              {arch.label}
+                            </span>
+                          </span>
+                        </span>
+
+                        <span className="text-right text-sm font-semibold tabular-nums">
+                          {Math.round(l.conviction * 100)}%
+                        </span>
+
+                        <span className="text-right text-sm font-semibold tabular-nums opacity-80">
+                          {l.posts}
+                        </span>
+
+                        <span
+                          className="text-right text-lg font-bold tabular-nums"
+                          style={{
+                            color: l.winRate >= data.hive.avgWinRate ? GOLD : INK,
+                          }}
+                        >
+                          {Math.round(l.winRate * 100)}%
+                        </span>
                       </span>
 
-                      {l.avatar ? (
-                        <span className="shrink-0">
+                      {/* Mobile compact row */}
+                      <span className="flex items-center gap-2.5 px-3 py-3.5 sm:hidden">
+                        <span
+                          className="w-5 shrink-0 font-mono text-xs font-bold tabular-nums"
+                          style={{ color: topHighlight ? GOLD : `${INK}55` }}
+                        >
+                          {i + 1}
+                        </span>
+                        {l.avatar ? (
                           <LarvaAvatar
                             hue={l.avatar.hue}
                             tone={l.avatar.tone}
                             traits={l.avatar}
                             size={32}
                           />
-                        </span>
-                      ) : (
-                        <span
-                          className="h-8 w-8 shrink-0 rounded-full"
-                          style={{ background: `${INK}12` }}
-                        />
-                      )}
-
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-bold">{l.name}</span>
-                        <span
-                          className="font-mono text-[10px] uppercase tracking-widest max-md:hidden"
-                          style={{ color: arch.color }}
-                        >
-                          {arch.label}
-                        </span>
-                      </span>
-
-                      <span className="hidden shrink-0 text-right sm:block">
-                        <span className="block font-mono text-[10px] uppercase tracking-widest opacity-45">
-                          conviction
-                        </span>
-                        <span className="block text-sm font-semibold tabular-nums">
-                          {Math.round(l.conviction * 100)}%
-                        </span>
-                      </span>
-
-                      <span className="w-16 shrink-0 text-right">
-                        <span className="block font-mono text-[10px] uppercase tracking-widest opacity-45">
-                          {l.posts} stances
+                        ) : (
+                          <span
+                            className="h-8 w-8 shrink-0 rounded-full"
+                            style={{ background: `${INK}12` }}
+                          />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-bold">{l.name}</span>
+                          <span className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+                            {l.posts} stances · {Math.round(l.conviction * 100)}% conv
+                          </span>
                         </span>
                         <span
-                          className="block text-lg font-bold tabular-nums"
+                          className="shrink-0 text-lg font-bold tabular-nums"
                           style={{
                             color: l.winRate >= data.hive.avgWinRate ? GOLD : INK,
                           }}
-                          title="Alignment with swarm"
                         >
                           {Math.round(l.winRate * 100)}%
                         </span>
@@ -278,7 +436,10 @@ export default function CredibilityPage() {
                     </button>
 
                     {isOpen && (
-                      <div className="border-t px-4 py-4" style={{ borderColor: `${INK}12`, background: `${INK}04` }}>
+                      <div
+                        className="border-t px-4 py-4"
+                        style={{ borderColor: `${INK}12`, background: `${INK}04` }}
+                      >
                         {l.tagline && <p className="mb-3 text-sm opacity-80">{l.tagline}</p>}
                         <p className="mb-3 text-xs opacity-60">
                           <strong style={{ color: arch.color }}>{arch.label}</strong> — {arch.note}
