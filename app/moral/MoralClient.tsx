@@ -494,6 +494,24 @@ export default function MoralClient() {
     return byLabel.get(filterLabel) || [];
   }, [results, filterLabel, byLabel]);
 
+  /** Hive-wide choice tallies per question id → [c1,c2,c3,c4]. */
+  const answerTallies = useMemo(() => {
+    const map = new Map<string, [number, number, number, number]>();
+    for (const r of results) {
+      for (const a of r.answers || []) {
+        const c = Math.round(Number(a.choice));
+        if (c < 1 || c > 4) continue;
+        let row = map.get(a.id);
+        if (!row) {
+          row = [0, 0, 0, 0];
+          map.set(a.id, row);
+        }
+        row[c - 1] += 1;
+      }
+    }
+    return map;
+  }, [results]);
+
   function selectQuadrant(label: MoralLabel) {
     const cell = byLabel.get(label) || [];
     if (cell.length === 0) return;
@@ -741,12 +759,50 @@ export default function MoralClient() {
             </p>
 
             <div className="mt-5 space-y-4">
-              {active.answers.map((a) => (
-                <div key={a.id} className="border-t pt-3" style={{ borderColor: `${INK}12` }}>
-                  <p className="text-xs font-medium opacity-55">{a.prompt}</p>
-                  <p className="mt-1.5 text-sm leading-snug">“{a.answer}”</p>
-                </div>
-              ))}
+              {active.answers.map((a) => {
+                const tallies = answerTallies.get(a.id) || [0, 0, 0, 0];
+                const total = tallies.reduce((s, n) => s + n, 0);
+                const chosen = Math.round(Number(a.choice));
+                const chosenN =
+                  chosen >= 1 && chosen <= 4 ? tallies[chosen - 1] : 0;
+                const pct =
+                  total > 0 ? Math.round((chosenN / total) * 100) : 0;
+                return (
+                  <div key={a.id} className="border-t pt-3" style={{ borderColor: `${INK}12` }}>
+                    <p className="text-xs font-medium opacity-55">{a.prompt}</p>
+                    <p className="mt-1.5 text-sm leading-snug">“{a.answer}”</p>
+                    {total > 0 && (
+                      <div className="mt-2 space-y-1.5">
+                        <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+                          {chosenN} of {total} chose this · {pct}%
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {tallies.map((n, i) => {
+                            const opt = i + 1;
+                            const isChosen = opt === chosen;
+                            const share = total > 0 ? Math.round((n / total) * 100) : 0;
+                            return (
+                              <span
+                                key={opt}
+                                className="rounded-md border px-2 py-0.5 font-mono text-[10px] tabular-nums"
+                                style={{
+                                  borderColor: isChosen ? CORAL : `${INK}18`,
+                                  background: isChosen ? `${CORAL}12` : "transparent",
+                                  color: isChosen ? CORAL : `${INK}99`,
+                                }}
+                                title={`Option ${opt}: ${n} larvae (${share}%)`}
+                              >
+                                {opt} · {n}
+                                <span className="opacity-60"> ({share}%)</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
         ) : (
