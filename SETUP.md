@@ -70,6 +70,24 @@ Keep reloading that URL (without needing `&reset=true` again) until the response
 
 re-run the build URL whenever there are new forum posts / labs ideas. it overwrites cleanly.
 
+## run builds from the console (no refresh spam)
+
+```bash
+# PowerShell — set once per session
+$env:LARVAE_BUILD_SECRET="your-secret"
+$env:LARVATAR_URL="https://larvatar.vercel.app"
+
+npm run run-build -- catchphrase --force
+npm run run-build -- moral
+npm run run-build -- hottest
+npm run run-build -- survey
+npm run run-build -- profiles
+```
+
+Or: `node scripts/run-build.mjs catchphrase --secret YOUR_SECRET`
+
+It loops the chunked build URL until `"done": true`.
+
 ## survey game — more boards + auto mint
 
 Questions live in Redis (`lpp:survey:questions`). The seed list in `lib/larvae-survey.ts` (q01–q24) is merged in on first touch; weekly cron invents more creative ones.
