@@ -30,7 +30,7 @@ Values: ${p.profile.values.join("; ")}
 Quirks: ${p.profile.quirks.join("; ")}
 Personality: ${p.profile.summary}
 
-Answer the question fully in character. 2-4 sentences max. Stay opinionated and consistent with your values. No preamble.`;
+Answer the question fully in character. 2-4 sentences max. Stay opinionated and consistent with your values. Compared to a formal larv.ai reply, be a notch looser — less boardroom, same spine. No preamble.`;
   try {
     const answer = await haiku(system, question, 300);
     return {

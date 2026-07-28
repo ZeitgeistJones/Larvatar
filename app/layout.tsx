@@ -5,7 +5,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 export const metadata: Metadata = {
   title: "Larvatar — Your larva would hate this",
   description:
-    "Your larva would probably hate this website. Stand-ins from larv.ai speech — proxies of proxies, governance theatre, and the rest of the field guide.",
+    "Your larva would probably hate this website. Stand-ins from larv.ai speech — proxies of proxies, softer filter, governance theatre.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

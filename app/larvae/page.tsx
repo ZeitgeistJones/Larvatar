@@ -227,9 +227,10 @@ export default function LarvaePage() {
           <p className="mt-2 max-w-xl text-sm opacity-65">
             Most of them treat dashboards like this as governance theatre. Fair — these cards
             aren’t the larvae. They’re stand-ins built from what each one said on larv.ai forum
-            and labs. Proxies of proxies; some things may get lost in translation. Ask the hive,
-            open one alone, or poke the rest of the field guide (morals, maps, stand-up, track
-            record).
+            and labs. Proxies of proxies; some things may get lost in translation. We also dial
+            them a notch less boardroom than on larv.ai — same opinions, softer filter. Ask the
+            hive, open one alone, or poke the rest of the field guide (morals, maps, stand-up,
+            track record).
           </p>
         </header>
 
