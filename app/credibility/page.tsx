@@ -133,6 +133,7 @@ export default function CredibilityPage() {
   const [error, setError] = useState("");
   const [sort, setSort] = useState<SortKey>("winRate");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [distMetric, setDistMetric] = useState<"winRate" | "conviction" | "posts">("winRate");
   const [showAll, setShowAll] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -155,11 +156,37 @@ export default function CredibilityPage() {
     }
     setSort(key);
     setSortDir(key === "name" ? "asc" : "desc");
+    if (key === "winRate" || key === "conviction" || key === "posts") {
+      setDistMetric(key);
+    }
   }
+
+  function chooseDist(key: "winRate" | "conviction" | "posts") {
+    setDistMetric(key);
+    setSort(key);
+    setSortDir("desc");
+  }
+
+  const rankedPool = useMemo(() => {
+    if (!data) return [] as Larva[];
+    return data.larvae.filter((l) => showAll || l.posts >= MIN_POSTS);
+  }, [data, showAll]);
+
+  const distStats = useMemo(() => {
+    if (rankedPool.length === 0) {
+      return { avg: 0, top: 0, isPct: true };
+    }
+    const vals = rankedPool.map((l) =>
+      distMetric === "posts" ? l.posts : l[distMetric]
+    );
+    const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+    const top = Math.max(...vals);
+    return { avg, top, isPct: distMetric !== "posts" };
+  }, [rankedPool, distMetric]);
 
   const rows = useMemo(() => {
     if (!data) return [];
-    let r = data.larvae.filter((l) => showAll || l.posts >= MIN_POSTS);
+    let r = [...rankedPool];
     const q = query.trim().toLowerCase();
     if (q) {
       r = r.filter(
@@ -167,11 +194,11 @@ export default function CredibilityPage() {
       );
     }
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...r].sort((a, b) => {
+    return r.sort((a, b) => {
       if (sort === "name") return dir * a.name.localeCompare(b.name);
       return dir * (a[sort] - b[sort]);
     });
-  }, [data, sort, sortDir, showAll, query]);
+  }, [data, rankedPool, sort, sortDir, query]);
 
   function SortHead({
     col,
@@ -248,18 +275,55 @@ export default function CredibilityPage() {
                 <Stat label="larvae ranked" value={String(rows.length)} />
                 <Stat label="questions scored" value={String(data.postCount)} />
                 <Stat
-                  label="hive average"
-                  value={`${Math.round(data.hive.avgWinRate * 100)}%`}
+                  label={`hive avg · ${SORT_LABELS[distMetric].toLowerCase()}`}
+                  value={
+                    distStats.isPct
+                      ? `${Math.round(distStats.avg * 100)}%`
+                      : String(Math.round(distStats.avg))
+                  }
                 />
                 <Stat
-                  label="top alignment"
-                  value={`${Math.round(Math.max(...data.larvae.map((l) => l.winRate)) * 100)}%`}
+                  label={`top · ${SORT_LABELS[distMetric].toLowerCase()}`}
+                  value={
+                    distStats.isPct
+                      ? `${Math.round(distStats.top * 100)}%`
+                      : String(Math.round(distStats.top))
+                  }
                   accent={GOLD}
                 />
               </div>
+
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+                  distribution
+                </p>
+                <div className="flex rounded-lg border p-0.5" style={{ borderColor: `${INK}18` }}>
+                  {(["winRate", "conviction", "posts"] as const).map((k) => {
+                    const on = distMetric === k;
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => chooseDist(k)}
+                        className="rounded-md px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-widest"
+                        style={{
+                          background: on ? `${CORAL}14` : "transparent",
+                          color: on ? CORAL : `${INK}70`,
+                        }}
+                      >
+                        {SORT_LABELS[k]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <Histogram
-                larvae={data.larvae.filter((l) => l.posts >= MIN_POSTS)}
-                avg={data.hive.avgWinRate}
+                values={rankedPool.map((l) =>
+                  distMetric === "posts" ? l.posts : l[distMetric]
+                )}
+                avg={distStats.avg}
+                asPercent={distStats.isPct}
               />
             </section>
 
@@ -319,6 +383,9 @@ export default function CredibilityPage() {
                   const key = e.target.value as SortKey;
                   setSort(key);
                   setSortDir(key === "name" ? "asc" : "desc");
+                  if (key === "winRate" || key === "conviction" || key === "posts") {
+                    setDistMetric(key);
+                  }
                 }}
                 className="min-h-11 flex-1 rounded-lg border px-3 py-2 text-sm outline-none"
                 style={{ borderColor: `${INK}25`, background: CARD }}
@@ -514,24 +581,33 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
-/** Distribution of alignment scores — shows how tight the pack really is. */
-function Histogram({ larvae, avg }: { larvae: { winRate: number }[]; avg: number }) {
+/** Distribution of the selected metric — shows how tight the pack really is. */
+function Histogram({
+  values,
+  avg,
+  asPercent,
+}: {
+  values: number[];
+  avg: number;
+  asPercent: boolean;
+}) {
   const { colors } = useTheme();
   const { gold: GOLD, sea: SEA } = colors;
   const BUCKETS = 14;
-  const rates = larvae.map((l) => l.winRate);
-  if (rates.length === 0) return null;
-  const lo = Math.min(...rates);
-  const hi = Math.max(...rates);
-  const span = hi - lo || 0.1;
+  if (values.length === 0) return null;
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo || (asPercent ? 0.1 : 1);
 
   const counts = new Array(BUCKETS).fill(0);
-  for (const r of rates) {
+  for (const r of values) {
     const idx = Math.min(BUCKETS - 1, Math.floor(((r - lo) / span) * BUCKETS));
     counts[idx]++;
   }
   const peak = Math.max(...counts) || 1;
   const avgIdx = Math.min(BUCKETS - 1, Math.floor(((avg - lo) / span) * BUCKETS));
+
+  const fmt = (v: number) => (asPercent ? `${Math.round(v * 100)}%` : String(Math.round(v)));
 
   return (
     <div>
@@ -544,14 +620,13 @@ function Histogram({ larvae, avg }: { larvae: { winRate: number }[]; avg: number
               height: `${Math.max(3, (c / peak) * 100)}%`,
               background: i === avgIdx ? GOLD : `${SEA}88`,
             }}
-            title={`${c} larvae`}
           />
         ))}
       </div>
       <div className="mt-1 flex justify-between font-mono text-[10px] uppercase tracking-widest opacity-45">
-        <span>{Math.round(lo * 100)}%</span>
-        <span style={{ color: GOLD }}>hive avg {Math.round(avg * 100)}%</span>
-        <span>{Math.round(hi * 100)}%</span>
+        <span>{fmt(lo)}</span>
+        <span style={{ color: GOLD }}>hive avg {fmt(avg)}</span>
+        <span>{fmt(hi)}</span>
       </div>
     </div>
   );
