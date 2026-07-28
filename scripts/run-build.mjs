@@ -17,6 +17,10 @@
  *   --secret YOUR_SECRET
  */
 
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 const PATHS = {
   catchphrase: "/api/larvae/catchphrase/build",
   moral: "/api/larvae/moral/build",
@@ -25,6 +29,33 @@ const PATHS = {
   profiles: "/api/larvae/build",
   alignment: "/api/larvae/alignment/build",
 };
+
+/** Load .env.local / .env from repo root (gitignored) into process.env. */
+function loadEnvFiles() {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  for (const name of [".env.local", ".env"]) {
+    const path = join(root, name);
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq <= 0) continue;
+      const key = t.slice(0, eq).trim();
+      let val = t.slice(eq + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (process.env[key] === undefined) process.env[key] = val;
+    }
+  }
+}
+
+loadEnvFiles();
 
 function arg(name, fallback = "") {
   const i = process.argv.indexOf(name);
