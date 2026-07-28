@@ -63,6 +63,24 @@ const SORT_LABELS: Record<SortKey, string> = {
   name: "Name",
 };
 
+const METRIC_DEFS: { key: SortKey; label: string; def: string }[] = [
+  {
+    key: "winRate",
+    label: "Alignment",
+    def: "How often this larva’s stance matched the swarm’s aggregate on the same question. High ≠ correct — it means “with the room.”",
+  },
+  {
+    key: "conviction",
+    label: "Conviction",
+    def: "Share of stances that were hard yes/no (approve or disapprove), not hedge or abstain. High = takes a side.",
+  },
+  {
+    key: "posts",
+    label: "Stances",
+    def: "How many scored questions this larva answered. More stances = more reliable alignment and conviction rates.",
+  },
+];
+
 /** Shared desktop columns: rank | specimen | conviction | stances | alignment */
 const ROW_GRID =
   "grid grid-cols-[2rem_minmax(0,1fr)_5.5rem_4.5rem_5.5rem] items-center gap-x-3 px-4";
@@ -173,8 +191,10 @@ export default function CredibilityPage() {
         style={{ color: active ? CORAL : INK, opacity: active ? 1 : 0.5 }}
         title={
           active
-            ? `Sorted ${sortDir === "asc" ? "lowest → highest" : "highest → lowest"} — click to flip`
-            : `Sort by ${SORT_LABELS[col]}`
+            ? `${METRIC_DEFS.find((m) => m.key === col)?.def || SORT_LABELS[col]} · Sorted ${
+                sortDir === "asc" ? "lowest → highest" : "highest → lowest"
+              } — click to flip`
+            : METRIC_DEFS.find((m) => m.key === col)?.def || `Sort by ${SORT_LABELS[col]}`
         }
       >
         <span>{SORT_LABELS[col]}</span>
@@ -277,6 +297,24 @@ export default function CredibilityPage() {
               >
                 {showAll ? "all larvae" : `${MIN_POSTS}+ stances`}
               </button>
+            </div>
+
+            {/* Metric glossary — what the three numbers mean */}
+            <div
+              className="mb-4 grid gap-3 rounded-xl border p-4 sm:grid-cols-3"
+              style={{ borderColor: `${INK}18`, background: CARD }}
+            >
+              {METRIC_DEFS.map((m) => (
+                <div key={m.key}>
+                  <p
+                    className="font-mono text-[10px] uppercase tracking-widest"
+                    style={{ color: sort === m.key ? CORAL : `${INK}88` }}
+                  >
+                    {m.label}
+                  </p>
+                  <p className="mt-1.5 text-xs leading-relaxed opacity-70">{m.def}</p>
+                </div>
+              ))}
             </div>
 
             {/* Mobile sort control */}
