@@ -81,10 +81,12 @@ function MoralScatter({
   results,
   active,
   onSelect,
+  filterLabel,
 }: {
   results: MoralResult[];
   active: MoralResult | null;
   onSelect: (r: MoralResult) => void;
+  filterLabel: MoralLabel | null;
 }) {
   const { colors } = useTheme();
   const { ink: INK, coral: CORAL, gold: GOLD, sea: SEA } = colors;
@@ -146,19 +148,29 @@ function MoralScatter({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plotted, scales.xMin, scales.xMax, scales.yMin, scales.yMax]);
 
-  if (plotted.length === 0) return null;
+  if (plotted.length === 0) {
+    return (
+      <section className="mb-8">
+        <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+          moral map · variation
+        </p>
+        <p className="mt-2 text-sm opacity-60">No larvae in this quadrant yet.</p>
+      </section>
+    );
+  }
 
   return (
-    <section className="mb-10">
+    <section className="mb-8">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
             moral map · variation
+            {filterLabel ? ` · ${filterLabel}` : ""}
           </p>
           <p className="mt-1 max-w-xl text-sm opacity-70">
-            Same idea as the Hive Map — every larva as a dot. Position is EasyDamus score
-            balance (not the coarse badge). Near the crosshair = closest to True Neutral;
-            farther out = more extreme.
+            {filterLabel
+              ? `Showing only ${filterLabel} — click the compass again (or Clear) to see everyone.`
+              : "Every larva as a dot. Click a compass quadrant to isolate one alignment."}
           </p>
         </div>
         <div className="font-mono text-[10px] uppercase tracking-widest opacity-55">
@@ -376,6 +388,7 @@ export default function MoralClient() {
     ["Lawful Evil", "Neutral Evil", "Chaotic Evil"],
   ]);
   const [active, setActive] = useState<MoralResult | null>(null);
+  const [filterLabel, setFilterLabel] = useState<MoralLabel | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
@@ -470,8 +483,27 @@ export default function MoralClient() {
       list.push(r);
       m.set(r.label, list);
     }
+    for (const [, list] of m) {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
     return m;
   }, [results]);
+
+  const filtered = useMemo(() => {
+    if (!filterLabel) return results;
+    return byLabel.get(filterLabel) || [];
+  }, [results, filterLabel, byLabel]);
+
+  function selectQuadrant(label: MoralLabel) {
+    const cell = byLabel.get(label) || [];
+    if (cell.length === 0) return;
+    if (filterLabel === label) {
+      setFilterLabel(null);
+      return;
+    }
+    setFilterLabel(label);
+    setActive(cell[0]);
+  }
 
   function cellColor(label: MoralLabel) {
     if (label.includes("Good")) return `${SEA}22`;
@@ -580,23 +612,42 @@ export default function MoralClient() {
           </p>
         )}
 
-        <section className="mb-10">
-          <p className="mb-3 font-mono text-[10px] uppercase tracking-widest opacity-50">
-            hive compass · {results.length} tested
+        <section className="mb-8">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+              hive compass · {results.length} tested
+              {filterLabel ? ` · viewing ${filtered.length}` : ""}
+            </p>
+            {filterLabel && (
+              <button
+                type="button"
+                onClick={() => setFilterLabel(null)}
+                className="rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-widest"
+                style={{ borderColor: CORAL, color: CORAL, background: `${CORAL}10` }}
+              >
+                Clear filter · show all
+              </button>
+            )}
+          </div>
+          <p className="mb-3 text-xs opacity-60">
+            Click a quadrant to isolate it on the map and roster. Click again to clear.
           </p>
           <div className="grid grid-cols-3 gap-2">
             {grid.flat().map((label) => {
               const cell = byLabel.get(label) || [];
-              const selected = active?.label === label;
+              const selected = filterLabel === label;
+              const empty = cell.length === 0;
               return (
                 <button
                   key={label}
                   type="button"
-                  onClick={() => cell[0] && setActive(cell[0])}
-                  className="min-h-[88px] rounded-xl border p-3 text-left transition-shadow hover:shadow-md"
+                  disabled={empty}
+                  onClick={() => selectQuadrant(label)}
+                  className="min-h-[88px] rounded-xl border p-3 text-left transition-shadow hover:shadow-md disabled:cursor-default disabled:opacity-40 disabled:hover:shadow-none"
                   style={{
                     borderColor: selected ? CORAL : `${INK}18`,
                     background: cellColor(label),
+                    boxShadow: selected ? `inset 0 0 0 1px ${CORAL}` : undefined,
                   }}
                 >
                   <p className="font-mono text-[10px] uppercase tracking-widest opacity-60">
@@ -619,7 +670,44 @@ export default function MoralClient() {
         </section>
 
         {!loading && results.length > 0 && (
-          <MoralScatter results={results} active={active} onSelect={setActive} />
+          <MoralScatter
+            results={filtered}
+            active={active}
+            onSelect={setActive}
+            filterLabel={filterLabel}
+          />
+        )}
+
+        {/* Roster — only when a quadrant is selected; sits above answers */}
+        {filterLabel && filtered.length > 0 && (
+          <section
+            className="mb-8 rounded-xl border p-4"
+            style={{ borderColor: `${INK}18`, background: CARD }}
+          >
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+                {filterLabel} · {filtered.length} larva{filtered.length === 1 ? "" : "e"}
+              </p>
+              <p className="text-xs opacity-55">Tap a name to open answers</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {filtered.map((r) => (
+                <button
+                  key={r.wallet}
+                  type="button"
+                  onClick={() => setActive(r)}
+                  className="rounded-full border px-3 py-1.5 text-xs"
+                  style={{
+                    borderColor: active?.wallet === r.wallet ? CORAL : `${INK}22`,
+                    background: active?.wallet === r.wallet ? `${CORAL}14` : "transparent",
+                    color: active?.wallet === r.wallet ? CORAL : INK,
+                  }}
+                >
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          </section>
         )}
 
         {loading && !active ? (
@@ -659,25 +747,6 @@ export default function MoralClient() {
                 </div>
               ))}
             </div>
-
-            {results.length > 1 && (
-              <div className="mt-6 flex flex-wrap gap-2">
-                {results.slice(0, 24).map((r) => (
-                  <button
-                    key={r.wallet}
-                    type="button"
-                    onClick={() => setActive(r)}
-                    className="rounded-full border px-3 py-1 text-xs"
-                    style={{
-                      borderColor: active.wallet === r.wallet ? CORAL : `${INK}22`,
-                      background: active.wallet === r.wallet ? `${CORAL}14` : "transparent",
-                    }}
-                  >
-                    {r.name}
-                  </button>
-                ))}
-              </div>
-            )}
           </section>
         ) : (
           <p className="text-sm opacity-60">
