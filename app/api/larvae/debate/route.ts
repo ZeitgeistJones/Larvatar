@@ -172,10 +172,10 @@ export async function POST(req: NextRequest) {
         const raw = await haiku(
           `You are "${p.profile.name}", judging a short larva debate.
 Tone: ${p.profile.tone}. Stay in character.
-Reply with JSON only: {"pick":"a"|"b"|"tie","note":"one dry sentence"}
+Reply with JSON only: {"pick":"a"|"b"|"tie","note":"one dry sentence, under 220 characters"}
 "a" = ${nameA}, "b" = ${nameB}.`,
           `Topic: ${question}\n\nTranscript:\n${transcript}`,
-          200,
+          320,
           0.8
         );
         const clean = raw.replace(/```json|```/g, "").trim();
@@ -190,7 +190,7 @@ Reply with JSON only: {"pick":"a"|"b"|"tie","note":"one dry sentence"}
           wallet: p.wallet,
           name: p.profile.name,
           pick,
-          note: String(parsed.note || "").slice(0, 160),
+          note: String(parsed.note || "").slice(0, 280),
         });
       } catch {
         /* skip juror */
