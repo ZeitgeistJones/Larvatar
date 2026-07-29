@@ -385,6 +385,93 @@ export function speakOneLiner(line: string, voiceId?: string) {
   });
 }
 
+export type PrefetchedTtsClip = {
+  url: string;
+  text: string;
+};
+
+/** Fetch Gemini TTS clips in parallel — play later for snappy back-and-forth. */
+export async function prefetchGeminiClips(
+  items: {
+    text: string;
+    geminiVoice: string;
+    style?: "larva" | "take" | "standup" | "host";
+  }[]
+): Promise<(PrefetchedTtsClip | null)[]> {
+  if (typeof window === "undefined") return items.map(() => null);
+  return Promise.all(
+    items.map(async (it) => {
+      const spoken = it.text.trim();
+      if (!spoken) return null;
+      try {
+        const res = await fetch("/api/larvae-survey/announce", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: spoken,
+            provider: "gemini",
+            style: it.style || "larva",
+            geminiVoice: it.geminiVoice,
+          }),
+        });
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        return { url: URL.createObjectURL(blob), text: spoken };
+      } catch {
+        return null;
+      }
+    })
+  );
+}
+
+export function revokeTtsClips(clips: (PrefetchedTtsClip | null)[]) {
+  for (const c of clips) {
+    if (c?.url) URL.revokeObjectURL(c.url);
+  }
+}
+
+/** Play a prefetched clip (or browser fallback). Tight gaps between turns. */
+export function playTtsClip(
+  clip: PrefetchedTtsClip | null,
+  fallbackPitch = 1
+): Promise<void> {
+  if (muted || typeof window === "undefined") return Promise.resolve();
+  const token = ++announceToken;
+  stopAnnounceAudio();
+  duckBed(true);
+
+  if (!clip?.url) {
+    return announceBrowser(clip?.text || "", fallbackPitch);
+  }
+
+  return new Promise((resolve) => {
+    const audio = new Audio(clip.url);
+    announceAudio = audio;
+    const finish = () => {
+      if (token === announceToken) duckBed(false);
+      if (announceAudio === audio) announceAudio = null;
+      resolve();
+    };
+    audio.onended = finish;
+    audio.onerror = () => {
+      if (announceAudio === audio) announceAudio = null;
+      if (token === announceToken) {
+        void announceBrowser(clip.text, fallbackPitch).then(resolve);
+      } else {
+        resolve();
+      }
+    };
+    void audio.play().catch(() => {
+      if (announceAudio === audio) announceAudio = null;
+      if (token === announceToken) {
+        void announceBrowser(clip.text, fallbackPitch).then(resolve);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
 function playNeural(line: string, opts: TtsOpts): Promise<void> {
   if (muted || typeof window === "undefined") return Promise.resolve();
   const spoken = line.trim();

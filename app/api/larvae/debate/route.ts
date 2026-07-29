@@ -71,18 +71,8 @@ const STAGES: {
   },
   {
     side: "a",
-    label: "presses",
-    brief: "Press your case. Answer their last point and sharpen your argument.",
-  },
-  {
-    side: "b",
-    label: "counters",
-    brief: "Counter-punch. Hit their weak spot and restake your claim.",
-  },
-  {
-    side: "a",
     label: "closes",
-    brief: "Closing argument. Land a final punch. Do not concede unless it fits your character.",
+    brief: "Second and final turn. Answer their rebuttal and land a closing punch. Do not concede unless it fits.",
   },
   {
     side: "b",

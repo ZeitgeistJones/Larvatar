@@ -32,3 +32,26 @@ html.dark body {
   padding-right: max(1rem, env(safe-area-inset-right));
   padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
 }
+
+/* Larva “talking” bounce — used in debate / standup */
+@keyframes larva-talk {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-3px) scale(1.04, 0.96) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-1px) scale(0.98, 1.04) rotate(1.5deg);
+  }
+  75% {
+    transform: translateY(-4px) scale(1.05, 0.95) rotate(-1deg);
+  }
+}
+
+.larva-talking {
+  animation: larva-talk 0.38s ease-in-out infinite;
+  transform-origin: 50% 85%;
+  will-change: transform;
+}

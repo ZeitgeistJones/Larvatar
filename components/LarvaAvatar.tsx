@@ -26,6 +26,8 @@ type Props = {
   moral?: LarvaMoralAxes | null;
   quirks?: string[];
   conviction?: number | null;
+  /** Bounce / squish while TTS is playing. */
+  talking?: boolean;
 };
 
 /** Size-locked gumdrop — each body is a real silhouette change. */
@@ -902,6 +904,7 @@ export default function LarvaAvatar({
   moral,
   quirks,
   conviction,
+  talking = false,
 }: Props) {
   const t = deriveLarvatarTraits({
     hue,
@@ -928,6 +931,7 @@ export default function LarvaAvatar({
   if (t.portraitUrl) {
     return (
       <span
+        className={talking ? "larva-talking" : undefined}
         style={{
           display: "inline-block",
           width: size,
@@ -990,6 +994,16 @@ export default function LarvaAvatar({
   const rightScale = 1 - recipe.eyeAsymmetry * 0.5;
 
   return (
+    <span
+      className={talking ? "larva-talking" : undefined}
+      style={{
+        display: "inline-block",
+        width: size,
+        height: size,
+        flexShrink: 0,
+        lineHeight: 0,
+      }}
+    >
     <svg
       width={size}
       height={size}
@@ -1142,5 +1156,6 @@ export default function LarvaAvatar({
         </g>
       </g>
     </svg>
+    </span>
   );
 }
