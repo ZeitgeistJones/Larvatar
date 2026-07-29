@@ -28,6 +28,14 @@ export type MoralAnswer = {
   choice: number; // 1–4
 };
 
+/** EasyDamus choices often end in "?" (continuing "Do you:"). Strip for answer display. */
+export function formatMoralChoiceDisplay(text: string): string {
+  return String(text || "")
+    .trim()
+    .replace(/\?+$/, "")
+    .trim();
+}
+
 export type MoralResult = {
   wallet: string;
   name: string;

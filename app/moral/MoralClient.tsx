@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 import {
+  formatMoralChoiceDisplay,
   type MoralLabel,
   type MoralResult,
 } from "@/lib/moral";
@@ -798,7 +799,9 @@ export default function MoralClient() {
                 return (
                   <div key={a.id} className="border-t pt-3" style={{ borderColor: `${INK}12` }}>
                     <p className="text-xs font-medium opacity-55">{a.prompt}</p>
-                    <p className="mt-1.5 text-sm leading-snug">“{a.answer}”</p>
+                    <p className="mt-1.5 text-sm leading-snug">
+                      “{formatMoralChoiceDisplay(a.answer)}”
+                    </p>
                     {total > 0 && (
                       <div className="mt-2 space-y-1.5">
                         <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
@@ -818,11 +821,14 @@ export default function MoralClient() {
                             const wording =
                               choiceWording.get(`${a.id}:${opt}`) ||
                               `Option ${letter} (no larva picked this)`;
+                            const wordingDisplay = choiceWording.has(`${a.id}:${opt}`)
+                              ? formatMoralChoiceDisplay(wording)
+                              : wording;
                             return (
                               <button
                                 key={letter}
                                 type="button"
-                                title={wording}
+                                title={wordingDisplay}
                                 onClick={() =>
                                   setPeek((prev) =>
                                     prev?.qId === a.id && prev.choice === opt
@@ -893,7 +899,7 @@ export default function MoralClient() {
                               {"ABCD"[peeking - 1]}
                             </span>
                             {peekText ? (
-                              <>“{peekText}”</>
+                              <>“{formatMoralChoiceDisplay(peekText)}”</>
                             ) : (
                               <span className="opacity-60">Nobody picked this option.</span>
                             )}
