@@ -377,6 +377,53 @@ function MoralScatter({
   );
 }
 
+function AxisRoll({
+  title,
+  segments,
+  colors,
+  ink,
+}: {
+  title: string;
+  segments: { key: string; label: string; count: number; pct: number }[];
+  colors: string[];
+  ink: string;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 font-mono text-[10px] uppercase tracking-widest opacity-50">{title}</p>
+      <div
+        className="flex h-2.5 overflow-hidden rounded-full"
+        style={{ background: `${ink}10` }}
+        title={segments.map((s) => `${s.label} ${s.count} (${s.pct}%)`).join(" · ")}
+      >
+        {segments.map((s, i) =>
+          s.pct > 0 ? (
+            <div
+              key={s.key}
+              style={{
+                width: `${s.pct}%`,
+                background: colors[i] || ink,
+                opacity: 0.85,
+              }}
+            />
+          ) : null
+        )}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-widest opacity-60">
+        {segments.map((s, i) => (
+          <span key={s.key} className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{ background: colors[i] || ink }}
+            />
+            {s.label} {s.count} · {s.pct}%
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function MoralClient() {
   const { colors } = useTheme();
   const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD, sea: SEA } = colors;
@@ -491,6 +538,55 @@ export default function MoralClient() {
     }
     return m;
   }, [results]);
+
+  /** 1D axis rolls — True Neutral sits in Neutral on both (not its own bar slice). */
+  const axisRolls = useMemo(() => {
+    const n = (label: MoralLabel) => (byLabel.get(label) || []).length;
+    const total = results.length || 1;
+    const pct = (c: number) => Math.round((c / total) * 100);
+    const lawChaos = [
+      {
+        key: "lawful",
+        label: "Lawful",
+        count: n("Lawful Good") + n("Lawful Neutral") + n("Lawful Evil"),
+      },
+      {
+        key: "neutral",
+        label: "Neutral",
+        count: n("Neutral Good") + n("True Neutral") + n("Neutral Evil"),
+      },
+      {
+        key: "chaotic",
+        label: "Chaotic",
+        count: n("Chaotic Good") + n("Chaotic Neutral") + n("Chaotic Evil"),
+      },
+    ].map((x) => ({ ...x, pct: pct(x.count) }));
+    const goodEvil = [
+      {
+        key: "good",
+        label: "Good",
+        count: n("Lawful Good") + n("Neutral Good") + n("Chaotic Good"),
+      },
+      {
+        key: "neutral",
+        label: "Neutral",
+        count: n("Lawful Neutral") + n("True Neutral") + n("Chaotic Neutral"),
+      },
+      {
+        key: "evil",
+        label: "Evil",
+        count: n("Lawful Evil") + n("Neutral Evil") + n("Chaotic Evil"),
+      },
+    ].map((x) => ({ ...x, pct: pct(x.count) }));
+    const trueNeutral = n("True Neutral");
+    return {
+      lawChaos,
+      goodEvil,
+      trueNeutral,
+      trueNeutralPct: pct(trueNeutral),
+      total,
+    };
+  }, [byLabel, results.length]);
 
   const quadrantLarvae = useMemo(() => {
     if (!filterLabel) return results;
@@ -710,6 +806,26 @@ export default function MoralClient() {
             <span>← lawful</span>
             <span>chaotic →</span>
           </div>
+
+          {results.length > 0 && (
+            <div className="mt-5 space-y-3">
+              <AxisRoll
+                title="Law ↔ Chaos"
+                segments={axisRolls.lawChaos}
+                colors={[GOLD, `${INK}40`, CORAL]}
+                ink={INK}
+              />
+              <AxisRoll
+                title="Good ↔ Evil"
+                segments={axisRolls.goodEvil}
+                colors={[SEA, `${INK}40`, CORAL]}
+                ink={INK}
+              />
+              <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+                True Neutral (both axes) · {axisRolls.trueNeutral} · {axisRolls.trueNeutralPct}%
+              </p>
+            </div>
+          )}
         </section>
 
         {/* Roster right under compass — only the selected quadrant */}
