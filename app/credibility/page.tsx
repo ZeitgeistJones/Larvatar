@@ -38,7 +38,8 @@ type Larva = {
   conviction: number;
   lean: number;
   faction: number | null;
-  topAlly: { wallet: string; rate: number } | null;
+  topAlly: { wallet: string; rate: number; shared?: number } | null;
+  topRival?: { wallet: string; rate: number; shared?: number } | null;
 };
 
 type Payload = {
@@ -554,12 +555,30 @@ export default function CredibilityPage() {
                           {l.faction !== null && <span>cluster {l.faction + 1}</span>}
                           {l.topAlly && (
                             <span>
-                              closest:{" "}
+                              often with:{" "}
                               {data.larvae.find((x) => x.wallet === l.topAlly!.wallet)?.name ||
                                 data.larvae.find((x) => x.wallet === l.topAlly!.wallet)?.ens ||
                                 l.topAlly.wallet.slice(0, 8)}{" "}
                               ({Math.round(l.topAlly.rate * 100)}%)
                             </span>
+                          )}
+                          {l.topRival && (
+                            <span style={{ color: CORAL }}>
+                              often against:{" "}
+                              {data.larvae.find((x) => x.wallet === l.topRival!.wallet)?.name ||
+                                data.larvae.find((x) => x.wallet === l.topRival!.wallet)?.ens ||
+                                l.topRival.wallet.slice(0, 8)}{" "}
+                              ({Math.round(l.topRival.rate * 100)}%)
+                            </span>
+                          )}
+                          {(l.topAlly || l.topRival) && (
+                            <a
+                              href={`/debate?a=${l.wallet}${l.topRival ? `&b=${l.topRival.wallet}` : ""}`}
+                              className="underline-offset-2 hover:underline"
+                              style={{ color: CORAL }}
+                            >
+                              Debate →
+                            </a>
                           )}
                         </div>
                       </div>

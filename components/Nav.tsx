@@ -2,17 +2,19 @@
 // Shared top nav. Without this the new pages are unreachable — the root
 // redirects to /larvae and nothing links onward.
 //
-// Desktop (md+): chip row + theme toggle (unchanged).
-// Mobile (max-md): current page + Menu + theme; drawer with large tap rows.
+// Desktop (md+): field-guide chips + Games dropdown + theme.
+// Mobile (max-md): current page + Menu + theme; drawer with sectioned rows.
 
 "use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/ThemeProvider";
 
-const LINKS = [
+type NavLink = { href: string; label: string };
+
+const FIELD: NavLink[] = [
   { href: "/larvae", label: "Specimens" },
   { href: "/map", label: "Map" },
   { href: "/credibility", label: "Track Record" },
@@ -21,21 +23,39 @@ const LINKS = [
   { href: "/reception", label: "Reception" },
   { href: "/governance", label: "Governance" },
   { href: "/trends", label: "Topic Trends" },
-  { href: "/larvae-survey", label: "Survey Game" },
-  { href: "/hive-shark", label: "Hive Shark" },
   { href: "/about", label: "About" },
 ];
+
+const GAMES: NavLink[] = [
+  { href: "/larvae-survey", label: "Survey Game" },
+  { href: "/hive-shark", label: "Hive Shark" },
+  { href: "/debate", label: "Debate" },
+];
+
+const ALL = [...FIELD, ...GAMES];
+
+function chipStyle(active: boolean, ink: string, coral: string) {
+  return {
+    color: active ? coral : ink,
+    background: active ? `${coral}12` : "transparent",
+    opacity: active ? 1 : 0.55,
+  } as const;
+}
 
 export default function Nav() {
   const path = usePathname();
   const { dark, toggle, colors } = useTheme();
   const { ink, coral } = colors;
   const [open, setOpen] = useState(false);
+  const [gamesOpen, setGamesOpen] = useState(false);
+  const gamesRef = useRef<HTMLDivElement>(null);
 
-  const current = LINKS.find((l) => l.href === path)?.label || "Menu";
+  const current = ALL.find((l) => l.href === path)?.label || "Menu";
+  const gamesActive = GAMES.some((l) => l.href === path);
 
   useEffect(() => {
     setOpen(false);
+    setGamesOpen(false);
   }, [path]);
 
   useEffect(() => {
@@ -51,6 +71,22 @@ export default function Nav() {
       document.body.style.overflow = prev;
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!gamesOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!gamesRef.current?.contains(e.target as Node)) setGamesOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setGamesOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [gamesOpen]);
 
   const themeBtn = (
     <button
@@ -71,29 +107,68 @@ export default function Nav() {
 
   return (
     <nav className="mb-8 border-b pb-3 max-md:mb-5 max-md:pb-2" style={{ borderColor: `${ink}15` }}>
-      {/* Desktop: original chip row */}
+      {/* Desktop */}
       <div className="hidden flex-wrap items-center gap-1 md:flex">
-        {LINKS.map((l) => {
+        {FIELD.map((l) => {
           const active = path === l.href;
           return (
             <Link
               key={l.href}
               href={l.href}
               className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest transition-opacity"
-              style={{
-                color: active ? coral : ink,
-                background: active ? `${coral}12` : "transparent",
-                opacity: active ? 1 : 0.55,
-              }}
+              style={chipStyle(active, ink, coral)}
             >
               {l.label}
             </Link>
           );
         })}
+
+        <div className="relative" ref={gamesRef}>
+          <button
+            type="button"
+            onClick={() => setGamesOpen((v) => !v)}
+            className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest transition-opacity"
+            style={chipStyle(gamesActive || gamesOpen, ink, coral)}
+            aria-expanded={gamesOpen}
+            aria-haspopup="menu"
+          >
+            Games {gamesOpen ? "▴" : "▾"}
+          </button>
+          {gamesOpen && (
+            <div
+              role="menu"
+              className="absolute left-0 top-full z-50 mt-1 min-w-[10.5rem] rounded-lg border py-1 shadow-lg"
+              style={{
+                background: dark ? "#151b22" : "#fff",
+                borderColor: `${ink}18`,
+              }}
+            >
+              {GAMES.map((l) => {
+                const active = path === l.href;
+                return (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    role="menuitem"
+                    onClick={() => setGamesOpen(false)}
+                    className="block px-3 py-2 font-mono text-[10px] uppercase tracking-widest"
+                    style={{
+                      color: active ? coral : ink,
+                      background: active ? `${coral}12` : "transparent",
+                    }}
+                  >
+                    {l.label}
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         <div className="ml-auto">{themeBtn}</div>
       </div>
 
-      {/* Mobile: compact bar + drawer */}
+      {/* Mobile bar */}
       <div className="flex items-center gap-2 md:hidden">
         <p
           className="min-w-0 flex-1 truncate font-mono text-[11px] uppercase tracking-widest"
@@ -138,8 +213,35 @@ export default function Nav() {
                 Close
               </button>
             </div>
+
+            <p className="mb-1 px-4 font-mono text-[10px] uppercase tracking-widest opacity-40">
+              Field guide
+            </p>
+            <div className="mb-4 flex flex-col gap-1">
+              {FIELD.map((l) => {
+                const active = path === l.href;
+                return (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    onClick={() => setOpen(false)}
+                    className="flex min-h-11 items-center rounded-lg px-4 font-mono text-xs uppercase tracking-widest"
+                    style={{
+                      color: active ? coral : ink,
+                      background: active ? `${coral}14` : "transparent",
+                    }}
+                  >
+                    {l.label}
+                  </Link>
+                );
+              })}
+            </div>
+
+            <p className="mb-1 px-4 font-mono text-[10px] uppercase tracking-widest opacity-40">
+              Games
+            </p>
             <div className="flex flex-col gap-1">
-              {LINKS.map((l) => {
+              {GAMES.map((l) => {
                 const active = path === l.href;
                 return (
                   <Link

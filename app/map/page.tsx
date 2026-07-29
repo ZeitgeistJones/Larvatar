@@ -37,7 +37,8 @@ type Larva = {
   conviction: number;
   lean: number;
   faction: number | null;
-  topAlly: { wallet: string; rate: number } | null;
+  topAlly: { wallet: string; rate: number; shared?: number } | null;
+  topRival?: { wallet: string; rate: number; shared?: number } | null;
 };
 
 type Faction = {
@@ -791,17 +792,38 @@ export default function MapPage() {
                     <StanceBar breakdown={selected.breakdown} total={selected.posts} />
                   </div>
 
-                  {selected.topAlly && (
-                    <p className="mt-4 text-sm opacity-75">
-                      Votes with{" "}
-                      <strong>
-                        {data.larvae.find((l) => l.wallet === selected.topAlly!.wallet)?.name ||
-                          data.larvae.find((l) => l.wallet === selected.topAlly!.wallet)?.ens ||
-                          selected.topAlly.wallet.slice(0, 8)}
-                      </strong>{" "}
-                      {Math.round(selected.topAlly.rate * 100)}% of the time — its closest
-                      neighbour in the swarm.
-                    </p>
+                  {(selected.topAlly || selected.topRival) && (
+                    <div className="mt-4 space-y-2 text-sm opacity-75">
+                      {selected.topAlly && (
+                        <p>
+                          Often with{" "}
+                          <strong>
+                            {data.larvae.find((l) => l.wallet === selected.topAlly!.wallet)?.name ||
+                              selected.topAlly.wallet.slice(0, 8)}
+                          </strong>{" "}
+                          ({Math.round(selected.topAlly.rate * 100)}% agree).
+                        </p>
+                      )}
+                      {selected.topRival && (
+                        <p>
+                          Often against{" "}
+                          <strong style={{ color: CORAL }}>
+                            {data.larvae.find((l) => l.wallet === selected.topRival!.wallet)?.name ||
+                              selected.topRival.wallet.slice(0, 8)}
+                          </strong>{" "}
+                          ({Math.round(selected.topRival.rate * 100)}% agree).
+                        </p>
+                      )}
+                      <a
+                        href={`/debate?a=${selected.wallet}${
+                          selected.topRival ? `&b=${selected.topRival.wallet}` : ""
+                        }`}
+                        className="inline-block font-mono text-[10px] uppercase tracking-widest"
+                        style={{ color: CORAL }}
+                      >
+                        Debate →
+                      </a>
+                    </div>
                   )}
                 </section>
               )}

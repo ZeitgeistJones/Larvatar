@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
@@ -12,6 +13,8 @@ type MoralBadge = {
   lawChaos: number;
   goodEvil: number;
 };
+
+type PeerLink = { wallet: string; rate: number; shared?: number };
 
 type Larva = {
   wallet: string;
@@ -33,6 +36,8 @@ type Larva = {
   moral?: MoralBadge | null;
   voiceId?: string;
   voiceLabel?: string;
+  topAlly?: PeerLink | null;
+  topRival?: PeerLink | null;
 };
 
 type Answer = {
@@ -459,6 +464,67 @@ export default function LarvaePage() {
                             <span className="font-mono uppercase tracking-widest">quirks:</span>{" "}
                             {l.profile.quirks.join(" · ")}
                           </p>
+                        )}
+                        {(l.topAlly || l.topRival) && (
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            {l.topAlly && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpanded(l.topAlly!.wallet);
+                                }}
+                                className="rounded-lg border px-2.5 py-2 text-left"
+                                style={{ borderColor: `${INK}18`, background: `${INK}04` }}
+                              >
+                                <p className="font-mono text-[9px] uppercase tracking-widest opacity-45">
+                                  often with
+                                </p>
+                                <p className="mt-0.5 truncate text-xs font-semibold">
+                                  {larvae.find((x) => x.wallet === l.topAlly!.wallet)?.profile.name ||
+                                    l.topAlly.wallet.slice(0, 8)}
+                                </p>
+                                <p className="font-mono text-[10px] opacity-50">
+                                  {Math.round(l.topAlly.rate * 100)}% agree
+                                </p>
+                              </button>
+                            )}
+                            {l.topRival && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpanded(l.topRival!.wallet);
+                                }}
+                                className="rounded-lg border px-2.5 py-2 text-left"
+                                style={{ borderColor: `${CORAL}35`, background: `${CORAL}08` }}
+                              >
+                                <p
+                                  className="font-mono text-[9px] uppercase tracking-widest"
+                                  style={{ color: CORAL, opacity: 0.8 }}
+                                >
+                                  often against
+                                </p>
+                                <p className="mt-0.5 truncate text-xs font-semibold">
+                                  {larvae.find((x) => x.wallet === l.topRival!.wallet)?.profile
+                                    .name || l.topRival.wallet.slice(0, 8)}
+                                </p>
+                                <p className="font-mono text-[10px] opacity-50">
+                                  {Math.round(l.topRival.rate * 100)}% agree
+                                </p>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {(l.topAlly || l.topRival) && (
+                          <Link
+                            href={`/debate?a=${l.wallet}${l.topRival ? `&b=${l.topRival.wallet}` : ""}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="block w-full rounded-lg border px-4 py-2 text-center font-mono text-[10px] uppercase tracking-widest opacity-70 hover:opacity-100"
+                            style={{ borderColor: `${INK}28` }}
+                          >
+                            Debate them
+                          </Link>
                         )}
                         <p className="font-mono text-[10px] opacity-45">
                           forum {l.sources.forum} · labs {l.sources.labs}

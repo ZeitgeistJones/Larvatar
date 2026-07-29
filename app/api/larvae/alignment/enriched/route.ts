@@ -62,15 +62,30 @@ export async function GET() {
     for (const m of f.members) factionOf.set(m, f.id);
   }
 
-  // Strongest ally per larva — the single highest agreement rate with enough
-  // shared posts to mean anything.
-  const bestAlly = new Map<string, { wallet: string; rate: number }>();
+  // Strongest ally / fiercest rival per larva — enough shared posts to mean anything.
+  const bestAlly = new Map<string, { wallet: string; rate: number; total: number }>();
+  const bestRival = new Map<string, { wallet: string; rate: number; total: number }>();
   for (const p of result.pairs) {
     if (p.total < 10) continue;
-    const cur = bestAlly.get(p.a);
-    if (!cur || p.rate > cur.rate) bestAlly.set(p.a, { wallet: p.b, rate: p.rate });
-    const cur2 = bestAlly.get(p.b);
-    if (!cur2 || p.rate > cur2.rate) bestAlly.set(p.b, { wallet: p.a, rate: p.rate });
+    const consider = (
+      map: Map<string, { wallet: string; rate: number; total: number }>,
+      self: string,
+      other: string,
+      preferHigh: boolean
+    ) => {
+      const cur = map.get(self);
+      if (
+        !cur ||
+        (preferHigh ? p.rate > cur.rate : p.rate < cur.rate) ||
+        (p.rate === cur.rate && p.total > cur.total)
+      ) {
+        map.set(self, { wallet: other, rate: p.rate, total: p.total });
+      }
+    };
+    consider(bestAlly, p.a, p.b, true);
+    consider(bestAlly, p.b, p.a, true);
+    consider(bestRival, p.a, p.b, false);
+    consider(bestRival, p.b, p.a, false);
   }
 
   const ens = await lookupEnsMany(result.credibility.map((c) => c.wallet));
@@ -84,6 +99,10 @@ export async function GET() {
   const larvae = result.credibility.map((c, i) => {
     const p = profiles[i];
     const ally = bestAlly.get(c.wallet) || null;
+    const rival = bestRival.get(c.wallet) || null;
+    // Don't show the same wallet as both ally and rival when the matrix is thin.
+    const rivalClean =
+      rival && ally && rival.wallet === ally.wallet ? null : rival;
     const moral = morals[i];
     return {
       wallet: c.wallet,
@@ -108,7 +127,12 @@ export async function GET() {
       conviction: conviction(c.breakdown, c.posts),
       lean: lean(c.breakdown),
       faction: factionOf.get(c.wallet) ?? null,
-      topAlly: ally,
+      topAlly: ally
+        ? { wallet: ally.wallet, rate: ally.rate, shared: ally.total }
+        : null,
+      topRival: rivalClean
+        ? { wallet: rivalClean.wallet, rate: rivalClean.rate, shared: rivalClean.total }
+        : null,
     };
   });
 
