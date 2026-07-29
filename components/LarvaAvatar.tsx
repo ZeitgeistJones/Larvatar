@@ -701,6 +701,56 @@ function Accessory({
       </g>
     );
   }
+  if (kind === "straw-hat") {
+    // One Piece–style: tan straw crown + wide brim + red ribbon.
+    const y = faceY - 14;
+    const straw = "#E8C547";
+    const strawDeep = "#C9A227";
+    const strawEdge = "#8B6914";
+    const ribbon = "#C41E3A";
+    return (
+      <g>
+        <ellipse cx="0" cy={y + 4.2} rx="16.5" ry="4.4" fill={strawDeep} stroke={strawEdge} strokeWidth="0.9" />
+        <ellipse cx="0" cy={y + 3.4} rx="15.5" ry="3.6" fill={straw} />
+        <ellipse cx="0" cy={y + 2.6} rx="10" ry="1.8" fill={strawDeep} opacity="0.35" />
+        <path
+          d={`M -8.2 ${y + 2.2} L -7.6 ${y - 7.2} Q 0 ${y - 10.5} 7.6 ${y - 7.2} L 8.2 ${y + 2.2} Z`}
+          fill={straw}
+          stroke={strawEdge}
+          strokeWidth="0.85"
+        />
+        <path
+          d={`M -7.2 ${y - 1} Q 0 ${y - 3.2} 7.2 ${y - 1}`}
+          fill="none"
+          stroke={strawDeep}
+          strokeWidth="0.7"
+          opacity="0.55"
+        />
+        <path
+          d={`M -8.4 ${y + 0.6} Q 0 ${y + 2.4} 8.4 ${y + 0.6}`}
+          fill="none"
+          stroke={ribbon}
+          strokeWidth="2.7"
+          strokeLinecap="round"
+        />
+        <path
+          d={`M 7.2 ${y + 1.1} Q 11.5 ${y + 3.2} 10.2 ${y + 7.5}`}
+          fill="none"
+          stroke={ribbon}
+          strokeWidth="1.9"
+          strokeLinecap="round"
+        />
+        <path
+          d={`M 7.6 ${y + 1.4} Q 9.8 ${y + 4.5} 8.4 ${y + 6.8}`}
+          fill="none"
+          stroke={ribbon}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          opacity="0.85"
+        />
+      </g>
+    );
+  }
   return null;
 }
 
@@ -822,6 +872,9 @@ export default function LarvaAvatar({
     wallet,
     partial: { hue, tone, ...(traits || {}) },
   });
+  // Flywheel sails with Luffy energy — forced One Piece straw hat.
+  const accessory: AvatarAccessory =
+    label?.trim().toLowerCase() === "flywheel" ? "straw-hat" : t.accessory;
   const recipe: LarvaLookRecipe = larvaLookRecipe({
     body: t.body,
     wallet,
@@ -829,7 +882,7 @@ export default function LarvaAvatar({
     moral,
     conviction,
   });
-  const aria = label || `larvatar, ${t.tone}, ${recipe.displayBody}, ${t.accessory}`;
+  const aria = label || `larvatar, ${t.tone}, ${recipe.displayBody}, ${accessory}`;
 
   // Fixed size×size box — PNG and SVG share the same footprint so cards never jump.
   if (t.portraitUrl) {
@@ -871,7 +924,7 @@ export default function LarvaAvatar({
   const tilt = poseTilt(t.pose, seed, mood.wobble + recipe.wobble);
 
   const accentHue = (t.accent + mood.accentShift + 360) % 360;
-  const gid = `larva-${t.hue}-${recipe.displayBody}-${t.eyes}-${t.accessory}-${seed.toString(36)}`;
+  const gid = `larva-${t.hue}-${recipe.displayBody}-${t.eyes}-${accessory}-${seed.toString(36)}`;
   const bodyGradId = `${gid}-body`;
   const bellyGradId = `${gid}-belly`;
 
@@ -1011,7 +1064,7 @@ export default function LarvaAvatar({
           kink={recipe.antennaKink}
         />
 
-        <Accessory kind={t.accessory} accent={accentHue} faceY={geom.faceY} rx={geom.rx} />
+        <Accessory kind={accessory} accent={accentHue} faceY={geom.faceY} rx={geom.rx} />
 
         <SignatureMark mark={recipe.mark} faceY={geom.faceY} dark={dark} hue={t.hue} />
 

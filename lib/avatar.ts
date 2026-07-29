@@ -21,7 +21,8 @@ export type AvatarAccessory =
   | "leaf"
   | "patch"
   | "spike"
-  | "leaf-crown";
+  | "leaf-crown"
+  | "straw-hat";
 
 export type AvatarShell = "smooth" | "ridged" | "spiky" | "fluffy";
 export type AvatarMark = "none" | "scar" | "freckles" | "notch" | "blush-heavy" | "stripe";
@@ -90,6 +91,7 @@ const ACCESSORIES: AvatarAccessory[] = [
   "patch",
   "spike",
   "leaf-crown",
+  "straw-hat",
 ];
 
 const BODY_FAMILY: Record<AvatarBody, AvatarBody[]> = {
