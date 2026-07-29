@@ -873,8 +873,11 @@ export default function LarvaAvatar({
     partial: { hue, tone, ...(traits || {}) },
   });
   // Flywheel sails with Luffy energy — forced One Piece straw hat.
-  const accessory: AvatarAccessory =
-    label?.trim().toLowerCase() === "flywheel" ? "straw-hat" : t.accessory;
+  const flywheelWallet = "0x36af040970cbb787011e2764b30c4e3f77ef4901";
+  const isFlywheel =
+    label?.trim().toLowerCase() === "flywheel" ||
+    wallet?.trim().toLowerCase() === flywheelWallet;
+  const accessory: AvatarAccessory = isFlywheel ? "straw-hat" : t.accessory;
   const recipe: LarvaLookRecipe = larvaLookRecipe({
     body: t.body,
     wallet,
