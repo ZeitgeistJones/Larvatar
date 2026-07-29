@@ -14,8 +14,8 @@ const GRID: MoralLabel[][] = [
   ["Lawful Evil", "Neutral Evil", "Chaotic Evil"],
 ];
 
-const W = 1080;
-const H = 1080;
+const W = 1024;
+const H = 1024;
 
 export default function ShareCompassClient() {
   const { colors, dark } = useTheme();
@@ -343,7 +343,9 @@ export default function ShareCompassClient() {
           <p className="mt-2 text-sm opacity-65">
             Pair for posts: compass split, then the scatter with your stand-in marked. Highlight
             defaults to <span className="font-semibold">{meName}</span> — override with{" "}
-            <code className="text-xs opacity-80">?me=Name</code>.
+            <code className="text-xs opacity-80">?me=Name</code>. Both export at{" "}
+            <strong>1024×1024</strong> so they match as a set. Map uses live dots (don’t
+            AI-redraw it).
           </p>
         </header>
 
