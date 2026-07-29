@@ -677,6 +677,8 @@ export default function MoralClient() {
               const cell = byLabel.get(label) || [];
               const selected = filterLabel === label;
               const empty = cell.length === 0;
+              const total = results.length || 1;
+              const pct = Math.round((cell.length / total) * 100);
               return (
                 <button
                   key={label}
@@ -695,6 +697,7 @@ export default function MoralClient() {
                   </p>
                   <p className="mt-1 text-lg font-bold" style={{ color: selected ? CORAL : INK }}>
                     {cell.length}
+                    <span className="ml-1.5 text-xs font-semibold opacity-50">{pct}%</span>
                   </p>
                   {cell[0] && (
                     <p className="mt-1 truncate text-xs opacity-60">{cell[0].name}</p>
