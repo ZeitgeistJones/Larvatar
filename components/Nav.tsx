@@ -19,7 +19,6 @@ const FIELD: NavLink[] = [
   { href: "/map", label: "Map" },
   { href: "/credibility", label: "Track Record" },
   { href: "/moral", label: "Moral Test" },
-  { href: "/standup", label: "Stand-Up" },
   { href: "/reception", label: "Reception" },
   { href: "/governance", label: "Governance" },
   { href: "/trends", label: "Topic Trends" },
@@ -27,6 +26,7 @@ const FIELD: NavLink[] = [
 ];
 
 const GAMES: NavLink[] = [
+  { href: "/standup", label: "Stand-Up" },
   { href: "/larvae-survey", label: "Survey Game" },
   { href: "/hive-shark", label: "Hive Shark" },
   { href: "/debate", label: "Debate" },
