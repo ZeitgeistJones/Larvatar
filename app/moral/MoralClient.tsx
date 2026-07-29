@@ -19,8 +19,13 @@ type ListPayload = {
 
 type Specimen = {
   wallet: string;
+  ens?: string | null;
   profile: { name: string; tone: string };
 };
+
+function shortWallet(wallet: string) {
+  return `${wallet.slice(0, 6)}…${wallet.slice(-4)}`;
+}
 
 function walletHue(wallet: string): number {
   let h = 0;
@@ -884,7 +889,14 @@ export default function MoralClient() {
                   {active.answers.length} answers
                   {active.scores ? ` · margin ${activeMargin}` : ""}
                 </p>
-                <h2 className="text-2xl font-bold">{active.name}</h2>
+                <h2 className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 text-2xl font-bold">
+                  <span>{active.name}</span>
+                  <span className="font-mono text-sm font-normal opacity-45">
+                    {specimens.find(
+                      (s) => s.wallet.toLowerCase() === active.wallet.toLowerCase()
+                    )?.ens || shortWallet(active.wallet)}
+                  </span>
+                </h2>
               </div>
               <p
                 className="rounded-full px-3 py-1 font-mono text-xs uppercase tracking-widest text-white"
