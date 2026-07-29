@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 import { type MoralLabel, type MoralResult } from "@/lib/moral";
+import { moralMapCoords, moralMargin } from "@/lib/moral-map";
 
 const GRID: MoralLabel[][] = [
   ["Lawful Good", "Neutral Good", "Chaotic Good"],
@@ -12,10 +14,17 @@ const GRID: MoralLabel[][] = [
   ["Lawful Evil", "Neutral Evil", "Chaotic Evil"],
 ];
 
+const W = 1080;
+const H = 1080;
+
 export default function ShareCompassClient() {
   const { colors, dark } = useTheme();
   const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD, sea: SEA } = colors;
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const params = useSearchParams();
+  const meName = (params.get("me") || "Successionist").trim();
+
+  const compassRef = useRef<HTMLCanvasElement>(null);
+  const mapRef = useRef<HTMLCanvasElement>(null);
   const [results, setResults] = useState<MoralResult[]>([]);
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
@@ -26,48 +35,38 @@ export default function ShareCompassClient() {
     return m;
   }, [results]);
 
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
+  const drawCompass = useCallback(() => {
+    const canvas = compassRef.current;
     if (!canvas || results.length === 0) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    const W = 1080;
-    const H = 1080;
     canvas.width = W;
     canvas.height = H;
 
     const by = counts();
     const total = results.length || 1;
-    const pct = (n: number) => Math.round((n / total) * 100);
+    const pct = (c: number) => Math.round((c / total) * 100);
     const n = (l: MoralLabel) => by.get(l) || 0;
 
-    // Background
     ctx.fillStyle = dark ? "#12171d" : "#e8eef2";
     ctx.fillRect(0, 0, W, H);
 
-    // Eyebrow
     ctx.fillStyle = CORAL;
-    ctx.font = "600 22px ui-monospace, SFMono-Regular, Menlo, monospace";
-    ctx.letterSpacing = "4px";
-    ctx.fillText("LARV.AI FIELD GUIDE", 72, 90);
+    ctx.font = "600 20px ui-monospace, Menlo, monospace";
+    ctx.fillText("LARV.AI FIELD GUIDE", 64, 72);
 
-    // Title
     ctx.fillStyle = INK;
-    ctx.font = "800 72px system-ui, Segoe UI, sans-serif";
-    ctx.letterSpacing = "0px";
-    ctx.fillText("Hive Compass", 72, 175);
+    ctx.font = "800 44px system-ui, Segoe UI, sans-serif";
+    wrapText(ctx, `I ran ${total} larva proxies through the EasyDamus test.`, 64, 130, W - 128, 52);
+    ctx.fillStyle = dark ? "rgba(255,255,255,0.6)" : "rgba(20,30,40,0.6)";
+    ctx.font = "600 28px system-ui, Segoe UI, sans-serif";
+    ctx.fillText("Here's how the hive landed.", 64, 240);
 
-    ctx.fillStyle = dark ? "rgba(255,255,255,0.55)" : "rgba(20,30,40,0.55)";
-    ctx.font = "500 26px system-ui, Segoe UI, sans-serif";
-    ctx.fillText(`${total} larvae tested · EasyDamus alignment`, 72, 220);
-
-    // Grid
-    const originX = 72;
-    const originY = 270;
-    const gap = 16;
-    const cellW = (W - 144 - gap * 2) / 3;
-    const cellH = 150;
+    const originX = 64;
+    const originY = 280;
+    const gap = 14;
+    const cellW = (W - 128 - gap * 2) / 3;
+    const cellH = 132;
 
     const rowTint = (row: number) => {
       if (row === 0) return dark ? `${SEA}33` : `${SEA}28`;
@@ -80,32 +79,27 @@ export default function ShareCompassClient() {
         const x = originX + ci * (cellW + gap);
         const y = originY + ri * (cellH + gap);
         const c = n(label);
-        const p = pct(c);
-
-        // card
+        roundRect(ctx, x, y, cellW, cellH, 16);
         ctx.fillStyle = rowTint(ri);
-        roundRect(ctx, x, y, cellW, cellH, 18);
         ctx.fill();
         ctx.strokeStyle = dark ? "rgba(255,255,255,0.1)" : "rgba(20,30,40,0.12)";
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
         ctx.fillStyle = dark ? "rgba(255,255,255,0.5)" : "rgba(20,30,40,0.5)";
-        ctx.font = "600 16px ui-monospace, Menlo, monospace";
-        ctx.fillText(label.toUpperCase(), x + 20, y + 36);
+        ctx.font = "600 15px ui-monospace, Menlo, monospace";
+        ctx.fillText(label.toUpperCase(), x + 18, y + 32);
 
         ctx.fillStyle = c === 0 ? (dark ? "rgba(255,255,255,0.25)" : "rgba(20,30,40,0.28)") : INK;
-        ctx.font = "800 48px system-ui, Segoe UI, sans-serif";
-        ctx.fillText(String(c), x + 20, y + 95);
-
+        ctx.font = "800 44px system-ui, Segoe UI, sans-serif";
+        ctx.fillText(String(c), x + 18, y + 88);
         ctx.fillStyle = dark ? "rgba(255,255,255,0.45)" : "rgba(20,30,40,0.45)";
-        ctx.font = "600 22px system-ui, Segoe UI, sans-serif";
-        ctx.fillText(`${p}%`, x + 20 + ctx.measureText(String(c)).width + 14, y + 95);
+        ctx.font = "600 20px system-ui, Segoe UI, sans-serif";
+        ctx.fillText(`${pct(c)}%`, x + 18 + ctx.measureText(String(c)).width + 12, y + 88);
       });
     });
 
-    // Axis bars
-    const barY0 = originY + 3 * (cellH + gap) + 36;
+    const barY0 = originY + 3 * (cellH + gap) + 28;
     const law = [
       { label: "Lawful", count: n("Lawful Good") + n("Lawful Neutral") + n("Lawful Evil"), color: GOLD },
       {
@@ -128,24 +122,132 @@ export default function ShareCompassClient() {
       },
       { label: "Evil", count: n("Lawful Evil") + n("Neutral Evil") + n("Chaotic Evil"), color: CORAL },
     ];
+    drawBar(ctx, "LAW ↔ CHAOS", law, 64, barY0, W - 128, total, dark);
+    drawBar(ctx, "GOOD ↔ EVIL", good, 64, barY0 + 100, W - 128, total, dark);
 
-    drawBar(ctx, "LAW ↔ CHAOS", law, 72, barY0, W - 144, total, INK, dark);
-    drawBar(ctx, "GOOD ↔ EVIL", good, 72, barY0 + 110, W - 144, total, INK, dark);
+    ctx.fillStyle = dark ? "rgba(255,255,255,0.55)" : "rgba(20,30,40,0.55)";
+    ctx.font = "italic 600 26px Georgia, serif";
+    ctx.fillText("The real larvae would hate this.", 64, H - 100);
 
-    const tn = n("True Neutral");
-    ctx.fillStyle = dark ? "rgba(255,255,255,0.45)" : "rgba(20,30,40,0.45)";
-    ctx.font = "600 18px ui-monospace, Menlo, monospace";
-    ctx.fillText(`TRUE NEUTRAL (BOTH AXES)  ·  ${tn}  ·  ${pct(tn)}%`, 72, barY0 + 230);
-
-    // Footer
     ctx.fillStyle = dark ? "rgba(255,255,255,0.4)" : "rgba(20,30,40,0.4)";
     ctx.font = "600 18px ui-monospace, Menlo, monospace";
-    ctx.fillText("larvatar.vercel.app", 72, H - 56);
-    const right = "proxies of proxies";
-    ctx.fillText(right, W - 72 - ctx.measureText(right).width, H - 56);
-
-    setReady(true);
+    ctx.fillText("proxies of proxies", 64, H - 52);
+    const right = "larvatar.vercel.app · 1/2";
+    ctx.fillText(right, W - 64 - ctx.measureText(right).width, H - 52);
   }, [CORAL, GOLD, INK, SEA, counts, dark, results]);
+
+  const drawMap = useCallback(() => {
+    const canvas = mapRef.current;
+    if (!canvas || results.length === 0) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    canvas.width = W;
+    canvas.height = H;
+
+    const total = results.length;
+    ctx.fillStyle = dark ? "#12171d" : "#e8eef2";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = CORAL;
+    ctx.font = "600 20px ui-monospace, Menlo, monospace";
+    ctx.fillText("LARV.AI FIELD GUIDE", 64, 72);
+
+    ctx.fillStyle = INK;
+    ctx.font = "800 56px system-ui, Segoe UI, sans-serif";
+    ctx.fillText("Moral Map", 64, 145);
+    ctx.fillStyle = dark ? "rgba(255,255,255,0.55)" : "rgba(20,30,40,0.55)";
+    ctx.font = "500 24px system-ui, Segoe UI, sans-serif";
+    ctx.fillText(`${total} proxies plotted · Law ↔ Chaos × Good ↔ Evil`, 64, 185);
+
+    const pad = { l: 110, r: 64, t: 230, b: 160 };
+    const plotW = W - pad.l - pad.r;
+    const plotH = H - pad.t - pad.b;
+    const plotX = pad.l;
+    const plotY = pad.t;
+
+    // quadrant washes
+    const midX = plotX + plotW / 2;
+    const midY = plotY + plotH / 2;
+    ctx.fillStyle = dark ? `${SEA}22` : `${SEA}18`;
+    ctx.fillRect(plotX, plotY, plotW, plotH / 2);
+    ctx.fillStyle = dark ? `${CORAL}22` : `${CORAL}14`;
+    ctx.fillRect(plotX, midY, plotW, plotH / 2);
+
+    ctx.strokeStyle = dark ? "rgba(255,255,255,0.12)" : "rgba(20,30,40,0.14)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(plotX, plotY, plotW, plotH);
+    ctx.setLineDash([8, 8]);
+    ctx.beginPath();
+    ctx.moveTo(midX, plotY);
+    ctx.lineTo(midX, plotY + plotH);
+    ctx.moveTo(plotX, midY);
+    ctx.lineTo(plotX + plotW, midY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = dark ? "rgba(255,255,255,0.45)" : "rgba(20,30,40,0.45)";
+    ctx.font = "600 14px ui-monospace, Menlo, monospace";
+    ctx.fillText("GOOD", midX - 20, plotY - 12);
+    ctx.fillText("EVIL", midX - 16, plotY + plotH + 28);
+    ctx.fillText("LAWFUL", plotX, plotY + plotH + 52);
+    ctx.fillText("CHAOTIC", plotX + plotW - 70, plotY + plotH + 52);
+
+    const me = results.find((r) => r.name.toLowerCase() === meName.toLowerCase());
+    let mePt: { x: number; y: number; r: MoralResult } | null = null;
+
+    for (const r of results) {
+      const { x, y } = moralMapCoords(r);
+      const px = plotX + ((x + 1) / 2) * plotW;
+      const py = plotY + ((y + 1) / 2) * plotH;
+      const margin = moralMargin(r);
+      const rad = 4 + Math.min(6, margin / 8);
+      const hue = walletHue(r.wallet);
+      ctx.beginPath();
+      ctx.arc(px, py, rad, 0, Math.PI * 2);
+      ctx.fillStyle = `hsl(${hue} 58% 52%)`;
+      ctx.fill();
+      if (me && r.wallet === me.wallet) mePt = { x: px, y: py, r };
+    }
+
+    if (mePt) {
+      ctx.beginPath();
+      ctx.arc(mePt.x, mePt.y, 14, 0, Math.PI * 2);
+      ctx.strokeStyle = CORAL;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(mePt.x, mePt.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = CORAL;
+      ctx.fill();
+
+      // annotation
+      const ax = Math.min(mePt.x + 18, plotX + plotW - 200);
+      const ay = Math.max(mePt.y - 10, plotY + 24);
+      ctx.strokeStyle = CORAL;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(mePt.x + 12, mePt.y);
+      ctx.lineTo(ax, ay);
+      ctx.stroke();
+      ctx.fillStyle = INK;
+      ctx.font = "700 22px system-ui, Segoe UI, sans-serif";
+      ctx.fillText(mePt.r.name, ax + 6, ay - 4);
+      ctx.fillStyle = dark ? "rgba(255,255,255,0.5)" : "rgba(20,30,40,0.5)";
+      ctx.font = "600 16px ui-monospace, Menlo, monospace";
+      ctx.fillText("builder's stand-in", ax + 6, ay + 18);
+      ctx.fillText(mePt.r.label, ax + 6, ay + 38);
+    }
+
+    ctx.fillStyle = dark ? "rgba(255,255,255,0.55)" : "rgba(20,30,40,0.55)";
+    ctx.font = "italic 600 26px Georgia, serif";
+    ctx.fillText("The real larvae would hate this.", 64, H - 100);
+
+    ctx.fillStyle = dark ? "rgba(255,255,255,0.4)" : "rgba(20,30,40,0.4)";
+    ctx.font = "600 18px ui-monospace, Menlo, monospace";
+    ctx.fillText("proxies of proxies", 64, H - 52);
+    const right = "larvatar.vercel.app · 2/2";
+    ctx.fillText(right, W - 64 - ctx.measureText(right).width, H - 52);
+  }, [CORAL, INK, SEA, dark, meName, results]);
 
   useEffect(() => {
     fetch("/api/larvae/moral")
@@ -158,21 +260,30 @@ export default function ShareCompassClient() {
   }, []);
 
   useEffect(() => {
-    draw();
-  }, [draw]);
+    if (results.length === 0) return;
+    drawCompass();
+    drawMap();
+    setReady(true);
+  }, [results, drawCompass, drawMap]);
 
-  function download() {
-    const canvas = canvasRef.current;
+  function downloadCanvas(canvas: HTMLCanvasElement | null, name: string) {
     if (!canvas) return;
     canvas.toBlob((blob) => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `larvatar-hive-compass-${results.length}.png`;
+      a.download = name;
       a.click();
       URL.revokeObjectURL(url);
     }, "image/png");
+  }
+
+  function downloadBoth() {
+    downloadCanvas(compassRef.current, `larvatar-hive-compass-${results.length}.png`);
+    setTimeout(() => {
+      downloadCanvas(mapRef.current, `larvatar-moral-map-${results.length}.png`);
+    }, 250);
   }
 
   return (
@@ -181,11 +292,13 @@ export default function ShareCompassClient() {
         <Nav />
         <header className="mb-6">
           <p className="font-mono text-xs uppercase tracking-widest" style={{ color: CORAL }}>
-            share
+            share · two cards
           </p>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight">Hive Compass card</h1>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">Hive Compass + Moral Map</h1>
           <p className="mt-2 text-sm opacity-65">
-            Live counts from the moral build. Download a square PNG for posts / Discord.
+            Pair for posts: compass split, then the scatter with your stand-in marked. Highlight
+            defaults to <span className="font-semibold">{meName}</span> — override with{" "}
+            <code className="text-xs opacity-80">?me=Name</code>.
           </p>
         </header>
 
@@ -195,42 +308,93 @@ export default function ShareCompassClient() {
           </p>
         )}
 
-        <div
-          className="mb-4 overflow-hidden rounded-xl border"
-          style={{ borderColor: `${INK}18`, background: CARD }}
-        >
-          <canvas ref={canvasRef} className="block h-auto w-full" style={{ aspectRatio: "1 / 1" }} />
-        </div>
-
-        <div className="flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={download}
+            onClick={downloadBoth}
             disabled={!ready}
             className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
             style={{ background: CORAL }}
           >
-            Download PNG
+            Download both PNGs
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              downloadCanvas(compassRef.current, `larvatar-hive-compass-${results.length}.png`)
+            }
+            disabled={!ready}
+            className="rounded-lg border px-4 py-2.5 text-sm opacity-70 hover:opacity-100 disabled:opacity-40"
+            style={{ borderColor: `${INK}28` }}
+          >
+            Compass only
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              downloadCanvas(mapRef.current, `larvatar-moral-map-${results.length}.png`)
+            }
+            disabled={!ready}
+            className="rounded-lg border px-4 py-2.5 text-sm opacity-70 hover:opacity-100 disabled:opacity-40"
+            style={{ borderColor: `${INK}28` }}
+          >
+            Map only
           </button>
           <Link
             href="/moral"
             className="rounded-lg border px-4 py-2.5 text-sm opacity-70 hover:opacity-100"
             style={{ borderColor: `${INK}28` }}
           >
-            Back to Moral Test
+            Moral Test
           </Link>
-          <a
-            href="/share/hive-compass.png"
-            download
-            className="rounded-lg border px-4 py-2.5 text-sm opacity-70 hover:opacity-100"
-            style={{ borderColor: `${INK}28` }}
-          >
-            Static poster PNG
-          </a>
+        </div>
+
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-widest opacity-45">1 / 2 · compass</p>
+        <div
+          className="mb-8 overflow-hidden rounded-xl border"
+          style={{ borderColor: `${INK}18`, background: CARD }}
+        >
+          <canvas ref={compassRef} className="block h-auto w-full" style={{ aspectRatio: "1 / 1" }} />
+        </div>
+
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-widest opacity-45">2 / 2 · map</p>
+        <div
+          className="mb-8 overflow-hidden rounded-xl border"
+          style={{ borderColor: `${INK}18`, background: CARD }}
+        >
+          <canvas ref={mapRef} className="block h-auto w-full" style={{ aspectRatio: "1 / 1" }} />
         </div>
       </div>
     </main>
   );
+}
+
+function walletHue(wallet: string): number {
+  let h = 0;
+  for (const c of wallet.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+}
+
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxW: number,
+  lineH: number
+) {
+  const words = text.split(" ");
+  let line = "";
+  let yy = y;
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w;
+    if (ctx.measureText(test).width > maxW && line) {
+      ctx.fillText(line, x, yy);
+      line = w;
+      yy += lineH;
+    } else line = test;
+  }
+  if (line) ctx.fillText(line, x, yy);
 }
 
 function roundRect(
@@ -258,19 +422,16 @@ function drawBar(
   y: number,
   w: number,
   total: number,
-  ink: string,
   dark: boolean
 ) {
   ctx.fillStyle = dark ? "rgba(255,255,255,0.45)" : "rgba(20,30,40,0.45)";
-  ctx.font = "600 16px ui-monospace, Menlo, monospace";
+  ctx.font = "600 15px ui-monospace, Menlo, monospace";
   ctx.fillText(title, x, y);
-
-  const barY = y + 16;
-  const barH = 14;
+  const barY = y + 14;
+  const barH = 12;
+  roundRect(ctx, x, barY, w, barH, 6);
   ctx.fillStyle = dark ? "rgba(255,255,255,0.08)" : "rgba(20,30,40,0.08)";
-  roundRect(ctx, x, barY, w, barH, 7);
   ctx.fill();
-
   let cursor = x;
   for (const s of segs) {
     const pw = total > 0 ? (s.count / total) * w : 0;
@@ -279,19 +440,17 @@ function drawBar(
     ctx.fillRect(cursor, barY, pw, barH);
     cursor += pw;
   }
-
-  ctx.fillStyle = dark ? "rgba(255,255,255,0.5)" : "rgba(20,30,40,0.5)";
-  ctx.font = "600 15px ui-monospace, Menlo, monospace";
   let legendX = x;
+  ctx.font = "600 14px ui-monospace, Menlo, monospace";
   for (const s of segs) {
     const p = total > 0 ? Math.round((s.count / total) * 100) : 0;
     const text = `${s.label} ${s.count} · ${p}%`;
     ctx.fillStyle = s.color;
     ctx.beginPath();
-    ctx.arc(legendX + 5, barY + barH + 22, 4, 0, Math.PI * 2);
+    ctx.arc(legendX + 4, barY + barH + 20, 3.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = dark ? "rgba(255,255,255,0.55)" : "rgba(20,30,40,0.55)";
-    ctx.fillText(text, legendX + 14, barY + barH + 26);
-    legendX += ctx.measureText(text).width + 36;
+    ctx.fillText(text, legendX + 12, barY + barH + 24);
+    legendX += ctx.measureText(text).width + 28;
   }
 }
