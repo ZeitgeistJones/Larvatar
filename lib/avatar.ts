@@ -32,6 +32,9 @@ export type LarvatarTraits = {
   pose: AvatarPose;
   cheeks: boolean;
   accent: number; // secondary hue 0-359
+  /** Gemini-generated portrait URL (Vercel Blob). Optional — SVG fallback when missing. */
+  portraitUrl?: string;
+  portraitAt?: string;
 };
 
 const BODIES: AvatarBody[] = ["plump", "slim", "round", "tall"];
@@ -173,7 +176,7 @@ export function deriveLarvatarTraits(input: {
   const baseHue = ((Number.isFinite(input.hue) ? input.hue : seed % 360) + 360) % 360;
   const hue = hasRichTraits ? baseHue : (baseHue + ((seed % 47) - 23) + 360) % 360;
 
-  return {
+  const traits: LarvatarTraits = {
     hue,
     tone,
     body: oneOf(p.body, BODIES, pick(look.bodies, seed, 1)),
@@ -189,6 +192,13 @@ export function deriveLarvatarTraits(input: {
         ? ((p.accent % 360) + 360) % 360
         : (hue + 40 + (seed % 80)) % 360,
   };
+  if (typeof p.portraitUrl === "string" && p.portraitUrl.startsWith("http")) {
+    traits.portraitUrl = p.portraitUrl;
+  }
+  if (typeof p.portraitAt === "string" && p.portraitAt) {
+    traits.portraitAt = p.portraitAt;
+  }
+  return traits;
 }
 
 export function parseAvatarFromLlm(

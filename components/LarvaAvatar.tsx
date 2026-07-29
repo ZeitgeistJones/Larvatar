@@ -543,6 +543,40 @@ export default function LarvaAvatar({
     wallet,
     partial: { hue, tone, ...(traits || {}) },
   });
+  const aria = label || `larvatar, ${t.tone}, ${t.body}, ${t.accessory}`;
+
+  // Fixed size×size box — PNG and SVG share the same footprint so cards never jump.
+  if (t.portraitUrl) {
+    return (
+      <span
+        style={{
+          display: "inline-block",
+          width: size,
+          height: size,
+          overflow: "hidden",
+          flexShrink: 0,
+          lineHeight: 0,
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={t.portraitUrl}
+          alt={aria}
+          width={size}
+          height={size}
+          style={{
+            width: size,
+            height: size,
+            objectFit: "contain",
+            display: "block",
+          }}
+          loading="lazy"
+          decoding="async"
+        />
+      </span>
+    );
+  }
+
   const seed = walletSeed(wallet || `${t.hue}-${t.tone}`);
   const geom = bodyGeom(t.body);
   const eyes = eyeGeom(t.eyes);
@@ -576,7 +610,7 @@ export default function LarvaAvatar({
       viewBox="-50 -50 100 100"
       xmlns="http://www.w3.org/2000/svg"
       role="img"
-      aria-label={label || `larvatar, ${t.tone}, ${t.body}, ${t.accessory}`}
+      aria-label={aria}
     >
       <defs>
         <radialGradient id={bodyGradId} cx="32%" cy="28%" r="72%">
