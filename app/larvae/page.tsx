@@ -292,7 +292,9 @@ export default function LarvaePage() {
                   {consensus}
                 </div>
               )}
-              {answers.map((a) => (
+              {answers.map((a) => {
+                const matched = larvae.find((l) => l.wallet.toLowerCase() === a.wallet.toLowerCase());
+                return (
                 <div key={a.wallet} className="flex items-start gap-3">
                   <div className="shrink-0">
                     <LarvaAvatar
@@ -302,6 +304,8 @@ export default function LarvaePage() {
                       traits={a.avatar}
                       label={a.name}
                       size={44}
+                      moral={matched?.moral}
+                      quirks={matched?.profile.quirks}
                     />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -324,7 +328,8 @@ export default function LarvaePage() {
                     <p className="mt-0.5 text-sm opacity-80">{a.answer}</p>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
@@ -372,6 +377,8 @@ export default function LarvaePage() {
                         traits={l.avatar}
                         label={l.profile.name}
                         size={72}
+                        moral={l.moral}
+                        quirks={l.profile.quirks}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
@@ -514,6 +521,8 @@ function DeferredAvatar({
   traits,
   label,
   size,
+  moral,
+  quirks,
 }: {
   hue: number;
   tone: string;
@@ -521,6 +530,8 @@ function DeferredAvatar({
   traits: LarvatarTraits;
   label: string;
   size: number;
+  moral?: MoralBadge | null;
+  quirks?: string[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
@@ -551,6 +562,8 @@ function DeferredAvatar({
           traits={traits}
           label={label}
           size={size}
+          moral={moral}
+          quirks={quirks}
         />
       ) : (
         <div

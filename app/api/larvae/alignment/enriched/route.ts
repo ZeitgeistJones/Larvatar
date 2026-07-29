@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { getAlignResult, type Stance } from "@/lib/alignment";
 import { getIndex, getProfile } from "@/lib/larvae";
 import { lookupEnsMany } from "@/lib/ens";
+import { getMoralResult } from "@/lib/moral";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -74,9 +75,16 @@ export async function GET() {
 
   const ens = await lookupEnsMany(result.credibility.map((c) => c.wallet));
 
+  const morals: (Awaited<ReturnType<typeof getMoralResult>> | null)[] = [];
+  for (let i = 0; i < result.credibility.length; i += BATCH) {
+    const slice = result.credibility.slice(i, i + BATCH);
+    morals.push(...(await Promise.all(slice.map((c) => getMoralResult(c.wallet)))));
+  }
+
   const larvae = result.credibility.map((c, i) => {
     const p = profiles[i];
     const ally = bestAlly.get(c.wallet) || null;
+    const moral = morals[i];
     return {
       wallet: c.wallet,
       // Nickname only. Hex→ENS is a separate field for address display.
@@ -84,7 +92,15 @@ export async function GET() {
       ens: ens[c.wallet.toLowerCase()] || null,
       tagline: p?.profile.tagline || "",
       tone: p?.profile.tone || "",
+      quirks: p?.profile.quirks || [],
       avatar: p?.avatar || null,
+      moral: moral
+        ? {
+            label: moral.label,
+            lawChaos: moral.lawChaos,
+            goodEvil: moral.goodEvil,
+          }
+        : null,
       posts: c.posts,
       wins: c.wins,
       winRate: c.winRate,

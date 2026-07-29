@@ -1,14 +1,19 @@
 import {
   deriveLarvatarTraits,
+  larvaLookRecipe,
   walletSeed,
   type LarvatarTraits,
   type AvatarAccessory,
   type AvatarAntenna,
   type AvatarBody,
   type AvatarEyes,
+  type AvatarMark,
   type AvatarMouth,
   type AvatarPattern,
   type AvatarPose,
+  type AvatarShell,
+  type LarvaMoralAxes,
+  type LarvaLookRecipe,
 } from "@/lib/avatar";
 
 type Props = {
@@ -18,9 +23,12 @@ type Props = {
   wallet?: string;
   traits?: Partial<LarvatarTraits> | null;
   label?: string;
+  moral?: LarvaMoralAxes | null;
+  quirks?: string[];
+  conviction?: number | null;
 };
 
-/** Size-locked gumdrop, but each body reads as a different silhouette. */
+/** Size-locked gumdrop — each body is a real silhouette change. */
 function bodyGeom(body: AvatarBody) {
   switch (body) {
     case "slim":
@@ -32,6 +40,7 @@ function bodyGeom(body: AvatarBody) {
         faceY: -5,
         squish: 0.92,
         tail: { cx: -14, cy: 12, rx: 4.5, ry: 6.5 },
+        path: null as string | null,
       };
     case "tall":
       return {
@@ -42,6 +51,7 @@ function bodyGeom(body: AvatarBody) {
         faceY: -6.5,
         squish: 0.88,
         tail: { cx: -13, cy: 14, rx: 5, ry: 7 },
+        path: null as string | null,
       };
     case "round":
       return {
@@ -52,6 +62,41 @@ function bodyGeom(body: AvatarBody) {
         faceY: -2,
         squish: 1.05,
         tail: { cx: -18, cy: 8, rx: 7.5, ry: 5.5 },
+        path: null as string | null,
+      };
+    case "pear":
+      return {
+        cx: 0,
+        cy: 4,
+        rx: 20,
+        ry: 21,
+        faceY: -6,
+        squish: 0.96,
+        tail: { cx: -12, cy: 14, rx: 4, ry: 5 },
+        // Narrow top, wide bottom
+        path: "M 0 -18 C 12 -18 16 -8 17 2 C 18 12 14 20 0 22 C -14 20 -18 12 -17 2 C -16 -8 -12 -18 0 -18 Z",
+      };
+    case "bean":
+      return {
+        cx: 0,
+        cy: 2,
+        rx: 16,
+        ry: 22,
+        faceY: -4,
+        squish: 0.85,
+        tail: { cx: -11, cy: 10, rx: 3.5, ry: 5 },
+        path: "M -2 -20 C 10 -22 18 -10 16 4 C 14 16 6 22 -2 20 C -14 18 -18 6 -16 -6 C -14 -16 -10 -18 -2 -20 Z",
+      };
+    case "squat":
+      return {
+        cx: 0,
+        cy: 5,
+        rx: 24,
+        ry: 17,
+        faceY: 0,
+        squish: 1.12,
+        tail: { cx: -19, cy: 6, rx: 6, ry: 4.5 },
+        path: "M 0 -12 C 16 -14 26 -4 25 6 C 24 14 14 18 0 18 C -14 18 -24 14 -25 6 C -26 -4 -16 -14 0 -12 Z",
       };
     default: // plump
       return {
@@ -62,6 +107,7 @@ function bodyGeom(body: AvatarBody) {
         faceY: -3,
         squish: 1,
         tail: { cx: -17, cy: 11, rx: 7, ry: 5.5 },
+        path: null as string | null,
       };
   }
 }
@@ -160,6 +206,10 @@ function eyeGeom(eyes: AvatarEyes) {
       return { rx: 5.8, ry: 3.6, pupil: 2.2, brow: 8, lids: true, sparkle: false, squint: 0.7 };
     case "gleam":
       return { rx: 5.6, ry: 5.5, pupil: 2.9, brow: -4, lids: false, sparkle: true, squint: 1 };
+    case "beady":
+      return { rx: 3.6, ry: 3.8, pupil: 2.1, brow: 2, lids: false, sparkle: false, squint: 1 };
+    case "cross":
+      return { rx: 5.2, ry: 4.8, pupil: 2.4, brow: -12, lids: false, sparkle: false, squint: 0.92 };
     default: // soft
       return { rx: 5.5, ry: 5.4, pupil: 2.55, brow: 3, lids: false, sparkle: false, squint: 1 };
   }
@@ -175,6 +225,10 @@ function mouthPath(mouth: AvatarMouth): string {
       return "M -6 5.5 Q 0 12 6 5.5";
     case "frown":
       return "M -5 9 Q 0 5.5 5 9";
+    case "o":
+      return "M -2.2 7.2 A 2.2 2.4 0 1 0 2.2 7.2 A 2.2 2.4 0 1 0 -2.2 7.2";
+    case "smug":
+      return "M -5.5 6.5 Q 0 8.5 6 5.5";
     default:
       return "M -5 6.5 Q 0 10 5 6.5";
   }
@@ -183,7 +237,7 @@ function mouthPath(mouth: AvatarMouth): string {
 function poseTilt(pose: AvatarPose, seed: number, wobble: number): number {
   const base =
     pose === "lean-left" ? -4 - (seed % 2) : pose === "lean-right" ? 4 + (seed % 2) : 0;
-  return base + (wobble ? ((seed % 5) - 2) * 0.6 : 0);
+  return base + (wobble ? ((seed % 5) - 2) * 0.6 + wobble * 0.35 : 0);
 }
 
 function Antennae({
@@ -191,40 +245,43 @@ function Antennae({
   color,
   tipColor,
   faceY,
+  kink,
 }: {
   style: AvatarAntenna;
   color: string;
   tipColor: string;
   faceY: number;
+  kink?: boolean;
 }) {
   const baseY = faceY - 15;
   const L = -7;
   const R = 7;
+  const kinkOff = kink ? 3 : 0;
   const paths: Record<AvatarAntenna, [string, string]> = {
     curl: [
-      `M ${L} ${baseY} Q ${L - 7} ${baseY - 10} ${L - 2} ${baseY - 14}`,
-      `M ${R} ${baseY} Q ${R + 7} ${baseY - 10} ${R + 2} ${baseY - 14}`,
+      `M ${L} ${baseY} Q ${L - 7} ${baseY - 10} ${L - 2 - kinkOff} ${baseY - 14}`,
+      `M ${R} ${baseY} Q ${R + 7 + kinkOff} ${baseY - 10} ${R + 2} ${baseY - 14}`,
     ],
     fork: [
       `M ${L} ${baseY} L ${L - 1} ${baseY - 10} M ${L - 1} ${baseY - 6} L ${L - 5} ${baseY - 12} M ${L - 1} ${baseY - 6} L ${L + 3} ${baseY - 12}`,
       `M ${R} ${baseY} L ${R + 1} ${baseY - 10} M ${R + 1} ${baseY - 6} L ${R + 5} ${baseY - 12} M ${R + 1} ${baseY - 6} L ${R - 3} ${baseY - 12}`,
     ],
     droop: [
-      `M ${L} ${baseY} Q ${L - 8} ${baseY - 1} ${L - 7} ${baseY + 5}`,
+      `M ${L} ${baseY} Q ${L - 8} ${baseY - 1} ${L - 7 - kinkOff} ${baseY + 5}`,
       `M ${R} ${baseY} Q ${R + 8} ${baseY - 1} ${R + 7} ${baseY + 5}`,
     ],
     bolt: [
-      `M ${L} ${baseY} L ${L - 3} ${baseY - 5} L ${L + 1} ${baseY - 6} L ${L - 3} ${baseY - 13}`,
+      `M ${L} ${baseY} L ${L - 3} ${baseY - 5} L ${L + 1} ${baseY - 6} L ${L - 3 - kinkOff} ${baseY - 13}`,
       `M ${R} ${baseY} L ${R + 3} ${baseY - 5} L ${R - 1} ${baseY - 6} L ${R + 3} ${baseY - 13}`,
     ],
     sway: [
-      `M ${L} ${baseY} Q ${L - 8} ${baseY - 6} ${L - 3} ${baseY - 13} Q ${L + 2} ${baseY - 16} ${L - 1} ${baseY - 17}`,
+      `M ${L} ${baseY} Q ${L - 8} ${baseY - 6} ${L - 3} ${baseY - 13} Q ${L + 2} ${baseY - 16} ${L - 1 - kinkOff} ${baseY - 17}`,
       `M ${R} ${baseY} Q ${R + 5} ${baseY - 7} ${R + 7} ${baseY - 12} Q ${R + 2} ${baseY - 15} ${R + 5} ${baseY - 17}`,
     ],
   };
   const tips: Record<AvatarAntenna, [[number, number], [number, number]]> = {
     curl: [
-      [L - 2, baseY - 14],
+      [L - 2 - kinkOff, baseY - 14],
       [R + 2, baseY - 14],
     ],
     fork: [
@@ -232,15 +289,15 @@ function Antennae({
       [R + 1, baseY - 10],
     ],
     droop: [
-      [L - 7, baseY + 5],
+      [L - 7 - kinkOff, baseY + 5],
       [R + 7, baseY + 5],
     ],
     bolt: [
-      [L - 3, baseY - 13],
+      [L - 3 - kinkOff, baseY - 13],
       [R + 3, baseY - 13],
     ],
     sway: [
-      [L - 1, baseY - 17],
+      [L - 1 - kinkOff, baseY - 17],
       [R + 5, baseY - 17],
     ],
   };
@@ -264,6 +321,7 @@ function PatternOverlay({
   ry,
   cy,
   seed,
+  opacity,
 }: {
   pattern: AvatarPattern;
   hue: number;
@@ -272,14 +330,16 @@ function PatternOverlay({
   ry: number;
   cy: number;
   seed: number;
+  opacity: number;
 }) {
   if (pattern === "plain") return null;
   const ink = `hsl(${accent} 55% 38%)`;
+  const op = Math.min(0.55, Math.max(0.15, opacity));
 
   if (pattern === "stripes") {
     const count = 4;
     return (
-      <g opacity="0.32">
+      <g opacity={op}>
         {Array.from({ length: count }, (_, i) => {
           const y = cy - ry * 0.45 + (i * (ry * 0.9)) / (count - 1);
           return <ellipse key={i} cx="0" cy={y} rx={rx * 0.9} ry={1.6} fill={ink} />;
@@ -290,7 +350,7 @@ function PatternOverlay({
 
   if (pattern === "bands") {
     return (
-      <g opacity="0.34">
+      <g opacity={op}>
         <ellipse cx="0" cy={cy - ry * 0.2} rx={rx * 0.92} ry={ry * 0.2} fill={`hsl(${hue} 45% 40%)`} />
         <ellipse cx="0" cy={cy + ry * 0.28} rx={rx * 0.82} ry={ry * 0.16} fill={`hsl(${hue} 45% 40%)`} />
       </g>
@@ -305,11 +365,140 @@ function PatternOverlay({
     { cx: 5, cy: cy - 8, r: 1.5 },
   ];
   return (
-    <g opacity="0.36">
+    <g opacity={op}>
       {spots.map((s, i) => (
         <circle key={i} cx={s.cx + ((seed >> i) % 3) - 1} cy={s.cy} r={s.r} fill={ink} />
       ))}
     </g>
+  );
+}
+
+function ShellDecor({
+  shell,
+  rx,
+  ry,
+  cy,
+  color,
+}: {
+  shell: AvatarShell;
+  rx: number;
+  ry: number;
+  cy: number;
+  color: string;
+}) {
+  if (shell === "smooth") return null;
+  if (shell === "ridged") {
+    return (
+      <g opacity="0.28" fill="none" stroke={color} strokeWidth="1.1">
+        <ellipse cx="0" cy={cy - ry * 0.35} rx={rx * 0.78} ry={ry * 0.12} />
+        <ellipse cx="0" cy={cy} rx={rx * 0.88} ry={ry * 0.14} />
+        <ellipse cx="0" cy={cy + ry * 0.32} rx={rx * 0.72} ry={ry * 0.11} />
+      </g>
+    );
+  }
+  if (shell === "spiky") {
+    const spikes = [
+      [-14, cy - ry * 0.55],
+      [-6, cy - ry * 0.85],
+      [6, cy - ry * 0.88],
+      [14, cy - ry * 0.5],
+      [18, cy],
+      [-18, cy + 2],
+    ];
+    return (
+      <g opacity="0.55">
+        {spikes.map(([x, y], i) => (
+          <path
+            key={i}
+            d={`M ${x} ${y} L ${x + (i % 2 ? 2.5 : -2.5)} ${y - 5.5} L ${x + (i % 2 ? -1.5 : 1.5)} ${y + 1} Z`}
+            fill={color}
+          />
+        ))}
+      </g>
+    );
+  }
+  // fluffy
+  return (
+    <g opacity="0.35">
+      {[
+        [-16, cy - 4, 4.2],
+        [16, cy - 2, 4],
+        [-12, cy + 10, 3.6],
+        [12, cy + 11, 3.8],
+        [0, cy - ry * 0.7, 3.2],
+      ].map(([cx, fy, r], i) => (
+        <circle key={i} cx={cx} cy={fy} r={r} fill={color} />
+      ))}
+    </g>
+  );
+}
+
+function SignatureMark({
+  mark,
+  faceY,
+  dark,
+  hue,
+}: {
+  mark: AvatarMark;
+  faceY: number;
+  dark: string;
+  hue: number;
+}) {
+  if (mark === "none") return null;
+  if (mark === "scar") {
+    return (
+      <line
+        x1={6}
+        y1={faceY - 2}
+        x2={11}
+        y2={faceY + 5}
+        stroke={dark}
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        opacity="0.55"
+      />
+    );
+  }
+  if (mark === "freckles") {
+    return (
+      <g opacity="0.4" fill={dark}>
+        <circle cx={-9} cy={faceY + 4} r="1.1" />
+        <circle cx={-6} cy={faceY + 7} r="0.85" />
+        <circle cx={8} cy={faceY + 5} r="1" />
+        <circle cx={10} cy={faceY + 8} r="0.7" />
+      </g>
+    );
+  }
+  if (mark === "notch") {
+    return (
+      <path
+        d={`M ${-18} ${faceY + 2} L ${-21} ${faceY - 1} L ${-16} ${faceY - 2}`}
+        fill="none"
+        stroke={dark}
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        opacity="0.5"
+      />
+    );
+  }
+  if (mark === "blush-heavy") {
+    return (
+      <g opacity="0.55">
+        <ellipse cx={-10} cy={faceY + 6} rx="4.2" ry="2.4" fill={`hsl(${hue} 75% 68%)`} />
+        <ellipse cx={10} cy={faceY + 6} rx="4.2" ry="2.4" fill={`hsl(${hue} 75% 68%)`} />
+      </g>
+    );
+  }
+  // stripe
+  return (
+    <ellipse
+      cx="0"
+      cy={faceY + 14}
+      rx="10"
+      ry="2.2"
+      fill={dark}
+      opacity="0.28"
+    />
   );
 }
 
@@ -467,6 +656,51 @@ function Accessory({
       </g>
     );
   }
+  if (kind === "patch") {
+    return (
+      <g>
+        <circle cx="-6.5" cy={faceY} r="5" fill={aDark} opacity="0.85" />
+        <line x1="-11" y1={faceY - 1} x2={-rx + 2} y2={faceY - 4} stroke={a} strokeWidth="1.1" />
+        <line x1="-11" y1={faceY + 1} x2={-rx + 2} y2={faceY + 4} stroke={a} strokeWidth="1.1" />
+      </g>
+    );
+  }
+  if (kind === "spike") {
+    return (
+      <g>
+        <path
+          d={`M 0 ${faceY - 16} L 3 ${faceY - 26} L -3 ${faceY - 26} Z`}
+          fill={aDark}
+        />
+        <path
+          d={`M -10 ${faceY - 12} L -14 ${faceY - 20} L -7 ${faceY - 14} Z`}
+          fill={a}
+        />
+        <path
+          d={`M 10 ${faceY - 12} L 14 ${faceY - 20} L 7 ${faceY - 14} Z`}
+          fill={a}
+        />
+      </g>
+    );
+  }
+  if (kind === "leaf-crown") {
+    const y = faceY - 15;
+    return (
+      <g>
+        {[-8, -3, 3, 8].map((x, i) => (
+          <ellipse
+            key={i}
+            cx={x}
+            cy={y - (i % 2) * 2}
+            rx="2.4"
+            ry="4.5"
+            fill={a}
+            transform={`rotate(${x * 4} ${x} ${y})`}
+          />
+        ))}
+      </g>
+    );
+  }
   return null;
 }
 
@@ -475,14 +709,19 @@ function Eye({
   cy,
   geom,
   pupilBias,
+  scale = 1,
+  browBoost = 0,
 }: {
   cx: number;
   cy: number;
   geom: ReturnType<typeof eyeGeom>;
   pupilBias: number;
+  scale?: number;
+  browBoost?: number;
 }) {
-  const rx = geom.rx * geom.squint;
-  const ry = geom.ry;
+  const rx = geom.rx * geom.squint * scale;
+  const ry = geom.ry * scale;
+  const brow = geom.brow + browBoost;
   return (
     <g>
       <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="#fffef8" />
@@ -495,11 +734,11 @@ function Eye({
         stroke="rgba(40,30,25,0.14)"
         strokeWidth="0.65"
       />
-      <circle cx={cx + 0.35 + pupilBias} cy={cy + 0.35} r={geom.pupil} fill="#1c1410" />
+      <circle cx={cx + 0.35 + pupilBias} cy={cy + 0.35} r={geom.pupil * scale} fill="#1c1410" />
       <circle
         cx={cx + geom.pupil * 0.35 + pupilBias * 0.5}
         cy={cy - geom.pupil * 0.4}
-        r={geom.pupil * 0.34}
+        r={geom.pupil * 0.34 * scale}
         fill="#fff"
       />
       {geom.lids && (
@@ -523,9 +762,46 @@ function Eye({
         strokeWidth="1.25"
         strokeLinecap="round"
         opacity="0.6"
-        transform={`rotate(${geom.brow * 0.4} ${cx} ${cy - ry})`}
+        transform={`rotate(${brow * 0.4} ${cx} ${cy - ry})`}
       />
     </g>
+  );
+}
+
+function BodyShape({
+  geom,
+  fill,
+  stroke,
+  strokeWidth,
+}: {
+  geom: ReturnType<typeof bodyGeom>;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+}) {
+  if (geom.path) {
+    return (
+      <path
+        d={geom.path}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        strokeOpacity="0.35"
+        transform={`translate(0 ${geom.cy * 0.15})`}
+      />
+    );
+  }
+  return (
+    <ellipse
+      cx={geom.cx}
+      cy={geom.cy}
+      rx={geom.rx}
+      ry={geom.ry}
+      fill={fill}
+      stroke={stroke}
+      strokeWidth={strokeWidth}
+      strokeOpacity="0.35"
+    />
   );
 }
 
@@ -536,6 +812,9 @@ export default function LarvaAvatar({
   wallet,
   traits,
   label,
+  moral,
+  quirks,
+  conviction,
 }: Props) {
   const t = deriveLarvatarTraits({
     hue,
@@ -543,7 +822,14 @@ export default function LarvaAvatar({
     wallet,
     partial: { hue, tone, ...(traits || {}) },
   });
-  const aria = label || `larvatar, ${t.tone}, ${t.body}, ${t.accessory}`;
+  const recipe: LarvaLookRecipe = larvaLookRecipe({
+    body: t.body,
+    wallet,
+    quirks,
+    moral,
+    conviction,
+  });
+  const aria = label || `larvatar, ${t.tone}, ${recipe.displayBody}, ${t.accessory}`;
 
   // Fixed size×size box — PNG and SVG share the same footprint so cards never jump.
   if (t.portraitUrl) {
@@ -578,30 +864,37 @@ export default function LarvaAvatar({
   }
 
   const seed = walletSeed(wallet || `${t.hue}-${t.tone}`);
-  const geom = bodyGeom(t.body);
+  const geom = bodyGeom(recipe.displayBody);
   const eyes = eyeGeom(t.eyes);
   const mood = toneMood(t.tone, seed);
   const mouth = mouthPath(t.mouth);
-  const tilt = poseTilt(t.pose, seed, mood.wobble);
+  const tilt = poseTilt(t.pose, seed, mood.wobble + recipe.wobble);
 
   const accentHue = (t.accent + mood.accentShift + 360) % 360;
-  const gid = `larva-${t.hue}-${t.body}-${t.eyes}-${t.accessory}-${seed.toString(36)}`;
+  const gid = `larva-${t.hue}-${recipe.displayBody}-${t.eyes}-${t.accessory}-${seed.toString(36)}`;
   const bodyGradId = `${gid}-body`;
   const bellyGradId = `${gid}-belly`;
 
-  const mid = `hsl(${t.hue} ${mood.sat}% ${mood.light}%)`;
-  const dark = `hsl(${t.hue} ${Math.max(mood.sat - 8, 20)}% ${mood.darkLight}%)`;
-  const light = `hsl(${t.hue} ${Math.min(mood.sat + 8, 85)}% ${Math.min(mood.light + 14, 78)}%)`;
-  const antennaColor = `hsl(${t.hue} ${mood.sat - 10}% ${mood.darkLight - 4}%)`;
+  const sat = Math.max(18, Math.min(90, mood.sat + recipe.satShift));
+  const light = Math.max(36, Math.min(78, mood.light + recipe.lightShift));
+  const mid = `hsl(${t.hue} ${sat}% ${light}%)`;
+  const dark = `hsl(${t.hue} ${Math.max(sat - 8, 20)}% ${mood.darkLight}%)`;
+  const lightC = `hsl(${t.hue} ${Math.min(sat + 8, 85)}% ${Math.min(light + 14, 78)}%)`;
+  const antennaColor = `hsl(${t.hue} ${sat - 10}% ${mood.darkLight - 4}%)`;
   const tipColor = `hsl(${accentHue} 70% 48%)`;
   const bg = `hsl(${t.hue} 26% 96%)`;
-  const ring = `hsl(${accentHue} 30% 78%)`;
-  const showCheeks = t.cheeks || mood.blush;
+  const ring = recipe.halo
+    ? `hsl(${recipe.haloWarm ? (t.hue + 30) % 360 : (t.hue + 200) % 360} 55% ${recipe.haloWarm ? 72 : 55}%)`
+    : `hsl(${accentHue} 30% 78%)`;
+  const showCheeks = t.cheeks || mood.blush || recipe.mark === "blush-heavy";
+  const gloss = Math.max(0.12, Math.min(0.75, mood.gloss + recipe.glossBoost));
+  const outline = mood.outline + recipe.outlineBoost * 0.15;
 
-  // Seeded micro-variance so wallet twins with same tone still diverge
   const highlightX = -5 - (seed % 5);
   const freckle = seed % 3 === 0;
   const asymmetry = t.tone === "chaotic" ? ((seed % 5) - 2) * 0.5 : 0;
+  const leftScale = 1 + recipe.eyeAsymmetry * 0.5;
+  const rightScale = 1 - recipe.eyeAsymmetry * 0.5;
 
   return (
     <svg
@@ -614,7 +907,7 @@ export default function LarvaAvatar({
     >
       <defs>
         <radialGradient id={bodyGradId} cx="32%" cy="28%" r="72%">
-          <stop offset="0%" stopColor={light} />
+          <stop offset="0%" stopColor={lightC} />
           <stop offset="48%" stopColor={mid} />
           <stop offset="100%" stopColor={dark} />
         </radialGradient>
@@ -624,7 +917,16 @@ export default function LarvaAvatar({
         </radialGradient>
       </defs>
 
-      <circle r="47" fill={bg} stroke={ring} strokeWidth="1.5" />
+      <circle
+        r="47"
+        fill={bg}
+        stroke={ring}
+        strokeWidth={recipe.halo ? 2.4 : 1.5}
+        opacity={recipe.halo ? 0.95 : 1}
+      />
+      {recipe.halo && (
+        <circle r="44" fill="none" stroke={ring} strokeWidth="1" opacity="0.45" />
+      )}
       <ellipse cx="0" cy="36" rx="18" ry="4.5" fill={`hsl(${t.hue} 18% 50%)`} opacity="0.22" />
 
       <g transform={`rotate(${tilt}) scale(${geom.squish} 1)`}>
@@ -636,16 +938,14 @@ export default function LarvaAvatar({
           fill={`url(#${bodyGradId})`}
         />
 
-        <ellipse
-          cx={geom.cx}
-          cy={geom.cy}
-          rx={geom.rx}
-          ry={geom.ry}
+        <BodyShape
+          geom={geom}
           fill={`url(#${bodyGradId})`}
           stroke={dark}
-          strokeWidth={mood.outline}
-          strokeOpacity="0.35"
+          strokeWidth={outline}
         />
+
+        <ShellDecor shell={recipe.shell} rx={geom.rx} ry={geom.ry} cy={geom.cy} color={dark} />
 
         <PatternOverlay
           pattern={t.pattern}
@@ -655,6 +955,7 @@ export default function LarvaAvatar({
           ry={geom.ry}
           cy={geom.cy}
           seed={seed}
+          opacity={recipe.patternOpacity}
         />
 
         <ellipse
@@ -665,14 +966,25 @@ export default function LarvaAvatar({
           fill={`url(#${bellyGradId})`}
         />
 
-        {/* gloss — intensity from tone */}
+        {Array.from({ length: recipe.bellyStripes }, (_, i) => (
+          <ellipse
+            key={i}
+            cx={0}
+            cy={geom.cy + 2 + i * 3.2}
+            rx={geom.rx * (0.42 - i * 0.04)}
+            ry={1.1}
+            fill={dark}
+            opacity={0.12 + i * 0.03}
+          />
+        ))}
+
         <ellipse
           cx={highlightX}
           cy={geom.cy - geom.ry * 0.38}
           rx={geom.rx * 0.4}
           ry={geom.ry * 0.22}
           fill="#fff"
-          opacity={mood.gloss}
+          opacity={gloss}
         />
         <ellipse
           cx={highlightX - 3}
@@ -680,10 +992,10 @@ export default function LarvaAvatar({
           rx={geom.rx * 0.14}
           ry={geom.ry * 0.1}
           fill="#fff"
-          opacity={mood.gloss * 0.7}
+          opacity={gloss * 0.7}
         />
 
-        {freckle && (
+        {(freckle || recipe.mark === "freckles") && recipe.mark !== "scar" && (
           <g opacity="0.28">
             <circle cx={-8} cy={geom.cy + 2} r="1.1" fill={dark} />
             <circle cx={-5} cy={geom.cy + 6} r="0.8" fill={dark} />
@@ -691,22 +1003,44 @@ export default function LarvaAvatar({
           </g>
         )}
 
-        <Antennae style={t.antenna} color={antennaColor} tipColor={tipColor} faceY={geom.faceY} />
+        <Antennae
+          style={t.antenna}
+          color={antennaColor}
+          tipColor={tipColor}
+          faceY={geom.faceY}
+          kink={recipe.antennaKink}
+        />
 
         <Accessory kind={t.accessory} accent={accentHue} faceY={geom.faceY} rx={geom.rx} />
 
+        <SignatureMark mark={recipe.mark} faceY={geom.faceY} dark={dark} hue={t.hue} />
+
         <g transform={`translate(${asymmetry} ${geom.faceY})`}>
-          {showCheeks && (
+          {showCheeks && recipe.mark !== "blush-heavy" && (
             <>
               <ellipse cx={-mood.eyeGap - 4} cy="5.5" rx="3.4" ry="2.1" fill={`hsl(${t.hue} 75% 68%)`} opacity="0.5" />
               <ellipse cx={mood.eyeGap + 4} cy="5.5" rx="3.4" ry="2.1" fill={`hsl(${t.hue} 75% 68%)`} opacity="0.5" />
             </>
           )}
-          <Eye cx={-mood.eyeGap} cy={0} geom={eyes} pupilBias={mood.pupilBias} />
-          <Eye cx={mood.eyeGap} cy={0} geom={eyes} pupilBias={mood.pupilBias} />
+          <Eye
+            cx={-mood.eyeGap}
+            cy={0}
+            geom={eyes}
+            pupilBias={mood.pupilBias}
+            scale={leftScale}
+            browBoost={recipe.browBoost}
+          />
+          <Eye
+            cx={mood.eyeGap}
+            cy={0}
+            geom={eyes}
+            pupilBias={mood.pupilBias}
+            scale={rightScale}
+            browBoost={recipe.browBoost}
+          />
           <path
             d={mouth}
-            fill="none"
+            fill={t.mouth === "o" ? "none" : "none"}
             stroke="#2a2018"
             strokeWidth="1.55"
             strokeLinecap="round"

@@ -27,7 +27,9 @@ type Larva = {
   name: string;
   tagline: string;
   tone: string;
+  quirks?: string[];
   avatar: LarvatarTraits | null;
+  moral?: { label: string; lawChaos: number; goodEvil: number } | null;
   posts: number;
   wins: number;
   winRate: number;
@@ -728,7 +730,11 @@ export default function MapPage() {
                           hue={selected.avatar.hue}
                           tone={selected.avatar.tone}
                           traits={selected.avatar}
+                          wallet={selected.wallet}
                           size={72}
+                          moral={selected.moral}
+                          quirks={selected.quirks}
+                          conviction={selected.conviction}
                         />
                       </div>
                     )}

@@ -57,12 +57,12 @@ Respond with ONLY a JSON object, no markdown, no preamble:
   "quirks": ["1-3 short phrases for distinctive habits or fixations"],
   "summary": "2-3 sentences describing its personality and governance style",
   "avatar": {
-    "body": "one of: plump, slim, round, tall — silhouette that fits their energy",
+    "body": "one of: plump, slim, round, tall, pear, bean, squat — silhouette that fits their energy",
     "pattern": "one of: plain, stripes, spots, bands — body marking style",
-    "eyes": "one of: soft, sharp, wide, sleepy, gleam — expression matching THIS larva",
+    "eyes": "one of: soft, sharp, wide, sleepy, gleam, beady, cross — expression matching THIS larva",
     "antenna": "one of: curl, fork, droop, bolt, sway — antenna vibe",
-    "accessory": "one of: none, monocle, bowtie, cap, horns, flower, badge, scarf, goggles, crown, clipboard, leaf — one signature prop that fits their personality (use none if nothing fits)",
-    "mouth": "one of: smile, flat, smirk, grin, frown — facial expression from their vibe",
+    "accessory": "one of: none, monocle, bowtie, cap, horns, flower, badge, scarf, goggles, crown, clipboard, leaf, patch, spike, leaf-crown — one signature prop that fits their personality (use none if nothing fits)",
+    "mouth": "one of: smile, flat, smirk, grin, frown, o, smug — facial expression from their vibe",
     "pose": "one of: upright, lean-left, lean-right — stance / tilt",
     "cheeks": "boolean — true if warm/blushy presence, false if cooler/sharper",
     "accent": "integer 0-359 — secondary accent hue that complements their vibe"

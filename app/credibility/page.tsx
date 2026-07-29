@@ -28,7 +28,9 @@ type Larva = {
   name: string;
   tagline: string;
   tone: string;
+  quirks?: string[];
   avatar: LarvatarTraits | null;
+  moral?: { label: string; lawChaos: number; goodEvil: number } | null;
   posts: number;
   wins: number;
   winRate: number;
@@ -452,7 +454,11 @@ export default function CredibilityPage() {
                               hue={l.avatar.hue}
                               tone={l.avatar.tone}
                               traits={l.avatar}
+                              wallet={l.wallet}
                               size={32}
+                              moral={l.moral}
+                              quirks={l.quirks}
+                              conviction={l.conviction}
                             />
                           ) : (
                             <span
@@ -502,7 +508,11 @@ export default function CredibilityPage() {
                             hue={l.avatar.hue}
                             tone={l.avatar.tone}
                             traits={l.avatar}
+                            wallet={l.wallet}
                             size={32}
+                            moral={l.moral}
+                            quirks={l.quirks}
+                            conviction={l.conviction}
                           />
                         ) : (
                           <span
