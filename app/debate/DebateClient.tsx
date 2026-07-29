@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 import type { LarvatarTraits } from "@/lib/avatar";
+import { speakDebate, unlockSurveyAudio } from "@/lib/survey-sfx";
 
 type Specimen = {
   wallet: string;
@@ -22,6 +23,7 @@ type Turn = {
   tone: string;
   hue: number;
   text: string;
+  label?: string;
 };
 
 type DebateResult = {
@@ -32,6 +34,12 @@ type DebateResult = {
   jury: { wallet: string; name: string; pick: "a" | "b" | "tie"; note: string }[];
   verdict: { winner: "a" | "b" | "tie"; summary: string } | null;
 };
+
+/** Distinct Gemini prebuilt voices so corners don't sound identical. */
+const VOICE_A = "Aoede";
+const VOICE_B = "Charon";
+
+const FALLBACK_LABELS = ["opens", "responds", "presses", "counters", "closes", "closes"];
 
 export default function DebateClient() {
   const { colors } = useTheme();
@@ -47,6 +55,9 @@ export default function DebateClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DebateResult | null>(null);
+  const [visibleCount, setVisibleCount] = useState(0);
+  const [speaking, setSpeaking] = useState(false);
+  const playGen = useRef(0);
 
   useEffect(() => {
     fetch("/api/larvae")
@@ -79,9 +90,31 @@ export default function DebateClient() {
   const sa = byWallet.get(a);
   const sb = byWallet.get(b);
 
+  async function playTranscript(data: DebateResult) {
+    const gen = ++playGen.current;
+    setVisibleCount(0);
+    setSpeaking(true);
+    unlockSurveyAudio();
+
+    for (let i = 0; i < data.turns.length; i++) {
+      if (playGen.current !== gen) return;
+      setVisibleCount(i + 1);
+      const turn = data.turns[i];
+      const sideA = turn.wallet.toLowerCase() === data.a.wallet.toLowerCase();
+      await speakDebate(turn.text, sideA ? VOICE_A : VOICE_B);
+      if (playGen.current !== gen) return;
+      await new Promise((r) => setTimeout(r, 280));
+    }
+
+    if (playGen.current === gen) setSpeaking(false);
+  }
+
   async function runDebate() {
     setError("");
+    playGen.current += 1;
     setResult(null);
+    setVisibleCount(0);
+    setSpeaking(false);
     if (!a || !b || a === b) {
       setError("Pick two different larvae.");
       return;
@@ -90,6 +123,7 @@ export default function DebateClient() {
       setError("Need a debate topic.");
       return;
     }
+    unlockSurveyAudio();
     setBusy(true);
     try {
       const res = await fetch("/api/larvae/debate", {
@@ -99,11 +133,14 @@ export default function DebateClient() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `failed (${res.status})`);
-      setResult(data as DebateResult);
+      const debate = data as DebateResult;
+      setResult(debate);
+      setBusy(false);
+      await playTranscript(debate);
     } catch (e) {
       setError(e instanceof Error ? e.message : "debate failed");
-    } finally {
       setBusy(false);
+      setSpeaking(false);
     }
   }
 
@@ -117,6 +154,9 @@ export default function DebateClient() {
     if (rival && byWallet.has(rival)) setB(rival);
   }
 
+  const showJury =
+    !!result?.verdict && visibleCount >= (result.turns.length || 0) && !speaking;
+
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
       <div className="mx-auto max-w-3xl">
@@ -128,8 +168,8 @@ export default function DebateClient() {
           </p>
           <h1 className="mt-1 text-4xl font-bold tracking-tight max-md:text-3xl">Debate</h1>
           <p className="mt-2 max-w-xl text-sm opacity-65">
-            Two larvae, one prompt, short heat. Optional peer jury. Proxies of proxies — still
-            governance theatre, just louder.
+            Two larvae, three rounds each — back and forth with voice. Optional peer jury. Proxies of
+            proxies — still governance theatre, just louder.
           </p>
         </header>
 
@@ -215,7 +255,12 @@ export default function DebateClient() {
                     size={48}
                     label={sa.profile.name}
                   />
-                  <span className="text-sm font-semibold">{sa.profile.name}</span>
+                  <div>
+                    <span className="text-sm font-semibold">{sa.profile.name}</span>
+                    <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
+                      voice · {VOICE_A}
+                    </p>
+                  </div>
                 </div>
               )}
               {sa && sb && <span className="font-mono text-xs opacity-40">vs</span>}
@@ -231,7 +276,12 @@ export default function DebateClient() {
                     size={48}
                     label={sb.profile.name}
                   />
-                  <span className="text-sm font-semibold">{sb.profile.name}</span>
+                  <div>
+                    <span className="text-sm font-semibold">{sb.profile.name}</span>
+                    <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
+                      voice · {VOICE_B}
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
@@ -247,7 +297,7 @@ export default function DebateClient() {
                 placeholder="e.g. should CLAWD burn more or build more?"
                 className="mt-1 w-full rounded-lg border px-4 py-3 text-sm outline-none focus:ring-2"
                 style={{ borderColor: `${INK}25` }}
-                onKeyDown={(e) => e.key === "Enter" && void runDebate()}
+                onKeyDown={(e) => e.key === "Enter" && !busy && void runDebate()}
               />
             </label>
 
@@ -263,11 +313,11 @@ export default function DebateClient() {
             <button
               type="button"
               onClick={() => void runDebate()}
-              disabled={busy}
+              disabled={busy || speaking}
               className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
               style={{ background: CORAL }}
             >
-              {busy ? "Debating…" : "Start debate"}
+              {busy ? "Writing the bout…" : speaking ? "Live on the floor…" : "Start debate"}
             </button>
 
             {error && (
@@ -287,10 +337,16 @@ export default function DebateClient() {
             <p className="mt-1 text-sm font-medium opacity-80">{result.question}</p>
 
             <div className="mt-5 space-y-4">
-              {result.turns.map((t, i) => {
+              {result.turns.slice(0, visibleCount).map((t, i) => {
                 const side = t.wallet.toLowerCase() === result.a.wallet.toLowerCase() ? "A" : "B";
+                const label = t.label || FALLBACK_LABELS[i] || "says";
+                const live = speaking && i === visibleCount - 1;
                 return (
-                  <div key={`${t.wallet}-${i}`} className="flex gap-3">
+                  <div
+                    key={`${t.wallet}-${i}`}
+                    className="flex gap-3"
+                    style={{ opacity: live ? 1 : 0.92 }}
+                  >
                     <div className="shrink-0 pt-0.5">
                       <span
                         className="inline-flex h-6 w-6 items-center justify-center rounded-full font-mono text-[10px] font-bold"
@@ -306,7 +362,8 @@ export default function DebateClient() {
                       <p className="text-sm font-semibold">
                         {t.name}{" "}
                         <span className="font-mono text-[10px] font-normal uppercase tracking-widest opacity-40">
-                          {i === 0 ? "opens" : i === 1 ? "rebuts" : "closes"}
+                          {label}
+                          {live ? " · speaking" : ""}
                         </span>
                       </p>
                       <p className="mt-0.5 text-sm opacity-80">{t.text}</p>
@@ -314,9 +371,14 @@ export default function DebateClient() {
                   </div>
                 );
               })}
+              {speaking && visibleCount < result.turns.length && (
+                <p className="font-mono text-[10px] uppercase tracking-widest opacity-40">
+                  next corner warming up…
+                </p>
+              )}
             </div>
 
-            {result.verdict && (
+            {showJury && result.verdict && (
               <div
                 className="mt-6 rounded-lg border px-4 py-3"
                 style={{ borderColor: `${GOLD}40`, background: `${GOLD}10` }}

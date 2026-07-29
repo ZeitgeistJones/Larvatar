@@ -275,47 +275,57 @@ function stopAnnounceAudio() {
   }
 }
 
-function announceBrowser(line: string) {
-  if (typeof window === "undefined" || !window.speechSynthesis) {
-    duckBed(false);
-    return;
-  }
-  try {
-    window.speechSynthesis.cancel();
-    duckBed(true);
-    const spoken = line
-      .replace(/\s*—\s*/g, ". ")
-      .replace(/\s*\.\.\.\s*/g, "... ")
-      .trim();
-
-    const speak = () => {
-      const u = new SpeechSynthesisUtterance(spoken);
-      u.rate = 1.0;
-      u.pitch = 1.0;
-      u.volume = 0.95;
-      const voice = pickVoice();
-      if (voice) u.voice = voice;
-      u.onend = () => duckBed(false);
-      u.onerror = () => duckBed(false);
-      window.speechSynthesis.speak(u);
-    };
-
-    if (!window.speechSynthesis.getVoices().length) {
-      const onReady = () => {
-        window.speechSynthesis.removeEventListener("voiceschanged", onReady);
-        speak();
-      };
-      window.speechSynthesis.addEventListener("voiceschanged", onReady);
-      window.setTimeout(() => {
-        window.speechSynthesis.removeEventListener("voiceschanged", onReady);
-        speak();
-      }, 300);
+function announceBrowser(line: string, pitch = 1): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      duckBed(false);
+      resolve();
       return;
     }
-    speak();
-  } catch {
-    duckBed(false);
-  }
+    try {
+      window.speechSynthesis.cancel();
+      duckBed(true);
+      const spoken = line
+        .replace(/\s*—\s*/g, ". ")
+        .replace(/\s*\.\.\.\s*/g, "... ")
+        .trim();
+
+      const speak = () => {
+        const u = new SpeechSynthesisUtterance(spoken);
+        u.rate = 1.0;
+        u.pitch = pitch;
+        u.volume = 0.95;
+        const voice = pickVoice();
+        if (voice) u.voice = voice;
+        u.onend = () => {
+          duckBed(false);
+          resolve();
+        };
+        u.onerror = () => {
+          duckBed(false);
+          resolve();
+        };
+        window.speechSynthesis.speak(u);
+      };
+
+      if (!window.speechSynthesis.getVoices().length) {
+        const onReady = () => {
+          window.speechSynthesis.removeEventListener("voiceschanged", onReady);
+          speak();
+        };
+        window.speechSynthesis.addEventListener("voiceschanged", onReady);
+        window.setTimeout(() => {
+          window.speechSynthesis.removeEventListener("voiceschanged", onReady);
+          speak();
+        }, 300);
+        return;
+      }
+      speak();
+    } catch {
+      duckBed(false);
+      resolve();
+    }
+  });
 }
 
 type TtsOpts = {
@@ -323,6 +333,8 @@ type TtsOpts = {
   style?: "host" | "standup" | "larva" | "take";
   voiceId?: string;
   geminiVoice?: string;
+  /** Browser-fallback pitch when neural TTS fails. */
+  fallbackPitch?: number;
 };
 
 /** Short game-show line — Gemini TTS (free). Browser fallback otherwise. */
@@ -340,6 +352,20 @@ export function speakStandup(line: string) {
   void playNeural(line, { provider: "gemini", style: "standup" });
 }
 
+/**
+ * Debate turn — Gemini larva delivery, distinct prebuilt voice per corner.
+ * Resolves when playback finishes (or immediately if muted).
+ */
+export function speakDebate(line: string, geminiVoice: string): Promise<void> {
+  const pitch = geminiVoice.toLowerCase() === "charon" ? 0.85 : 1.05;
+  return playNeural(line, {
+    provider: "gemini",
+    style: "larva",
+    geminiVoice,
+    fallbackPitch: pitch,
+  });
+}
+
 /** Hottest-take one-liner — ElevenLabs when keyed (Gemini fallback). */
 export function speakOneLiner(line: string, voiceId?: string) {
   void playNeural(line, {
@@ -349,16 +375,16 @@ export function speakOneLiner(line: string, voiceId?: string) {
   });
 }
 
-function playNeural(line: string, opts: TtsOpts) {
-  if (muted || typeof window === "undefined") return;
+function playNeural(line: string, opts: TtsOpts): Promise<void> {
+  if (muted || typeof window === "undefined") return Promise.resolve();
   const spoken = line.trim();
-  if (!spoken) return;
+  if (!spoken) return Promise.resolve();
 
   const token = ++announceToken;
   stopAnnounceAudio();
   duckBed(true);
 
-  void (async () => {
+  return (async () => {
     try {
       const res = await fetch("/api/larvae-survey/announce", {
         method: "POST",
@@ -378,19 +404,36 @@ function playNeural(line: string, opts: TtsOpts) {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       announceAudio = audio;
-      audio.onended = () => {
-        if (token === announceToken) duckBed(false);
-        URL.revokeObjectURL(url);
-        if (announceAudio === audio) announceAudio = null;
-      };
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        if (announceAudio === audio) announceAudio = null;
-        if (token === announceToken) announceBrowser(spoken);
-      };
-      await audio.play();
+      await new Promise<void>((resolve) => {
+        audio.onended = () => {
+          if (token === announceToken) duckBed(false);
+          URL.revokeObjectURL(url);
+          if (announceAudio === audio) announceAudio = null;
+          resolve();
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          if (announceAudio === audio) announceAudio = null;
+          if (token === announceToken) {
+            void announceBrowser(spoken, opts.fallbackPitch ?? 1).then(resolve);
+          } else {
+            resolve();
+          }
+        };
+        void audio.play().catch(() => {
+          URL.revokeObjectURL(url);
+          if (announceAudio === audio) announceAudio = null;
+          if (token === announceToken) {
+            void announceBrowser(spoken, opts.fallbackPitch ?? 1).then(resolve);
+          } else {
+            resolve();
+          }
+        });
+      });
     } catch {
-      if (token === announceToken) announceBrowser(spoken);
+      if (token === announceToken) {
+        await announceBrowser(spoken, opts.fallbackPitch ?? 1);
+      }
     }
   })();
 }

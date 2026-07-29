@@ -1,10 +1,10 @@
 // POST /api/larvae/debate
-// Two larvae argue a prompt; optional 3-peer jury picks a winner.
+// Two larvae argue a prompt across 6 turns (3 each, alternating). Optional 3-peer jury.
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis, getIndex, getProfile, haiku } from "@/lib/larvae";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
 const DAILY_CAP = 40;
@@ -13,11 +13,20 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+type Turn = {
+  wallet: string;
+  name: string;
+  tone: string;
+  hue: number;
+  text: string;
+  label: string;
+};
+
 async function speak(
   wallet: string,
   systemExtra: string,
   user: string
-): Promise<{ wallet: string; name: string; tone: string; hue: number; text: string } | null> {
+): Promise<Turn | null> {
   const p = await getProfile(wallet);
   if (!p) return null;
   const system = `You are "${p.profile.name}", a larva (personal AI governance agent) in the $CLAWD hive.
@@ -38,11 +47,49 @@ Stay in character. Opinionated. Max 3 sentences. No preamble. A notch looser tha
       tone: p.profile.tone,
       hue: p.avatar.hue,
       text,
+      label: "",
     };
   } catch {
     return null;
   }
 }
+
+const STAGES: {
+  side: "a" | "b";
+  label: string;
+  brief: string;
+}[] = [
+  {
+    side: "a",
+    label: "opens",
+    brief: "You open a short debate. State your position clearly. You may needle the other side.",
+  },
+  {
+    side: "b",
+    label: "responds",
+    brief: "Respond to their opening. Push your own case. You may roast them lightly.",
+  },
+  {
+    side: "a",
+    label: "presses",
+    brief: "Press your case. Answer their last point and sharpen your argument.",
+  },
+  {
+    side: "b",
+    label: "counters",
+    brief: "Counter-punch. Hit their weak spot and restake your claim.",
+  },
+  {
+    side: "a",
+    label: "closes",
+    brief: "Closing argument. Land a final punch. Do not concede unless it fits your character.",
+  },
+  {
+    side: "b",
+    label: "closes",
+    brief: "Final word. Answer their close and leave the last impression. Do not concede unless it fits.",
+  },
+];
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -65,37 +112,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "daily debate limit reached, try tomorrow" }, { status: 429 });
   }
 
-  const opening = await speak(
-    a,
-    "You open a short debate. State your position clearly. You may needle the other side.",
-    `Debate topic: ${question}\n\nGive your opening statement.`
-  );
-  if (!opening) {
-    return NextResponse.json({ error: "first larva failed to speak" }, { status: 502 });
+  const wallets = { a, b };
+  const turns: Turn[] = [];
+
+  for (let i = 0; i < STAGES.length; i++) {
+    if (i > 0) await sleep(350);
+    const stage = STAGES[i];
+    const wallet = wallets[stage.side];
+    const prior =
+      turns.length === 0
+        ? ""
+        : `\n\nTranscript so far:\n${turns
+            .map((t, n) => `${n + 1}. ${t.name} (${t.label}): ${t.text}`)
+            .join("\n")}`;
+    const turn = await speak(
+      wallet,
+      stage.brief,
+      `Debate topic: ${question}${prior}\n\nGive your next line (${stage.label}).`
+    );
+    if (!turn) {
+      return NextResponse.json(
+        { error: `larva failed to speak on turn ${i + 1}` },
+        { status: 502 }
+      );
+    }
+    turn.label = stage.label;
+    turns.push(turn);
   }
 
-  await sleep(400);
-
-  const rebuttal = await speak(
-    b,
-    "You are debating an opponent. Rebut their opening. Push your own case. You may roast them lightly.",
-    `Debate topic: ${question}\n\nOpponent (${opening.name}) opened with:\n"${opening.text}"\n\nGive your rebuttal.`
-  );
-  if (!rebuttal) {
-    return NextResponse.json({ error: "second larva failed to speak" }, { status: 502 });
-  }
-
-  await sleep(400);
-
-  const closing = await speak(
-    a,
-    "You close the debate. Answer their rebuttal and land a final punch. Do not concede unless it fits your character.",
-    `Debate topic: ${question}\n\nYou opened with:\n"${opening.text}"\n\nOpponent (${rebuttal.name}) replied:\n"${rebuttal.text}"\n\nGive your closing.`
-  );
-
-  const turns = [opening, rebuttal, closing].filter(Boolean) as NonNullable<
-    typeof opening
-  >[];
+  const nameA = turns[0].name;
+  const nameB = turns[1].name;
 
   let jury: {
     wallet: string;
@@ -116,7 +162,7 @@ export async function POST(req: NextRequest) {
     const jurors = pool.slice(0, 3);
 
     const transcript = turns
-      .map((t, i) => `${i + 1}. ${t.name}: ${t.text}`)
+      .map((t, i) => `${i + 1}. ${t.name} (${t.label}): ${t.text}`)
       .join("\n\n");
 
     for (const jw of jurors) {
@@ -127,7 +173,7 @@ export async function POST(req: NextRequest) {
           `You are "${p.profile.name}", judging a short larva debate.
 Tone: ${p.profile.tone}. Stay in character.
 Reply with JSON only: {"pick":"a"|"b"|"tie","note":"one dry sentence"}
-"a" = ${opening.name}, "b" = ${rebuttal.name}.`,
+"a" = ${nameA}, "b" = ${nameB}.`,
           `Topic: ${question}\n\nTranscript:\n${transcript}`,
           200,
           0.8
@@ -164,17 +210,17 @@ Reply with JSON only: {"pick":"a"|"b"|"tie","note":"one dry sentence"}
       winner,
       summary:
         winner === "a"
-          ? `${opening.name} edges it`
+          ? `${nameA} edges it`
           : winner === "b"
-            ? `${rebuttal.name} edges it`
+            ? `${nameB} edges it`
             : "Jury splits — no clear winner",
     };
   }
 
   return NextResponse.json({
     question,
-    a: { wallet: a, name: opening.name },
-    b: { wallet: b, name: rebuttal.name },
+    a: { wallet: a, name: nameA },
+    b: { wallet: b, name: nameB },
     turns,
     jury,
     verdict,
