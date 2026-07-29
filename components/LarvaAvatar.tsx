@@ -702,51 +702,88 @@ function Accessory({
     );
   }
   if (kind === "straw-hat") {
-    // One Piece–style: tan straw crown + wide brim + red ribbon.
-    const y = faceY - 14;
+    // Luffy-scale: oversized flat brim, short fat crown, thick red ribbon.
+    const y = faceY - 11;
     const straw = "#E8C547";
+    const strawMid = "#D4B03A";
     const strawDeep = "#C9A227";
     const strawEdge = "#8B6914";
     const ribbon = "#C41E3A";
+    const ribbonDark = "#9B1530";
     return (
       <g>
-        <ellipse cx="0" cy={y + 4.2} rx="16.5" ry="4.4" fill={strawDeep} stroke={strawEdge} strokeWidth="0.9" />
-        <ellipse cx="0" cy={y + 3.4} rx="15.5" ry="3.6" fill={straw} />
-        <ellipse cx="0" cy={y + 2.6} rx="10" ry="1.8" fill={strawDeep} opacity="0.35" />
+        {/* Under-brim shadow on the head */}
+        <ellipse cx="0" cy={y + 6.5} rx="14" ry="2.4" fill="#000" opacity="0.12" />
+        {/* Huge brim — the Luffy silhouette cue */}
+        <ellipse
+          cx="0"
+          cy={y + 4.8}
+          rx="22"
+          ry="5.6"
+          fill={strawDeep}
+          stroke={strawEdge}
+          strokeWidth="1.1"
+        />
+        <ellipse cx="0" cy={y + 3.9} rx="21" ry="4.8" fill={straw} />
+        <ellipse cx="0" cy={y + 2.8} rx="13" ry="2.4" fill={strawMid} opacity="0.4" />
+        {/* Straw weave ticks on brim */}
+        {[-14, -7, 0, 7, 14].map((x) => (
+          <line
+            key={x}
+            x1={x}
+            y1={y + 2.2}
+            x2={x * 0.92}
+            y2={y + 6.2}
+            stroke={strawEdge}
+            strokeWidth="0.55"
+            opacity="0.35"
+          />
+        ))}
+        {/* Short fat crown */}
         <path
-          d={`M -8.2 ${y + 2.2} L -7.6 ${y - 7.2} Q 0 ${y - 10.5} 7.6 ${y - 7.2} L 8.2 ${y + 2.2} Z`}
+          d={`M -11 ${y + 2.4} L -10.2 ${y - 8.5} Q 0 ${y - 12.5} 10.2 ${y - 8.5} L 11 ${y + 2.4} Z`}
           fill={straw}
           stroke={strawEdge}
-          strokeWidth="0.85"
+          strokeWidth="1"
         />
         <path
-          d={`M -7.2 ${y - 1} Q 0 ${y - 3.2} 7.2 ${y - 1}`}
+          d={`M -9 ${y - 2} Q 0 ${y - 5} 9 ${y - 2}`}
           fill="none"
           stroke={strawDeep}
-          strokeWidth="0.7"
-          opacity="0.55"
+          strokeWidth="0.85"
+          opacity="0.5"
         />
+        {/* Thick red ribbon around crown base */}
         <path
-          d={`M -8.4 ${y + 0.6} Q 0 ${y + 2.4} 8.4 ${y + 0.6}`}
+          d={`M -11.2 ${y + 0.2} Q 0 ${y + 2.8} 11.2 ${y + 0.2}`}
           fill="none"
           stroke={ribbon}
-          strokeWidth="2.7"
+          strokeWidth="3.8"
           strokeLinecap="round"
         />
         <path
-          d={`M 7.2 ${y + 1.1} Q 11.5 ${y + 3.2} 10.2 ${y + 7.5}`}
+          d={`M -10.5 ${y + 0.5} Q 0 ${y + 2.5} 10.5 ${y + 0.5}`}
+          fill="none"
+          stroke={ribbonDark}
+          strokeWidth="1.2"
+          strokeLinecap="round"
+          opacity="0.45"
+        />
+        {/* Ribbon tails dangling off the side */}
+        <path
+          d={`M 9.5 ${y + 1.2} Q 16 ${y + 3.5} 14.5 ${y + 10}`}
           fill="none"
           stroke={ribbon}
-          strokeWidth="1.9"
+          strokeWidth="2.6"
           strokeLinecap="round"
         />
         <path
-          d={`M 7.6 ${y + 1.4} Q 9.8 ${y + 4.5} 8.4 ${y + 6.8}`}
+          d={`M 10 ${y + 1.6} Q 14 ${y + 5.5} 12.2 ${y + 9.2}`}
           fill="none"
           stroke={ribbon}
-          strokeWidth="1.5"
+          strokeWidth="2.1"
           strokeLinecap="round"
-          opacity="0.85"
+          opacity="0.9"
         />
       </g>
     );
