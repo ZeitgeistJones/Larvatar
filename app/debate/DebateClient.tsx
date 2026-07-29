@@ -7,7 +7,8 @@ import LarvaAvatar from "@/components/LarvaAvatar";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 import type { LarvatarTraits } from "@/lib/avatar";
-import { speakDebate, unlockSurveyAudio } from "@/lib/survey-sfx";
+import { speakGeminiLine, unlockSurveyAudio } from "@/lib/survey-sfx";
+import { geminiVoicesForWallets } from "@/lib/gemini-voices";
 
 type Specimen = {
   wallet: string;
@@ -35,10 +36,6 @@ type DebateResult = {
   verdict: { winner: "a" | "b" | "tie"; summary: string } | null;
 };
 
-/** Distinct Gemini prebuilt voices so corners don't sound identical. */
-const VOICE_A = "Aoede";
-const VOICE_B = "Charon";
-
 const FALLBACK_LABELS = ["opens", "responds", "presses", "counters", "closes", "closes"];
 
 export default function DebateClient() {
@@ -56,7 +53,9 @@ export default function DebateClient() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<DebateResult | null>(null);
   const [visibleCount, setVisibleCount] = useState(0);
+  const [juryVisible, setJuryVisible] = useState(0);
   const [speaking, setSpeaking] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "bout" | "jury" | "done">("idle");
   const playGen = useRef(0);
 
   useEffect(() => {
@@ -90,23 +89,64 @@ export default function DebateClient() {
   const sa = byWallet.get(a);
   const sb = byWallet.get(b);
 
+  const cornerVoices = useMemo(
+    () => geminiVoicesForWallets([a, b].filter(Boolean)),
+    [a, b]
+  );
+  const voiceA = a ? cornerVoices.get(a) || "Aoede" : "Aoede";
+  const voiceB = b ? cornerVoices.get(b) || "Charon" : "Charon";
+
   async function playTranscript(data: DebateResult) {
     const gen = ++playGen.current;
     setVisibleCount(0);
+    setJuryVisible(0);
     setSpeaking(true);
+    setPhase("bout");
     unlockSurveyAudio();
+
+    const voices = geminiVoicesForWallets([
+      data.a.wallet,
+      data.b.wallet,
+      ...data.jury.map((j) => j.wallet),
+    ]);
 
     for (let i = 0; i < data.turns.length; i++) {
       if (playGen.current !== gen) return;
       setVisibleCount(i + 1);
       const turn = data.turns[i];
-      const sideA = turn.wallet.toLowerCase() === data.a.wallet.toLowerCase();
-      await speakDebate(turn.text, sideA ? VOICE_A : VOICE_B);
+      const voice =
+        voices.get(turn.wallet.toLowerCase()) ||
+        (turn.wallet.toLowerCase() === data.a.wallet.toLowerCase() ? "Aoede" : "Charon");
+      await speakGeminiLine(turn.text, voice, "larva");
       if (playGen.current !== gen) return;
       await new Promise((r) => setTimeout(r, 280));
     }
 
-    if (playGen.current === gen) setSpeaking(false);
+    if (data.jury.length > 0 && data.verdict) {
+      if (playGen.current !== gen) return;
+      setPhase("jury");
+      await new Promise((r) => setTimeout(r, 400));
+      for (let i = 0; i < data.jury.length; i++) {
+        if (playGen.current !== gen) return;
+        setJuryVisible(i + 1);
+        const j = data.jury[i];
+        const pickName =
+          j.pick === "a" ? data.a.name : j.pick === "b" ? data.b.name : "a tie";
+        const line = j.note
+          ? `${j.name} votes ${pickName}. ${j.note}`
+          : `${j.name} votes ${pickName}.`;
+        const voice = voices.get(j.wallet.toLowerCase()) || "Kore";
+        await speakGeminiLine(line, voice, "take");
+        if (playGen.current !== gen) return;
+        await new Promise((r) => setTimeout(r, 220));
+      }
+    }
+
+    if (playGen.current === gen) {
+      setSpeaking(false);
+      setPhase("done");
+      setJuryVisible(data.jury.length);
+    }
   }
 
   async function runDebate() {
@@ -114,7 +154,9 @@ export default function DebateClient() {
     playGen.current += 1;
     setResult(null);
     setVisibleCount(0);
+    setJuryVisible(0);
     setSpeaking(false);
+    setPhase("idle");
     if (!a || !b || a === b) {
       setError("Pick two different larvae.");
       return;
@@ -141,6 +183,7 @@ export default function DebateClient() {
       setError(e instanceof Error ? e.message : "debate failed");
       setBusy(false);
       setSpeaking(false);
+      setPhase("idle");
     }
   }
 
@@ -154,8 +197,11 @@ export default function DebateClient() {
     if (rival && byWallet.has(rival)) setB(rival);
   }
 
-  const showJury =
-    !!result?.verdict && visibleCount >= (result.turns.length || 0) && !speaking;
+  const showJuryBox =
+    !!result?.verdict &&
+    visibleCount >= (result.turns.length || 0) &&
+    (phase === "jury" || phase === "done");
+  const busyFloor = busy || speaking;
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
@@ -258,7 +304,7 @@ export default function DebateClient() {
                   <div>
                     <span className="text-sm font-semibold">{sa.profile.name}</span>
                     <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
-                      voice · {VOICE_A}
+                      voice · {voiceA}
                     </p>
                   </div>
                 </div>
@@ -279,7 +325,7 @@ export default function DebateClient() {
                   <div>
                     <span className="text-sm font-semibold">{sb.profile.name}</span>
                     <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
-                      voice · {VOICE_B}
+                      voice · {voiceB}
                     </p>
                   </div>
                 </div>
@@ -297,7 +343,7 @@ export default function DebateClient() {
                 placeholder="e.g. should CLAWD burn more or build more?"
                 className="mt-1 w-full rounded-lg border px-4 py-3 text-sm outline-none focus:ring-2"
                 style={{ borderColor: `${INK}25` }}
-                onKeyDown={(e) => e.key === "Enter" && !busy && void runDebate()}
+                onKeyDown={(e) => e.key === "Enter" && !busyFloor && void runDebate()}
               />
             </label>
 
@@ -313,11 +359,17 @@ export default function DebateClient() {
             <button
               type="button"
               onClick={() => void runDebate()}
-              disabled={busy || speaking}
+              disabled={busyFloor}
               className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
               style={{ background: CORAL }}
             >
-              {busy ? "Writing the bout…" : speaking ? "Live on the floor…" : "Start debate"}
+              {busy
+                ? "Writing the bout…"
+                : phase === "bout"
+                  ? "Live on the floor…"
+                  : phase === "jury"
+                    ? "Jury speaking…"
+                    : "Start debate"}
             </button>
 
             {error && (
@@ -378,7 +430,7 @@ export default function DebateClient() {
               )}
             </div>
 
-            {showJury && result.verdict && (
+            {showJuryBox && result.verdict && (
               <div
                 className="mt-6 rounded-lg border px-4 py-3"
                 style={{ borderColor: `${GOLD}40`, background: `${GOLD}10` }}
@@ -386,21 +438,56 @@ export default function DebateClient() {
                 <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: GOLD }}>
                   jury
                 </p>
-                <p className="mt-1 text-sm font-semibold">{result.verdict.summary}</p>
+                {(phase === "done" ||
+                  (phase === "jury" && juryVisible >= result.jury.length)) && (
+                  <p className="mt-1 text-sm font-semibold">{result.verdict.summary}</p>
+                )}
                 {result.jury.length > 0 && (
-                  <ul className="mt-2 space-y-1 text-xs opacity-70">
-                    {result.jury.map((j) => (
-                      <li key={j.wallet}>
-                        <strong>{j.name}</strong> →{" "}
-                        {j.pick === "a"
-                          ? result.a.name
-                          : j.pick === "b"
-                            ? result.b.name
-                            : "tie"}
-                        {j.note ? ` — ${j.note}` : ""}
-                      </li>
-                    ))}
+                  <ul className="mt-2 space-y-2 text-xs opacity-70">
+                    {(() => {
+                      const voices = geminiVoicesForWallets([
+                        result.a.wallet,
+                        result.b.wallet,
+                        ...result.jury.map((x) => x.wallet),
+                      ]);
+                      const shown =
+                        phase === "done"
+                          ? result.jury.length
+                          : Math.max(juryVisible, 0);
+                      return result.jury.slice(0, shown).map((j, i) => {
+                        const live = phase === "jury" && i === juryVisible - 1;
+                        const v = voices.get(j.wallet.toLowerCase());
+                        return (
+                          <li
+                            key={j.wallet}
+                            className="leading-snug"
+                            style={{ opacity: live ? 1 : 0.85 }}
+                          >
+                            <strong>{j.name}</strong>
+                            {v ? (
+                              <span className="font-mono text-[9px] uppercase tracking-widest opacity-45">
+                                {" "}
+                                · {v}
+                                {live ? " · speaking" : ""}
+                              </span>
+                            ) : null}{" "}
+                            →{" "}
+                            {j.pick === "a"
+                              ? result.a.name
+                              : j.pick === "b"
+                                ? result.b.name
+                                : "tie"}
+                            {j.note ? ` — ${j.note}` : ""}
+                          </li>
+                        );
+                      });
+                    })()}
                   </ul>
+                )}
+                {phase === "jury" && juryVisible < result.jury.length && (
+                  <p className="mt-2 font-mono text-[10px] uppercase tracking-widest opacity-40">
+                    next juror…
+                  </p>
                 )}
               </div>
             )}

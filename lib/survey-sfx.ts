@@ -353,17 +353,27 @@ export function speakStandup(line: string) {
 }
 
 /**
- * Debate turn — Gemini larva delivery, distinct prebuilt voice per corner.
+ * Debate / jury line — Gemini delivery with an explicit prebuilt voice.
  * Resolves when playback finishes (or immediately if muted).
  */
-export function speakDebate(line: string, geminiVoice: string): Promise<void> {
-  const pitch = geminiVoice.toLowerCase() === "charon" ? 0.85 : 1.05;
+export function speakGeminiLine(
+  line: string,
+  geminiVoice: string,
+  style: "larva" | "take" | "standup" | "host" = "larva"
+): Promise<void> {
+  const pitch =
+    /charon|orus|fenrir|algenib|gacrux/i.test(geminiVoice) ? 0.88 : 1.05;
   return playNeural(line, {
     provider: "gemini",
-    style: "larva",
+    style,
     geminiVoice,
     fallbackPitch: pitch,
   });
+}
+
+/** @deprecated prefer speakGeminiLine — kept for call-site clarity */
+export function speakDebate(line: string, geminiVoice: string): Promise<void> {
+  return speakGeminiLine(line, geminiVoice, "larva");
 }
 
 /** Hottest-take one-liner — ElevenLabs when keyed (Gemini fallback). */

@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
-import { speakStandup, unlockSurveyAudio } from "@/lib/survey-sfx";
+import { speakGeminiLine, speakStandup, unlockSurveyAudio } from "@/lib/survey-sfx";
+import { geminiVoiceForWallet, geminiVoicesForWallets } from "@/lib/gemini-voices";
 
 type CrowdReview = {
   wallet: string;
@@ -42,6 +43,10 @@ export default function StandupPage() {
   const [error, setError] = useState("");
   const [phase, setPhase] = useState<"idle" | "live" | "encore">("idle");
   const [left, setLeft] = useState(BIT_SECONDS);
+  const [juryVisible, setJuryVisible] = useState(0);
+  const [jurySpeaking, setJurySpeaking] = useState(false);
+  const juryPlayGen = useRef(0);
+  const autoHeardId = useRef<string | null>(null);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -56,30 +61,60 @@ export default function StandupPage() {
     void loadHistory();
   }, [loadHistory]);
 
-  const runJury = useCallback(async (id: string) => {
-    setJurying(true);
-    setError("");
-    try {
-      const res = await fetch("/api/larvae/standup", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      const d = await res.json();
-      if (!res.ok) {
-        setError(d.error || "crowd went silent");
-        return;
-      }
-      setSet({ ...d.set, avg: d.avg });
-      void loadHistory();
-    } catch {
-      setError("network error getting the room’s take");
-    } finally {
-      setJurying(false);
-    }
-  }, [loadHistory]);
+  const playJury = useCallback(async (reviews: CrowdReview[], setId: string) => {
+    if (!reviews.length) return;
+    const gen = ++juryPlayGen.current;
+    setJuryVisible(0);
+    setJurySpeaking(true);
+    unlockSurveyAudio();
+    const voices = geminiVoicesForWallets(reviews.map((r) => r.wallet));
 
-  // 90s performance clock → then larva jury
+    for (let i = 0; i < reviews.length; i++) {
+      if (juryPlayGen.current !== gen) return;
+      setJuryVisible(i + 1);
+      const r = reviews[i];
+      const voice = voices.get(r.wallet.toLowerCase()) || geminiVoiceForWallet(r.wallet);
+      const line = `${r.name} gives it a ${r.score} out of 10. ${r.reaction}`;
+      await speakGeminiLine(line, voice, "take");
+      if (juryPlayGen.current !== gen) return;
+      await new Promise((res) => setTimeout(res, 220));
+    }
+
+    if (juryPlayGen.current === gen) {
+      setJurySpeaking(false);
+      setJuryVisible(reviews.length);
+      autoHeardId.current = setId;
+    }
+  }, []);
+
+  const runJury = useCallback(
+    async (id: string) => {
+      setJurying(true);
+      setError("");
+      setJuryVisible(0);
+      try {
+        const res = await fetch("/api/larvae/standup", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        const d = await res.json();
+        if (!res.ok) {
+          setError(d.error || "crowd went silent");
+          return;
+        }
+        const next = { ...d.set, avg: d.avg } as StandupSet;
+        setSet(next);
+        void loadHistory();
+      } catch {
+        setError("network error getting the room’s take");
+      } finally {
+        setJurying(false);
+      }
+    },
+    [loadHistory]
+  );
+
   useEffect(() => {
     if (phase !== "live") return;
     if (left <= 0) {
@@ -92,12 +127,19 @@ export default function StandupPage() {
 
   useEffect(() => {
     if (phase !== "encore" || !set?.id) return;
-    if (set.reviews && set.reviews.length > 0) return;
-    if (jurying) return;
-    void runJury(set.id);
-  }, [phase, set, jurying, runJury]);
+    if (!set.reviews?.length) {
+      if (!jurying) void runJury(set.id);
+      return;
+    }
+    if (autoHeardId.current === set.id || jurySpeaking) return;
+    void playJury(set.reviews, set.id);
+  }, [phase, set, jurying, runJury, playJury, jurySpeaking]);
 
   async function bookAct() {
+    juryPlayGen.current += 1;
+    setJurySpeaking(false);
+    setJuryVisible(0);
+    autoHeardId.current = null;
     setLoading(true);
     setError("");
     try {
@@ -125,13 +167,17 @@ export default function StandupPage() {
   function playBit() {
     if (!set) return;
     unlockSurveyAudio();
-    // Full bit via Gemini TTS (not ElevenLabs).
     speakStandup(set.bit);
   }
 
   const wordCount = useMemo(
     () => (set ? set.bit.trim().split(/\s+/).length : 0),
     [set]
+  );
+
+  const juryVoices = useMemo(
+    () => geminiVoicesForWallets((set?.reviews || []).map((r) => r.wallet)),
+    [set?.reviews]
   );
 
   return (
@@ -153,7 +199,8 @@ export default function StandupPage() {
           </h1>
           <p className="mx-auto mt-2 max-w-lg text-sm opacity-75">
             One random larva, ninety seconds of Seinfeld-adjacent observational comedy — then{" "}
-            <strong>five other larvae</strong> score how funny it was, in character.
+            <strong>five other larvae</strong> score how funny it was, in character, each with their
+            own Gemini voice.
           </p>
         </header>
 
@@ -185,7 +232,7 @@ export default function StandupPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
-                  now on stage · {set.tone} · Gemini voice
+                  now on stage · {set.tone} · Gemini · {geminiVoiceForWallet(set.wallet)}
                 </p>
                 <h2 className="text-2xl font-bold">{set.name}</h2>
               </div>
@@ -198,7 +245,11 @@ export default function StandupPage() {
                 </p>
               ) : (
                 <p className="font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
-                  {jurying ? "crowd conferring…" : "set complete"}
+                  {jurying
+                    ? "crowd conferring…"
+                    : jurySpeaking
+                      ? "jury speaking…"
+                      : "set complete"}
                 </p>
               )}
             </div>
@@ -227,6 +278,20 @@ export default function StandupPage() {
                   Cut to crowd reaction
                 </button>
               )}
+              {phase === "encore" && (set.reviews?.length || 0) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    autoHeardId.current = null;
+                    void playJury(set.reviews || [], set.id);
+                  }}
+                  disabled={jurySpeaking}
+                  className="rounded-lg border px-4 py-2 text-sm disabled:opacity-40"
+                  style={{ borderColor: `${INK}30` }}
+                >
+                  {jurySpeaking ? "Jury speaking…" : "Play jury (TTS)"}
+                </button>
+              )}
             </div>
 
             {set.material.length > 0 && (
@@ -245,14 +310,14 @@ export default function StandupPage() {
             {phase === "encore" && (
               <div className="mt-8 border-t pt-6" style={{ borderColor: `${INK}15` }}>
                 <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
-                  larva jury · comedy only
+                  larva jury · comedy only · unique Gemini voices
                 </p>
                 {jurying && (
                   <p className="mt-2 text-sm opacity-70">
                     Five larvae scoring punchlines — not whether they agree with the bit…
                   </p>
                 )}
-                {set.avg != null && (
+                {set.avg != null && juryVisible > 0 && (
                   <p className="mt-2 text-lg font-bold" style={{ color: GOLD }}>
                     Room avg {set.avg}/10
                     <span className="ml-2 text-sm font-normal opacity-50">
@@ -261,30 +326,45 @@ export default function StandupPage() {
                   </p>
                 )}
                 <div className="mt-4 space-y-3">
-                  {(set.reviews || []).map((r) => (
-                    <div
-                      key={r.wallet}
-                      className="rounded-lg border px-3 py-2"
-                      style={{ borderColor: `${INK}15` }}
-                    >
-                      <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <p className="text-sm font-semibold">
-                          {r.name}{" "}
-                          <span className="font-mono text-[10px] font-normal uppercase tracking-widest opacity-45">
-                            {r.tone} voice
-                          </span>
-                        </p>
-                        <p className="font-mono text-sm font-bold" style={{ color: CORAL }}>
-                          {r.score}/10 funny
-                        </p>
+                  {(set.reviews || []).slice(0, Math.max(juryVisible, 0)).map((r, i) => {
+                    const live = jurySpeaking && i === juryVisible - 1;
+                    const v = juryVoices.get(r.wallet.toLowerCase());
+                    return (
+                      <div
+                        key={r.wallet}
+                        className="rounded-lg border px-3 py-2"
+                        style={{
+                          borderColor: `${INK}15`,
+                          opacity: live ? 1 : 0.9,
+                        }}
+                      >
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="text-sm font-semibold">
+                            {r.name}{" "}
+                            <span className="font-mono text-[10px] font-normal uppercase tracking-widest opacity-45">
+                              {v || r.tone}
+                              {live ? " · speaking" : ""}
+                            </span>
+                          </p>
+                          <p className="font-mono text-sm font-bold" style={{ color: CORAL }}>
+                            {r.score}/10 funny
+                          </p>
+                        </div>
+                        <p className="mt-1 text-sm opacity-80">“{r.reaction}”</p>
                       </div>
-                      <p className="mt-1 text-sm opacity-80">“{r.reaction}”</p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+                {jurySpeaking && juryVisible < (set.reviews?.length || 0) && (
+                  <p className="mt-3 font-mono text-[10px] uppercase tracking-widest opacity-40">
+                    next juror…
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={() => {
+                    juryPlayGen.current += 1;
+                    setJurySpeaking(false);
                     setPhase("idle");
                     setSet(null);
                   }}
@@ -309,9 +389,13 @@ export default function StandupPage() {
                   key={h.id}
                   type="button"
                   onClick={() => {
+                    juryPlayGen.current += 1;
+                    setJurySpeaking(false);
                     setSet(h);
                     setPhase("encore");
                     setLeft(0);
+                    setJuryVisible(h.reviews?.length || 0);
+                    autoHeardId.current = h.id;
                     if (!h.reviews?.length) void runJury(h.id);
                   }}
                   className="flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left text-sm"
