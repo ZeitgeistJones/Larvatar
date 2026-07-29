@@ -21,7 +21,7 @@ export default function ShareCompassClient() {
   const { colors, dark } = useTheme();
   const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD, sea: SEA } = colors;
   const params = useSearchParams();
-  const meName = (params.get("me") || "Successionist").trim();
+  const meName = (params.get("me") || "Kandi").trim();
 
   const compassRef = useRef<HTMLCanvasElement>(null);
   const mapRef = useRef<HTMLCanvasElement>(null);
@@ -157,26 +157,43 @@ export default function ShareCompassClient() {
     ctx.fillText("Moral Map", 64, 145);
     ctx.fillStyle = dark ? "rgba(255,255,255,0.55)" : "rgba(20,30,40,0.55)";
     ctx.font = "500 24px system-ui, Segoe UI, sans-serif";
-    ctx.fillText(`${total} proxies plotted · Law ↔ Chaos × Good ↔ Evil`, 64, 185);
+    ctx.fillText(`${total} proxies · Law ↔ Chaos × Good ↔ Evil`, 64, 185);
 
-    const pad = { l: 110, r: 64, t: 230, b: 160 };
+    const pad = { l: 100, r: 56, t: 230, b: 140 };
     const plotW = W - pad.l - pad.r;
     const plotH = H - pad.t - pad.b;
     const plotX = pad.l;
     const plotY = pad.t;
-
-    // quadrant washes
     const midX = plotX + plotW / 2;
     const midY = plotY + plotH / 2;
-    ctx.fillStyle = dark ? `${SEA}22` : `${SEA}18`;
-    ctx.fillRect(plotX, plotY, plotW, plotH / 2);
-    ctx.fillStyle = dark ? `${CORAL}22` : `${CORAL}14`;
-    ctx.fillRect(plotX, midY, plotW, plotH / 2);
 
-    ctx.strokeStyle = dark ? "rgba(255,255,255,0.12)" : "rgba(20,30,40,0.14)";
+    // Soft 9-box washes (good top / evil bottom — matches live map)
+    const boxes: { x0: number; x1: number; y0: number; y1: number; c: string }[] = [
+      { x0: -1, x1: -1 / 3, y0: -1, y1: -1 / 3, c: SEA },
+      { x0: -1 / 3, x1: 1 / 3, y0: -1, y1: -1 / 3, c: SEA },
+      { x0: 1 / 3, x1: 1, y0: -1, y1: -1 / 3, c: SEA },
+      { x0: -1, x1: -1 / 3, y0: -1 / 3, y1: 1 / 3, c: INK },
+      { x0: -1 / 3, x1: 1 / 3, y0: -1 / 3, y1: 1 / 3, c: GOLD },
+      { x0: 1 / 3, x1: 1, y0: -1 / 3, y1: 1 / 3, c: INK },
+      { x0: -1, x1: -1 / 3, y0: 1 / 3, y1: 1, c: CORAL },
+      { x0: -1 / 3, x1: 1 / 3, y0: 1 / 3, y1: 1, c: CORAL },
+      { x0: 1 / 3, x1: 1, y0: 1 / 3, y1: 1, c: CORAL },
+    ];
+    const toX = (v: number) => plotX + ((v + 1) / 2) * plotW;
+    const toY = (v: number) => plotY + ((v + 1) / 2) * plotH; // +evil down
+    for (const b of boxes) {
+      const x = toX(b.x0);
+      const y = toY(b.y0);
+      ctx.fillStyle = b.c;
+      ctx.globalAlpha = 0.05;
+      ctx.fillRect(x, y, toX(b.x1) - x, toY(b.y1) - y);
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.strokeStyle = dark ? "rgba(255,255,255,0.14)" : "rgba(20,30,40,0.16)";
     ctx.lineWidth = 1.5;
     ctx.strokeRect(plotX, plotY, plotW, plotH);
-    ctx.setLineDash([8, 8]);
+    ctx.setLineDash([6, 6]);
     ctx.beginPath();
     ctx.moveTo(midX, plotY);
     ctx.lineTo(midX, plotY + plotH);
@@ -185,69 +202,97 @@ export default function ShareCompassClient() {
     ctx.stroke();
     ctx.setLineDash([]);
 
+    // Axis labels like live map
     ctx.fillStyle = dark ? "rgba(255,255,255,0.45)" : "rgba(20,30,40,0.45)";
     ctx.font = "600 14px ui-monospace, Menlo, monospace";
-    ctx.fillText("GOOD", midX - 20, plotY - 12);
-    ctx.fillText("EVIL", midX - 16, plotY + plotH + 28);
-    ctx.fillText("LAWFUL", plotX, plotY + plotH + 52);
-    ctx.fillText("CHAOTIC", plotX + plotW - 70, plotY + plotH + 52);
+    ctx.fillText("GOOD", plotX + 8, plotY + 20);
+    ctx.fillText("← LAWFUL", plotX, plotY + plotH + 36);
+    ctx.fillText("CHAOTIC →", plotX + plotW - 90, plotY + plotH + 36);
+    ctx.save();
+    ctx.translate(28, midY);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText("EVIL →", 0, 0);
+    ctx.restore();
+
+    // Closest / deepest meta
+    const plotted = results.map((r) => {
+      const { x, y } = moralMapCoords(r);
+      return { r, x, y, margin: moralMargin(r), dist: Math.hypot(x, y) };
+    });
+    const closest = [...plotted].sort((a, b) => a.dist - b.dist)[0];
+    const deepest = [...plotted].sort((a, b) => b.margin - a.margin)[0];
+    ctx.font = "600 16px ui-monospace, Menlo, monospace";
+    ctx.textAlign = "right";
+    ctx.fillStyle = dark ? "rgba(255,255,255,0.45)" : "rgba(20,30,40,0.45)";
+    if (closest) {
+      ctx.fillText("closest to center · ", W - 64 - ctx.measureText(closest.r.name).width, 100);
+      ctx.fillStyle = GOLD;
+      ctx.fillText(closest.r.name, W - 64, 100);
+    }
+    if (deepest && deepest.r.wallet !== closest?.r.wallet) {
+      ctx.fillStyle = dark ? "rgba(255,255,255,0.45)" : "rgba(20,30,40,0.45)";
+      ctx.fillText("strongest margin · ", W - 64 - ctx.measureText(deepest.r.name).width, 124);
+      ctx.fillStyle = CORAL;
+      ctx.fillText(deepest.r.name, W - 64, 124);
+    }
+    ctx.textAlign = "left";
 
     const me = results.find((r) => r.name.toLowerCase() === meName.toLowerCase());
     let mePt: { x: number; y: number; r: MoralResult } | null = null;
 
-    for (const r of results) {
-      const { x, y } = moralMapCoords(r);
-      const px = plotX + ((x + 1) / 2) * plotW;
-      const py = plotY + ((y + 1) / 2) * plotH;
-      const margin = moralMargin(r);
-      const rad = 4 + Math.min(6, margin / 8);
-      const hue = walletHue(r.wallet);
+    const sorted = [...plotted].sort((a, b) => a.margin - b.margin);
+    for (const p of sorted) {
+      const px = toX(p.x);
+      const py = toY(p.y);
+      const rad = 4.5 + Math.min(5, p.margin / 7);
+      const hue = walletHue(p.r.wallet);
       ctx.beginPath();
       ctx.arc(px, py, rad, 0, Math.PI * 2);
       ctx.fillStyle = `hsl(${hue} 58% 52%)`;
       ctx.fill();
-      if (me && r.wallet === me.wallet) mePt = { x: px, y: py, r };
+      if (me && p.r.wallet === me.wallet) mePt = { x: px, y: py, r: p.r };
     }
 
     if (mePt) {
       ctx.beginPath();
-      ctx.arc(mePt.x, mePt.y, 14, 0, Math.PI * 2);
+      ctx.arc(mePt.x, mePt.y, 13, 0, Math.PI * 2);
       ctx.strokeStyle = CORAL;
       ctx.lineWidth = 3;
       ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(mePt.x, mePt.y, 7, 0, Math.PI * 2);
-      ctx.fillStyle = CORAL;
-      ctx.fill();
 
-      // annotation
-      const ax = Math.min(mePt.x + 18, plotX + plotW - 200);
-      const ay = Math.max(mePt.y - 10, plotY + 24);
+      const label = mePt.r.name;
+      const sub = "builder's stand-in";
+      ctx.font = "700 22px system-ui, Segoe UI, sans-serif";
+      const tw = Math.max(ctx.measureText(label).width, 140);
+      let ax = mePt.x + 16;
+      let ay = mePt.y - 28;
+      if (ax + tw > plotX + plotW - 8) ax = mePt.x - tw - 20;
+      if (ay < plotY + 28) ay = mePt.y + 36;
+
       ctx.strokeStyle = CORAL;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(mePt.x + 12, mePt.y);
-      ctx.lineTo(ax, ay);
+      ctx.moveTo(mePt.x, mePt.y - 12);
+      ctx.lineTo(ax + 4, ay);
       ctx.stroke();
+
       ctx.fillStyle = INK;
-      ctx.font = "700 22px system-ui, Segoe UI, sans-serif";
-      ctx.fillText(mePt.r.name, ax + 6, ay - 4);
+      ctx.fillText(label, ax + 6, ay);
       ctx.fillStyle = dark ? "rgba(255,255,255,0.5)" : "rgba(20,30,40,0.5)";
-      ctx.font = "600 16px ui-monospace, Menlo, monospace";
-      ctx.fillText("builder's stand-in", ax + 6, ay + 18);
-      ctx.fillText(mePt.r.label, ax + 6, ay + 38);
+      ctx.font = "600 15px ui-monospace, Menlo, monospace";
+      ctx.fillText(sub, ax + 6, ay + 20);
     }
 
-    ctx.fillStyle = dark ? "rgba(255,255,255,0.55)" : "rgba(20,30,40,0.55)";
-    ctx.font = "italic 600 26px Georgia, serif";
-    ctx.fillText("The real larvae would hate this.", 64, H - 100);
-
     ctx.fillStyle = dark ? "rgba(255,255,255,0.4)" : "rgba(20,30,40,0.4)";
+    ctx.font = "600 13px ui-monospace, Menlo, monospace";
+    ctx.fillText("DOT SIZE = ALIGNMENT MARGIN", 64, H - 88);
+    ctx.fillText("CROSSHAIR = TRUE NEUTRAL", midX - 90, H - 88);
+
     ctx.font = "600 18px ui-monospace, Menlo, monospace";
-    ctx.fillText("proxies of proxies", 64, H - 52);
+    ctx.fillText("proxies of proxies", 64, H - 48);
     const right = "larvatar.vercel.app · 2/2";
-    ctx.fillText(right, W - 64 - ctx.measureText(right).width, H - 52);
-  }, [CORAL, INK, SEA, dark, meName, results]);
+    ctx.fillText(right, W - 64 - ctx.measureText(right).width, H - 48);
+  }, [CORAL, GOLD, INK, SEA, dark, meName, results]);
 
   useEffect(() => {
     fetch("/api/larvae/moral")
