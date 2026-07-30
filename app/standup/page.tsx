@@ -11,6 +11,7 @@ import {
   prefetchGeminiClips,
   revokeTtsClips,
   speakStandup,
+  stopTts,
   unlockSurveyAudio,
   type PrefetchedTtsClip,
 } from "@/lib/survey-sfx";
@@ -69,12 +70,16 @@ export default function StandupPage() {
   const [phase, setPhase] = useState<"idle" | "live" | "encore">("idle");
   const [left, setLeft] = useState(BIT_SECONDS);
   const [juryVisible, setJuryVisible] = useState(0);
+  const [juryTextOn, setJuryTextOn] = useState(false);
   const [jurySpeaking, setJurySpeaking] = useState(false);
   const [talkingWallet, setTalkingWallet] = useState<string | null>(null);
   const [bitTalking, setBitTalking] = useState(false);
+  /** Compact scores for history browse (no sequential desks until Play jury). */
+  const [scoresOnly, setScoresOnly] = useState(false);
   const juryPlayGen = useRef(0);
   const autoHeardId = useRef<string | null>(null);
-  const clipBag = useRef<(PrefetchedTtsClip | null)[]>([]);
+  const clipBuf = useRef<PrefetchedTtsClip[]>([]);
+  const bitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const byWallet = useMemo(() => {
     const m = new Map<string, Specimen>();
@@ -99,51 +104,92 @@ export default function StandupPage() {
       .catch(() => {});
   }, [loadHistory]);
 
+  const abortJury = useCallback(() => {
+    juryPlayGen.current += 1;
+    stopTts();
+    revokeTtsClips(clipBuf.current);
+    clipBuf.current = [];
+    setCueing(false);
+    setJurySpeaking(false);
+    setTalkingWallet(null);
+    setJuryTextOn(false);
+  }, []);
+
   useEffect(() => {
     return () => {
-      revokeTtsClips(clipBag.current);
-      clipBag.current = [];
+      abortJury();
+      if (bitTimer.current) clearTimeout(bitTimer.current);
     };
-  }, []);
+  }, [abortJury]);
 
-  const playJury = useCallback(async (reviews: CrowdReview[], setId: string) => {
-    if (!reviews.length) return;
-    const gen = ++juryPlayGen.current;
-    setJuryVisible(0);
-    setTalkingWallet(null);
-    setCueing(true);
-    unlockSurveyAudio();
-    const voices = geminiVoicesForWallets(reviews.map((r) => r.wallet));
-
-    const jobs = reviews.map((r) => ({
-      text: `${r.name} gives it a ${r.score} out of 10. ${r.reaction}`,
-      geminiVoice: voices.get(r.wallet.toLowerCase()) || geminiVoiceForWallet(r.wallet),
-      style: "take" as const,
-    }));
-
-    revokeTtsClips(clipBag.current);
-    const clips = await prefetchGeminiClips(jobs);
-    clipBag.current = clips;
-    if (juryPlayGen.current !== gen) return;
-    setCueing(false);
-    setJurySpeaking(true);
-
-    for (let i = 0; i < reviews.length; i++) {
-      if (juryPlayGen.current !== gen) return;
-      setJuryVisible(i + 1);
-      setTalkingWallet(reviews[i].wallet.toLowerCase());
-      await playTtsClip(clips[i]);
-      if (juryPlayGen.current !== gen) return;
-      await new Promise((res) => setTimeout(res, 80));
-    }
-
-    if (juryPlayGen.current === gen) {
+  const playJury = useCallback(
+    async (reviews: CrowdReview[], setId: string) => {
+      if (!reviews.length) return;
+      const gen = ++juryPlayGen.current;
+      stopTts();
+      setBitTalking(false);
+      if (bitTimer.current) clearTimeout(bitTimer.current);
+      setScoresOnly(false);
+      setJuryVisible(0);
+      setJuryTextOn(false);
       setTalkingWallet(null);
+      setCueing(true);
       setJurySpeaking(false);
-      setJuryVisible(reviews.length);
-      autoHeardId.current = setId;
-    }
-  }, []);
+      unlockSurveyAudio();
+
+      const voices = geminiVoicesForWallets(reviews.map((r) => r.wallet));
+      const jobs = reviews.map((r) => ({
+        text: `${r.name} gives it a ${r.score} out of 10. ${r.reaction}`,
+        geminiVoice: voices.get(r.wallet.toLowerCase()) || geminiVoiceForWallet(r.wallet),
+        style: "take" as const,
+      }));
+
+      revokeTtsClips(clipBuf.current);
+      let clips: PrefetchedTtsClip[] = [];
+      try {
+        clips = await prefetchGeminiClips(jobs);
+        if (juryPlayGen.current !== gen) {
+          revokeTtsClips(clips);
+          return;
+        }
+        clipBuf.current = clips;
+        setCueing(false);
+        setJurySpeaking(true);
+
+        for (let i = 0; i < reviews.length; i++) {
+          if (juryPlayGen.current !== gen) return;
+          setJuryVisible(i + 1);
+          setJuryTextOn(false);
+          setTalkingWallet(null);
+          await playTtsClip(clips[i], {
+            onPlaying: () => {
+              if (juryPlayGen.current !== gen) return;
+              setJuryTextOn(true);
+              setTalkingWallet(reviews[i].wallet.toLowerCase());
+            },
+          });
+          if (juryPlayGen.current !== gen) return;
+          setTalkingWallet(null);
+          await new Promise((res) => setTimeout(res, 70));
+        }
+
+        if (juryPlayGen.current === gen) {
+          setTalkingWallet(null);
+          setJurySpeaking(false);
+          setJuryTextOn(true);
+          setJuryVisible(reviews.length);
+          autoHeardId.current = setId;
+        }
+      } finally {
+        if (juryPlayGen.current !== gen) {
+          revokeTtsClips(clips);
+        } else {
+          setCueing(false);
+        }
+      }
+    },
+    []
+  );
 
   const runJury = useCallback(
     async (id: string) => {
@@ -185,24 +231,25 @@ export default function StandupPage() {
 
   useEffect(() => {
     if (phase !== "encore" || !set?.id) return;
+    if (scoresOnly) return;
     if (!set.reviews?.length) {
       if (!jurying) void runJury(set.id);
       return;
     }
     if (autoHeardId.current === set.id || jurySpeaking || cueing) return;
     void playJury(set.reviews, set.id);
-  }, [phase, set, jurying, runJury, playJury, jurySpeaking, cueing]);
+
+    return () => {
+      // Don't abort on every dep flicker — only when leaving encore / set change
+    };
+  }, [phase, set, jurying, runJury, playJury, jurySpeaking, cueing, scoresOnly]);
 
   async function bookAct() {
-    juryPlayGen.current += 1;
-    setJurySpeaking(false);
-    setCueing(false);
+    abortJury();
     setJuryVisible(0);
-    setTalkingWallet(null);
     setBitTalking(false);
+    setScoresOnly(false);
     autoHeardId.current = null;
-    revokeTtsClips(clipBag.current);
-    clipBag.current = [];
     setLoading(true);
     setError("");
     try {
@@ -229,13 +276,14 @@ export default function StandupPage() {
 
   function playBit() {
     if (!set) return;
+    abortJury();
     unlockSurveyAudio();
     setBitTalking(true);
     speakStandup(set.bit);
-    // Approximate bounce duration from word count (~2.5 wps)
+    if (bitTimer.current) clearTimeout(bitTimer.current);
     const words = set.bit.trim().split(/\s+/).length;
     const ms = Math.min(90000, Math.max(4000, (words / 2.4) * 1000));
-    window.setTimeout(() => setBitTalking(false), ms);
+    bitTimer.current = setTimeout(() => setBitTalking(false), ms);
   }
 
   const wordCount = useMemo(
@@ -249,6 +297,10 @@ export default function StandupPage() {
   );
 
   const comic = set ? byWallet.get(set.wallet.toLowerCase()) : null;
+
+  const desksToShow = scoresOnly
+    ? set?.reviews?.length || 0
+    : Math.max(juryVisible, 0);
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
@@ -268,8 +320,8 @@ export default function StandupPage() {
             Stand-Up Night
           </h1>
           <p className="mx-auto mt-2 max-w-lg text-sm opacity-75">
-            One random larva on stage — then five judges at cute little desks score the bit, each with
-            their own Gemini voice.
+            One random larva on stage — then five judges at cute little desks score the bit, one at a
+            time, each with their own Gemini voice.
           </p>
         </header>
 
@@ -367,6 +419,7 @@ export default function StandupPage() {
                   type="button"
                   onClick={() => {
                     autoHeardId.current = null;
+                    setScoresOnly(false);
                     void playJury(set.reviews || [], set.id);
                   }}
                   disabled={jurySpeaking || cueing}
@@ -410,7 +463,7 @@ export default function StandupPage() {
                     Loading jury audio…
                   </p>
                 )}
-                {set.avg != null && juryVisible > 0 && (
+                {set.avg != null && (desksToShow > 0 || scoresOnly) && (
                   <p className="mt-2 text-lg font-bold" style={{ color: GOLD }}>
                     Room avg {set.avg}/10
                     <span className="ml-2 text-sm font-normal opacity-50">
@@ -418,38 +471,65 @@ export default function StandupPage() {
                     </span>
                   </p>
                 )}
-                <div className="mt-4 flex flex-wrap justify-center gap-3">
-                  {(set.reviews || []).slice(0, Math.max(juryVisible, 0)).map((r) => {
-                    const live = talkingWallet === r.wallet.toLowerCase();
-                    const spec = byWallet.get(r.wallet.toLowerCase());
-                    const v = juryVoices.get(r.wallet.toLowerCase());
-                    return (
-                      <JudgeDesk
-                        key={r.wallet}
-                        name={r.name}
-                        subtitle={`${r.score}/10${v ? ` · ${v}` : ""}${live ? " · live" : ""}`}
-                        talking={live}
-                        ink={INK}
-                        gold={GOLD}
-                        avatar={
-                          <LarvaAvatar
-                            hue={spec?.avatar.hue ?? walletHue(r.wallet)}
-                            tone={spec?.profile.tone || r.tone}
-                            wallet={r.wallet}
-                            traits={spec?.avatar}
-                            moral={spec?.moral}
-                            quirks={spec?.profile.quirks}
-                            size={52}
-                            label={r.name}
-                            talking={live}
-                          />
-                        }
-                      >
-                        <span className="italic">“{r.reaction}”</span>
-                      </JudgeDesk>
-                    );
-                  })}
-                </div>
+
+                {scoresOnly && set.reviews?.length ? (
+                  <ul className="mt-4 space-y-2 text-sm">
+                    {set.reviews.map((r) => (
+                      <li key={r.wallet} className="opacity-80">
+                        <strong>{r.name}</strong>{" "}
+                        <span className="font-mono text-xs" style={{ color: CORAL }}>
+                          {r.score}/10
+                        </span>
+                        <span className="mt-0.5 block text-xs italic opacity-70">
+                          “{r.reaction}”
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="mt-4 flex flex-wrap justify-center gap-3">
+                    {(set.reviews || []).slice(0, desksToShow).map((r, i) => {
+                      const live = talkingWallet === r.wallet.toLowerCase();
+                      const showReaction =
+                        !jurySpeaking ||
+                        juryTextOn ||
+                        i < juryVisible - 1 ||
+                        autoHeardId.current === set.id;
+                      const spec = byWallet.get(r.wallet.toLowerCase());
+                      const v = juryVoices.get(r.wallet.toLowerCase());
+                      return (
+                        <JudgeDesk
+                          key={r.wallet}
+                          name={r.name}
+                          subtitle={`${r.score}/10${v ? ` · ${v}` : ""}${live ? " · live" : ""}`}
+                          talking={live}
+                          ink={INK}
+                          gold={GOLD}
+                          avatar={
+                            <LarvaAvatar
+                              hue={spec?.avatar.hue ?? walletHue(r.wallet)}
+                              tone={spec?.profile.tone || r.tone}
+                              wallet={r.wallet}
+                              traits={spec?.avatar}
+                              moral={spec?.moral}
+                              quirks={spec?.profile.quirks}
+                              size={52}
+                              label={r.name}
+                              talking={live}
+                            />
+                          }
+                        >
+                          {showReaction ? (
+                            <span className="italic">“{r.reaction}”</span>
+                          ) : (
+                            <span className="opacity-40">…</span>
+                          )}
+                        </JudgeDesk>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {jurySpeaking && juryVisible < (set.reviews?.length || 0) && (
                   <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest opacity-40">
                     next judge…
@@ -458,12 +538,10 @@ export default function StandupPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    juryPlayGen.current += 1;
-                    setJurySpeaking(false);
-                    setCueing(false);
-                    setTalkingWallet(null);
+                    abortJury();
                     setPhase("idle");
                     setSet(null);
+                    setScoresOnly(false);
                   }}
                   className="mt-5 rounded-lg px-5 py-2.5 text-sm font-semibold text-white"
                   style={{ background: CORAL }}
@@ -486,16 +564,22 @@ export default function StandupPage() {
                   key={h.id}
                   type="button"
                   onClick={() => {
-                    juryPlayGen.current += 1;
-                    setJurySpeaking(false);
-                    setCueing(false);
-                    setTalkingWallet(null);
+                    abortJury();
+                    setBitTalking(false);
                     setSet(h);
                     setPhase("encore");
                     setLeft(0);
-                    setJuryVisible(h.reviews?.length || 0);
-                    autoHeardId.current = h.id;
-                    if (!h.reviews?.length) void runJury(h.id);
+                    if (h.reviews?.length) {
+                      // Browse scores quietly — Play jury for sequential desks+TTS
+                      setScoresOnly(true);
+                      setJuryVisible(0);
+                      autoHeardId.current = h.id;
+                    } else {
+                      setScoresOnly(false);
+                      setJuryVisible(0);
+                      autoHeardId.current = null;
+                      void runJury(h.id);
+                    }
                   }}
                   className="flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left text-sm"
                   style={{ borderColor: `${INK}18`, background: CARD }}

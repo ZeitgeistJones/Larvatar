@@ -995,7 +995,6 @@ export default function LarvaAvatar({
 
   return (
     <span
-      className={talking ? "larva-talking" : undefined}
       style={{
         display: "inline-block",
         width: size,
@@ -1110,49 +1109,51 @@ export default function LarvaAvatar({
           </g>
         )}
 
-        <Antennae
-          style={t.antenna}
-          color={antennaColor}
-          tipColor={tipColor}
-          faceY={geom.faceY}
-          kink={recipe.antennaKink}
-        />
-
-        <Accessory kind={accessory} accent={accentHue} faceY={geom.faceY} rx={geom.rx} />
-
-        <SignatureMark mark={recipe.mark} faceY={geom.faceY} dark={dark} hue={t.hue} />
-
-        <g transform={`translate(${asymmetry} ${geom.faceY})`}>
-          {showCheeks && recipe.mark !== "blush-heavy" && (
-            <>
-              <ellipse cx={-mood.eyeGap - 4} cy="5.5" rx="3.4" ry="2.1" fill={`hsl(${t.hue} 75% 68%)`} opacity="0.5" />
-              <ellipse cx={mood.eyeGap + 4} cy="5.5" rx="3.4" ry="2.1" fill={`hsl(${t.hue} 75% 68%)`} opacity="0.5" />
-            </>
-          )}
-          <Eye
-            cx={-mood.eyeGap}
-            cy={0}
-            geom={eyes}
-            pupilBias={mood.pupilBias}
-            scale={leftScale}
-            browBoost={recipe.browBoost}
+        <g className={talking ? "larva-talking-head" : undefined}>
+          <Antennae
+            style={t.antenna}
+            color={antennaColor}
+            tipColor={tipColor}
+            faceY={geom.faceY}
+            kink={recipe.antennaKink}
           />
-          <Eye
-            cx={mood.eyeGap}
-            cy={0}
-            geom={eyes}
-            pupilBias={mood.pupilBias}
-            scale={rightScale}
-            browBoost={recipe.browBoost}
-          />
-          <path
-            d={mouth}
-            fill={t.mouth === "o" ? "none" : "none"}
-            stroke="#2a2018"
-            strokeWidth="1.55"
-            strokeLinecap="round"
-            opacity="0.88"
-          />
+
+          <Accessory kind={accessory} accent={accentHue} faceY={geom.faceY} rx={geom.rx} />
+
+          <SignatureMark mark={recipe.mark} faceY={geom.faceY} dark={dark} hue={t.hue} />
+
+          <g transform={`translate(${asymmetry} ${geom.faceY})`}>
+            {showCheeks && recipe.mark !== "blush-heavy" && (
+              <>
+                <ellipse cx={-mood.eyeGap - 4} cy="5.5" rx="3.4" ry="2.1" fill={`hsl(${t.hue} 75% 68%)`} opacity="0.5" />
+                <ellipse cx={mood.eyeGap + 4} cy="5.5" rx="3.4" ry="2.1" fill={`hsl(${t.hue} 75% 68%)`} opacity="0.5" />
+              </>
+            )}
+            <Eye
+              cx={-mood.eyeGap}
+              cy={0}
+              geom={eyes}
+              pupilBias={mood.pupilBias}
+              scale={leftScale}
+              browBoost={recipe.browBoost}
+            />
+            <Eye
+              cx={mood.eyeGap}
+              cy={0}
+              geom={eyes}
+              pupilBias={mood.pupilBias}
+              scale={rightScale}
+              browBoost={recipe.browBoost}
+            />
+            <path
+              d={mouth}
+              fill={t.mouth === "o" ? "none" : "none"}
+              stroke="#2a2018"
+              strokeWidth="1.55"
+              strokeLinecap="round"
+              opacity="0.88"
+            />
+          </g>
         </g>
       </g>
     </svg>

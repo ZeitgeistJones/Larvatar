@@ -12,6 +12,7 @@ import {
   playTtsClip,
   prefetchGeminiClips,
   revokeTtsClips,
+  stopTts,
   unlockSurveyAudio,
   type PrefetchedTtsClip,
 } from "@/lib/survey-sfx";
@@ -43,8 +44,6 @@ type DebateResult = {
   verdict: { winner: "a" | "b" | "tie"; summary: string } | null;
 };
 
-const FALLBACK_LABELS = ["opens", "responds", "closes", "closes"];
-
 function walletHue(wallet: string): number {
   let h = 0;
   for (const c of wallet.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) % 360;
@@ -66,13 +65,16 @@ export default function DebateClient() {
   const [cueing, setCueing] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DebateResult | null>(null);
-  const [visibleCount, setVisibleCount] = useState(0);
+  /** Index of turn currently on stage (−1 = none). */
+  const [stageTurn, setStageTurn] = useState(-1);
+  /** Text visible only after audio starts. */
+  const [textOn, setTextOn] = useState(false);
   const [juryVisible, setJuryVisible] = useState(0);
-  const [speaking, setSpeaking] = useState(false);
+  const [juryTextOn, setJuryTextOn] = useState(false);
   const [talkingWallet, setTalkingWallet] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "cueing" | "bout" | "jury" | "done">("idle");
   const playGen = useRef(0);
-  const clipBag = useRef<(PrefetchedTtsClip | null)[]>([]);
+  const clipBuf = useRef<PrefetchedTtsClip[]>([]);
 
   useEffect(() => {
     fetch("/api/larvae")
@@ -98,8 +100,9 @@ export default function DebateClient() {
 
   useEffect(() => {
     return () => {
-      revokeTtsClips(clipBag.current);
-      clipBag.current = [];
+      stopTts();
+      revokeTtsClips(clipBuf.current);
+      clipBuf.current = [];
     };
   }, []);
 
@@ -119,10 +122,23 @@ export default function DebateClient() {
   const voiceA = a ? cornerVoices.get(a) || "Aoede" : "Aoede";
   const voiceB = b ? cornerVoices.get(b) || "Charon" : "Charon";
 
+  function abortPlayback() {
+    playGen.current += 1;
+    stopTts();
+    revokeTtsClips(clipBuf.current);
+    clipBuf.current = [];
+    setCueing(false);
+    setTalkingWallet(null);
+    setTextOn(false);
+    setJuryTextOn(false);
+  }
+
   async function playTranscript(data: DebateResult) {
     const gen = ++playGen.current;
-    setVisibleCount(0);
+    setStageTurn(-1);
     setJuryVisible(0);
+    setTextOn(false);
+    setJuryTextOn(false);
     setTalkingWallet(null);
     unlockSurveyAudio();
 
@@ -155,43 +171,63 @@ export default function DebateClient() {
 
     setPhase("cueing");
     setCueing(true);
-    revokeTtsClips(clipBag.current);
+    revokeTtsClips(clipBuf.current);
     const clips = await prefetchGeminiClips([...turnJobs, ...juryJobs]);
-    clipBag.current = clips;
-    if (playGen.current !== gen) return;
+    if (playGen.current !== gen) {
+      revokeTtsClips(clips);
+      return;
+    }
+    clipBuf.current = clips;
     setCueing(false);
-
-    setSpeaking(true);
     setPhase("bout");
 
     for (let i = 0; i < data.turns.length; i++) {
       if (playGen.current !== gen) return;
-      setVisibleCount(i + 1);
-      setTalkingWallet(data.turns[i].wallet.toLowerCase());
-      await playTtsClip(clips[i]);
+      setStageTurn(i);
+      setTextOn(false);
+      setTalkingWallet(null);
+      await new Promise((r) => setTimeout(r, 60));
+
+      await playTtsClip(clips[i], {
+        onPlaying: () => {
+          if (playGen.current !== gen) return;
+          setTextOn(true);
+          setTalkingWallet(data.turns[i].wallet.toLowerCase());
+        },
+      });
       if (playGen.current !== gen) return;
-      await new Promise((r) => setTimeout(r, 90));
+      setTalkingWallet(null);
+      setTextOn(false);
+      await new Promise((r) => setTimeout(r, 80));
     }
 
-    setTalkingWallet(null);
+    setStageTurn(-1);
 
     if (data.jury.length > 0 && data.verdict) {
       if (playGen.current !== gen) return;
       setPhase("jury");
-      await new Promise((r) => setTimeout(r, 180));
+      await new Promise((r) => setTimeout(r, 120));
       for (let i = 0; i < data.jury.length; i++) {
         if (playGen.current !== gen) return;
         setJuryVisible(i + 1);
-        setTalkingWallet(data.jury[i].wallet.toLowerCase());
-        await playTtsClip(clips[data.turns.length + i]);
+        setJuryTextOn(false);
+        setTalkingWallet(null);
+        await playTtsClip(clips[data.turns.length + i], {
+          onPlaying: () => {
+            if (playGen.current !== gen) return;
+            setJuryTextOn(true);
+            setTalkingWallet(data.jury[i].wallet.toLowerCase());
+          },
+        });
         if (playGen.current !== gen) return;
-        await new Promise((r) => setTimeout(r, 80));
+        setTalkingWallet(null);
+        await new Promise((r) => setTimeout(r, 70));
       }
     }
 
     if (playGen.current === gen) {
       setTalkingWallet(null);
-      setSpeaking(false);
+      setJuryTextOn(true);
       setPhase("done");
       setJuryVisible(data.jury.length);
     }
@@ -199,15 +235,10 @@ export default function DebateClient() {
 
   async function runDebate() {
     setError("");
-    playGen.current += 1;
-    revokeTtsClips(clipBag.current);
-    clipBag.current = [];
+    abortPlayback();
     setResult(null);
-    setVisibleCount(0);
+    setStageTurn(-1);
     setJuryVisible(0);
-    setSpeaking(false);
-    setCueing(false);
-    setTalkingWallet(null);
     setPhase("idle");
     if (!a || !b || a === b) {
       setError("Pick two different larvae.");
@@ -235,7 +266,6 @@ export default function DebateClient() {
       setError(e instanceof Error ? e.message : "debate failed");
       setBusy(false);
       setCueing(false);
-      setSpeaking(false);
       setTalkingWallet(null);
       setPhase("idle");
     }
@@ -251,19 +281,20 @@ export default function DebateClient() {
     if (rival && byWallet.has(rival)) setB(rival);
   }
 
+  const live = phase === "bout" || phase === "jury" || phase === "cueing";
+  const busyFloor = busy || live;
+  const activeTurn = result && stageTurn >= 0 ? result.turns[stageTurn] : null;
+  const sideA =
+    !!activeTurn &&
+    activeTurn.wallet.toLowerCase() === result!.a.wallet.toLowerCase();
+  const activeSpec = activeTurn
+    ? byWallet.get(activeTurn.wallet.toLowerCase())
+    : null;
+
   const showJuryBox =
     !!result?.verdict &&
-    visibleCount >= (result.turns.length || 0) &&
+    (result.jury?.length || 0) > 0 &&
     (phase === "jury" || phase === "done");
-  const busyFloor = busy || speaking || cueing;
-
-  const juryShown =
-    result &&
-    (phase === "done"
-      ? result.jury.length
-      : phase === "jury"
-        ? Math.max(juryVisible, 0)
-        : 0);
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
@@ -276,8 +307,8 @@ export default function DebateClient() {
           </p>
           <h1 className="mt-1 text-4xl font-bold tracking-tight max-md:text-3xl">Debate</h1>
           <p className="mt-2 max-w-xl text-sm opacity-65">
-            Two larvae, two rounds each — voices cue first, then a quick back-and-forth. Optional peer
-            jury at their cute little desks.
+            Two larvae, two rounds each. Voices cue first, then a half-screen stage — one speaker at
+            a time, text synced to their voice.
           </p>
         </header>
 
@@ -350,51 +381,53 @@ export default function DebateClient() {
               </button>
             )}
 
-            <div className="mt-4 flex flex-wrap items-center gap-4">
-              {sa && (
-                <div className="flex items-center gap-2">
-                  <LarvaAvatar
-                    hue={sa.avatar.hue}
-                    tone={sa.profile.tone}
-                    wallet={sa.wallet}
-                    traits={sa.avatar}
-                    moral={sa.moral}
-                    quirks={sa.profile.quirks}
-                    size={48}
-                    label={sa.profile.name}
-                    talking={talkingWallet === sa.wallet.toLowerCase()}
-                  />
-                  <div>
-                    <span className="text-sm font-semibold">{sa.profile.name}</span>
-                    <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
-                      voice · {voiceA}
-                    </p>
+            {!live && (
+              <div className="mt-4 flex flex-wrap items-center gap-4">
+                {sa && (
+                  <div className="flex items-center gap-2">
+                    <LarvaAvatar
+                      hue={sa.avatar.hue}
+                      tone={sa.profile.tone}
+                      wallet={sa.wallet}
+                      traits={sa.avatar}
+                      moral={sa.moral}
+                      quirks={sa.profile.quirks}
+                      size={48}
+                      label={sa.profile.name}
+                      talking={false}
+                    />
+                    <div>
+                      <span className="text-sm font-semibold">{sa.profile.name}</span>
+                      <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
+                        voice · {voiceA}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
-              {sa && sb && <span className="font-mono text-xs opacity-40">vs</span>}
-              {sb && (
-                <div className="flex items-center gap-2">
-                  <LarvaAvatar
-                    hue={sb.avatar.hue}
-                    tone={sb.profile.tone}
-                    wallet={sb.wallet}
-                    traits={sb.avatar}
-                    moral={sb.moral}
-                    quirks={sb.profile.quirks}
-                    size={48}
-                    label={sb.profile.name}
-                    talking={talkingWallet === sb.wallet.toLowerCase()}
-                  />
-                  <div>
-                    <span className="text-sm font-semibold">{sb.profile.name}</span>
-                    <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
-                      voice · {voiceB}
-                    </p>
+                )}
+                {sa && sb && <span className="font-mono text-xs opacity-40">vs</span>}
+                {sb && (
+                  <div className="flex items-center gap-2">
+                    <LarvaAvatar
+                      hue={sb.avatar.hue}
+                      tone={sb.profile.tone}
+                      wallet={sb.wallet}
+                      traits={sb.avatar}
+                      moral={sb.moral}
+                      quirks={sb.profile.quirks}
+                      size={48}
+                      label={sb.profile.name}
+                      talking={false}
+                    />
+                    <div>
+                      <span className="text-sm font-semibold">{sb.profile.name}</span>
+                      <p className="font-mono text-[9px] uppercase tracking-widest opacity-40">
+                        voice · {voiceB}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             <label className="mt-5 block text-sm">
               <span className="font-mono text-[10px] uppercase tracking-widest opacity-50">
@@ -446,75 +479,113 @@ export default function DebateClient() {
           </section>
         )}
 
-        {result && (
+        {result && (phase === "cueing" || phase === "bout" || phase === "jury" || phase === "done") && (
           <section
-            className="mb-10 rounded-xl border p-5"
+            className="mb-10 overflow-hidden rounded-xl border"
             style={{ borderColor: `${INK}22`, background: CARD }}
           >
-            <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">transcript</p>
-            <p className="mt-1 text-sm font-medium opacity-80">{result.question}</p>
+            <div className="border-b px-5 py-3" style={{ borderColor: `${INK}12` }}>
+              <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">
+                {cueing ? "cueing" : phase === "bout" ? "floor" : phase === "jury" ? "jury" : "bout complete"}
+              </p>
+              <p className="mt-0.5 text-sm font-medium opacity-80">{result.question}</p>
+            </div>
+
             {cueing && (
-              <p className="mt-2 font-mono text-[10px] uppercase tracking-widest opacity-45">
+              <p className="px-5 py-8 text-center font-mono text-[10px] uppercase tracking-widest opacity-45">
                 Loading audio for a snappy exchange…
               </p>
             )}
 
-            <div className="mt-5 space-y-4">
-              {result.turns.slice(0, visibleCount).map((t, i) => {
-                const side = t.wallet.toLowerCase() === result.a.wallet.toLowerCase() ? "A" : "B";
-                const label = t.label || FALLBACK_LABELS[i] || "says";
-                const live = speaking && phase === "bout" && i === visibleCount - 1;
-                const spec = byWallet.get(t.wallet.toLowerCase());
-                return (
-                  <div
-                    key={`${t.wallet}-${i}`}
-                    className="flex gap-3"
-                    style={{ opacity: live ? 1 : 0.92 }}
-                  >
-                    <div className="shrink-0">
-                      <LarvaAvatar
-                        hue={spec?.avatar.hue ?? t.hue ?? walletHue(t.wallet)}
-                        tone={spec?.profile.tone || t.tone}
-                        wallet={t.wallet}
-                        traits={spec?.avatar}
-                        moral={spec?.moral}
-                        quirks={spec?.profile.quirks}
-                        size={40}
-                        label={t.name}
-                        talking={talkingWallet === t.wallet.toLowerCase()}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold">
+            {/* Half-screen speaker stage */}
+            {phase === "bout" && activeTurn && (
+              <div
+                className="relative flex min-h-[50vh] items-center gap-4 px-4 py-6 max-md:flex-col max-md:min-h-[42vh]"
+                style={{
+                  flexDirection: sideA ? "row" : "row-reverse",
+                }}
+              >
+                <div
+                  className="flex shrink-0 flex-col items-center justify-center"
+                  style={{ width: "42%", minWidth: 140 }}
+                >
+                  <LarvaAvatar
+                    hue={activeSpec?.avatar.hue ?? activeTurn.hue ?? walletHue(activeTurn.wallet)}
+                    tone={activeSpec?.profile.tone || activeTurn.tone}
+                    wallet={activeTurn.wallet}
+                    traits={activeSpec?.avatar}
+                    moral={activeSpec?.moral}
+                    quirks={activeSpec?.profile.quirks}
+                    size={140}
+                    label={activeTurn.name}
+                    talking={talkingWallet === activeTurn.wallet.toLowerCase()}
+                  />
+                  <p className="mt-3 text-center text-lg font-bold">{activeTurn.name}</p>
+                  <p className="font-mono text-[10px] uppercase tracking-widest opacity-40">
+                    {sideA ? "Corner A" : "Corner B"} · {activeTurn.label || "speaks"}
+                  </p>
+                </div>
+                <div
+                  className="min-w-0 flex-1"
+                  style={{
+                    textAlign: sideA ? "left" : "right",
+                    opacity: textOn ? 1 : 0,
+                    transition: "opacity 120ms ease",
+                  }}
+                >
+                  {textOn && (
+                    <p className="text-base leading-relaxed md:text-lg md:leading-relaxed">
+                      “{activeTurn.text}”
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {phase === "done" && (
+              <div className="space-y-3 px-5 py-5">
+                <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
+                  full transcript
+                </p>
+                {result.turns.map((t, i) => {
+                  const side =
+                    t.wallet.toLowerCase() === result.a.wallet.toLowerCase() ? "A" : "B";
+                  return (
+                    <div key={`${t.wallet}-${i}`} className="text-sm">
+                      <p className="font-semibold">
                         {t.name}{" "}
                         <span className="font-mono text-[10px] font-normal uppercase tracking-widest opacity-40">
-                          {side} · {label}
-                          {live ? " · speaking" : ""}
+                          {side} · {t.label || "says"}
                         </span>
                       </p>
-                      <p className="mt-0.5 text-sm opacity-80">{t.text}</p>
+                      <p className="mt-0.5 opacity-80">{t.text}</p>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
 
             {showJuryBox && result.verdict && (
               <div
-                className="mt-6 rounded-lg border px-4 py-4"
+                className="border-t px-4 py-4"
                 style={{ borderColor: `${GOLD}40`, background: `${GOLD}10` }}
               >
                 <p className="font-mono text-[10px] uppercase tracking-widest" style={{ color: GOLD }}>
                   jury bench
                 </p>
-                {(phase === "done" ||
-                  (phase === "jury" && juryVisible >= result.jury.length)) && (
+                {phase === "done" && (
                   <p className="mt-1 text-sm font-semibold">{result.verdict.summary}</p>
                 )}
 
                 <div className="mt-4 flex flex-wrap justify-center gap-3">
-                  {result.jury.slice(0, juryShown || 0).map((j) => {
-                    const live = talkingWallet === j.wallet.toLowerCase();
+                  {result.jury.slice(0, Math.max(juryVisible, 0)).map((j, i) => {
+                    const liveJudge =
+                      talkingWallet === j.wallet.toLowerCase() &&
+                      (phase === "jury" || phase === "done");
+                    const showNote =
+                      phase === "done" ||
+                      (juryTextOn && i === juryVisible - 1) ||
+                      i < juryVisible - 1;
                     const spec = byWallet.get(j.wallet.toLowerCase());
                     const voices = geminiVoicesForWallets([
                       result.a.wallet,
@@ -526,8 +597,14 @@ export default function DebateClient() {
                       <JudgeDesk
                         key={j.wallet}
                         name={j.name}
-                        subtitle={v ? `${v}${live ? " · live" : ""}` : live ? "speaking" : undefined}
-                        talking={live}
+                        subtitle={
+                          v
+                            ? `${v}${liveJudge ? " · live" : ""}`
+                            : liveJudge
+                              ? "speaking"
+                              : undefined
+                        }
+                        talking={liveJudge}
                         ink={INK}
                         gold={GOLD}
                         avatar={
@@ -540,32 +617,35 @@ export default function DebateClient() {
                             quirks={spec?.profile.quirks}
                             size={52}
                             label={j.name}
-                            talking={live}
+                            talking={liveJudge}
                           />
                         }
                       >
-                        <span>
-                          →{" "}
-                          {j.pick === "a"
-                            ? result.a.name
-                            : j.pick === "b"
-                              ? result.b.name
-                              : "tie"}
-                        </span>
-                        {j.note ? <span className="mt-1 block opacity-90">“{j.note}”</span> : null}
+                        {showNote ? (
+                          <>
+                            <span>
+                              →{" "}
+                              {j.pick === "a"
+                                ? result.a.name
+                                : j.pick === "b"
+                                  ? result.b.name
+                                  : "tie"}
+                            </span>
+                            {j.note ? (
+                              <span className="mt-1 block opacity-90">“{j.note}”</span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="opacity-40">…</span>
+                        )}
                       </JudgeDesk>
                     );
                   })}
                 </div>
-                {phase === "jury" && juryVisible < result.jury.length && (
-                  <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-widest opacity-40">
-                    next juror approaching the bench…
-                  </p>
-                )}
               </div>
             )}
 
-            <p className="mt-4 text-xs opacity-50">
+            <p className="border-t px-5 py-3 text-xs opacity-50" style={{ borderColor: `${INK}12` }}>
               <Link href="/larvae" className="underline-offset-2 hover:underline">
                 Back to specimens
               </Link>

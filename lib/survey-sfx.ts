@@ -275,9 +275,30 @@ function stopAnnounceAudio() {
   }
 }
 
-function announceBrowser(line: string, pitch = 1): Promise<void> {
+/** Hard-stop any in-flight TTS (neural or browser). Safe to call on cancel/unmount. */
+export function stopTts() {
+  announceToken += 1;
+  stopAnnounceAudio();
+  duckBed(false);
+}
+
+function announceBrowser(
+  line: string,
+  pitch = 1,
+  opts?: { onPlaying?: () => void; token?: number }
+): Promise<void> {
   return new Promise((resolve) => {
+    const token = opts?.token ?? announceToken;
     if (typeof window === "undefined" || !window.speechSynthesis) {
+      duckBed(false);
+      resolve();
+      return;
+    }
+    const spoken = line
+      .replace(/\s*—\s*/g, ". ")
+      .replace(/\s*\.\.\.\s*/g, "... ")
+      .trim();
+    if (!spoken) {
       duckBed(false);
       resolve();
       return;
@@ -285,27 +306,35 @@ function announceBrowser(line: string, pitch = 1): Promise<void> {
     try {
       window.speechSynthesis.cancel();
       duckBed(true);
-      const spoken = line
-        .replace(/\s*—\s*/g, ". ")
-        .replace(/\s*\.\.\.\s*/g, "... ")
-        .trim();
 
       const speak = () => {
+        if (token !== announceToken) {
+          duckBed(false);
+          resolve();
+          return;
+        }
         const u = new SpeechSynthesisUtterance(spoken);
         u.rate = 1.0;
         u.pitch = pitch;
         u.volume = 0.95;
         const voice = pickVoice();
         if (voice) u.voice = voice;
+        u.onstart = () => {
+          if (token === announceToken) opts?.onPlaying?.();
+        };
         u.onend = () => {
-          duckBed(false);
+          if (token === announceToken) duckBed(false);
           resolve();
         };
         u.onerror = () => {
-          duckBed(false);
+          if (token === announceToken) duckBed(false);
           resolve();
         };
         window.speechSynthesis.speak(u);
+        // Some browsers skip onstart — gate UI after a tick if still current.
+        window.setTimeout(() => {
+          if (token === announceToken) opts?.onPlaying?.();
+        }, 40);
       };
 
       if (!window.speechSynthesis.getVoices().length) {
@@ -386,7 +415,8 @@ export function speakOneLiner(line: string, voiceId?: string) {
 }
 
 export type PrefetchedTtsClip = {
-  url: string;
+  /** Blob URL when neural TTS succeeded; null = use browser fallback with `text`. */
+  url: string | null;
   text: string;
 };
 
@@ -397,12 +427,14 @@ export async function prefetchGeminiClips(
     geminiVoice: string;
     style?: "larva" | "take" | "standup" | "host";
   }[]
-): Promise<(PrefetchedTtsClip | null)[]> {
-  if (typeof window === "undefined") return items.map(() => null);
+): Promise<PrefetchedTtsClip[]> {
+  if (typeof window === "undefined") {
+    return items.map((it) => ({ url: null, text: it.text.trim() }));
+  }
   return Promise.all(
     items.map(async (it) => {
       const spoken = it.text.trim();
-      if (!spoken) return null;
+      if (!spoken) return { url: null, text: "" };
       try {
         const res = await fetch("/api/larvae-survey/announce", {
           method: "POST",
@@ -414,60 +446,101 @@ export async function prefetchGeminiClips(
             geminiVoice: it.geminiVoice,
           }),
         });
-        if (!res.ok) return null;
+        if (!res.ok) return { url: null, text: spoken };
         const blob = await res.blob();
         return { url: URL.createObjectURL(blob), text: spoken };
       } catch {
-        return null;
+        return { url: null, text: spoken };
       }
     })
   );
 }
 
-export function revokeTtsClips(clips: (PrefetchedTtsClip | null)[]) {
+export function revokeTtsClips(clips: (PrefetchedTtsClip | null | undefined)[]) {
   for (const c of clips) {
     if (c?.url) URL.revokeObjectURL(c.url);
   }
 }
 
-/** Play a prefetched clip (or browser fallback). Tight gaps between turns. */
+export type PlayTtsClipOpts = {
+  fallbackPitch?: number;
+  /** Fired when audio/speech actually starts — gate text + bounce here. */
+  onPlaying?: () => void;
+};
+
+/** Play a prefetched clip (or browser fallback). Resolves on end or abort. */
 export function playTtsClip(
-  clip: PrefetchedTtsClip | null,
-  fallbackPitch = 1
+  clip: PrefetchedTtsClip | null | undefined,
+  opts: PlayTtsClipOpts | number = {}
 ): Promise<void> {
-  if (muted || typeof window === "undefined") return Promise.resolve();
+  // Back-compat: second arg used to be fallbackPitch number.
+  const options: PlayTtsClipOpts =
+    typeof opts === "number" ? { fallbackPitch: opts } : opts || {};
+  const fallbackPitch = options.fallbackPitch ?? 1;
+
+  if (muted || typeof window === "undefined") {
+    options.onPlaying?.();
+    return Promise.resolve();
+  }
+
   const token = ++announceToken;
   stopAnnounceAudio();
   duckBed(true);
 
+  const text = clip?.text?.trim() || "";
   if (!clip?.url) {
-    return announceBrowser(clip?.text || "", fallbackPitch);
+    return announceBrowser(text, fallbackPitch, {
+      onPlaying: options.onPlaying,
+      token,
+    });
   }
 
   return new Promise((resolve) => {
-    const audio = new Audio(clip.url);
+    let started = false;
+    const firePlaying = () => {
+      if (started || token !== announceToken) return;
+      started = true;
+      options.onPlaying?.();
+    };
+
+    const audio = new Audio(clip.url!);
     announceAudio = audio;
-    const finish = () => {
+
+    const finish = (aborted: boolean) => {
       if (token === announceToken) duckBed(false);
       if (announceAudio === audio) announceAudio = null;
+      if (!aborted && !started) firePlaying();
       resolve();
     };
-    audio.onended = finish;
+
+    audio.onplaying = () => firePlaying();
+    audio.onended = () => finish(false);
     audio.onerror = () => {
       if (announceAudio === audio) announceAudio = null;
-      if (token === announceToken) {
-        void announceBrowser(clip.text, fallbackPitch).then(resolve);
-      } else {
+      if (token !== announceToken) {
         resolve();
+        return;
       }
+      // Intentional revoke/abort often surfaces as error — don't browser-fallback.
+      if (!text || audio.src === "" || audio.src === window.location.href) {
+        finish(true);
+        return;
+      }
+      void announceBrowser(text, fallbackPitch, {
+        onPlaying: options.onPlaying,
+        token,
+      }).then(resolve);
     };
-    void audio.play().catch(() => {
+    void audio.play().then(firePlaying).catch(() => {
       if (announceAudio === audio) announceAudio = null;
-      if (token === announceToken) {
-        void announceBrowser(clip.text, fallbackPitch).then(resolve);
-      } else {
+      if (token !== announceToken) {
         resolve();
+        return;
       }
+      void announceBrowser(text, fallbackPitch, {
+        onPlaying: options.onPlaying,
+        token,
+      }).then(resolve);
     });
   });
 }

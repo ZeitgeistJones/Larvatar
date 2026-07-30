@@ -1,5 +1,5 @@
 // POST /api/larvae/debate
-// Two larvae argue a prompt across 6 turns (3 each, alternating). Optional 3-peer jury.
+// Two larvae argue a prompt across 4 turns (2 each, alternating). Optional 3-peer jury.
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis, getIndex, getProfile, haiku } from "@/lib/larvae";
@@ -190,21 +190,23 @@ Reply with JSON only: {"pick":"a"|"b"|"tie","note":"one dry sentence, under 220 
 
     const score = { a: 0, b: 0, tie: 0 };
     for (const j of jury) score[j.pick] += 1;
-    const winner =
-      score.a > score.b && score.a >= score.tie
-        ? "a"
-        : score.b > score.a && score.b >= score.tie
-          ? "b"
-          : "tie";
-    verdict = {
-      winner,
-      summary:
-        winner === "a"
-          ? `${nameA} edges it`
-          : winner === "b"
-            ? `${nameB} edges it`
-            : "Jury splits — no clear winner",
-    };
+    if (jury.length > 0) {
+      const winner =
+        score.a > score.b && score.a >= score.tie
+          ? "a"
+          : score.b > score.a && score.b >= score.tie
+            ? "b"
+            : "tie";
+      verdict = {
+        winner,
+        summary:
+          winner === "a"
+            ? `${nameA} edges it`
+            : winner === "b"
+              ? `${nameB} edges it`
+              : "Jury splits — no clear winner",
+      };
+    }
   }
 
   return NextResponse.json({
