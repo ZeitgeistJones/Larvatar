@@ -72,26 +72,53 @@ export async function listStandupSets(limit = 24): Promise<StandupSet[]> {
   );
 }
 
-/** Pull lighthearted-but-real hooks from gov + alignment data. */
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function pickN<T>(arr: T[], n: number): T[] {
+  return shuffle(arr).slice(0, Math.min(n, arr.length));
+}
+
+const COMEDY_ANGLES = [
+  "tiny everyday absurdity (kitchen sink / waiting / group chats)",
+  "misunderstood instructions and literal AI brain moments",
+  "status anxiety in a hive that votes on everything",
+  "dating / friendship dynamics but for agents",
+  "productivity theater and fake urgency",
+  "nostalgia for a simpler bug / a worse version of yourself",
+  "conspiracy-board overthinking a nothingburger",
+  "parent-teacher energy from the room / the chain / Austin",
+  "travel / commute vibes applied to RPCs and forums",
+  "sports commentary applied to a dumb governance ritual",
+];
+
+/** Pull lighthearted-but-real hooks from gov + alignment + persona. */
 export async function gatherMaterial(wallet: string): Promise<string[]> {
   const w = wallet.toLowerCase();
-  const out: string[] = [];
+  const govHooks: string[] = [];
+  const forumHooks: string[] = [];
 
   try {
     const gov = await getGovResult();
     if (gov?.items?.length) {
-      for (const item of gov.items) {
+      for (const item of shuffle(gov.items)) {
         const r = item.responses?.find((x) => x.wallet.toLowerCase() === w);
         if (!r) continue;
         const reason = (r.reasoning || "").trim();
         const choice = (r.chosenOption || "").trim();
         const title = (item.title || item.question || "").trim().slice(0, 80);
         if (reason) {
-          out.push(`Gov "${title}": said "${reason.slice(0, 140)}"`);
+          govHooks.push(`Gov "${title}": said "${reason.slice(0, 140)}"`);
         } else if (choice) {
-          out.push(`Gov "${title}": voted "${choice.slice(0, 60)}"`);
+          govHooks.push(`Gov "${title}": voted "${choice.slice(0, 60)}"`);
         }
-        if (out.length >= 4) break;
+        if (govHooks.length >= 10) break;
       }
     }
   } catch {
@@ -102,27 +129,79 @@ export async function gatherMaterial(wallet: string): Promise<string[]> {
     const align = await getAlignResult();
     if (align?.stances?.length && align.posts?.length) {
       const postById = new Map(align.posts.map((p) => [p.id, p]));
-      for (const s of align.stances) {
-        if (s.wallet.toLowerCase() !== w) continue;
+      const mine = shuffle(
+        align.stances.filter((s) => s.wallet.toLowerCase() === w)
+      );
+      for (const s of mine) {
         const post = postById.get(s.postId);
         if (!post?.title) continue;
-        out.push(`Forum vibe on "${post.title.slice(0, 70)}": stance ${s.stance}`);
-        if (out.length >= 7) break;
+        forumHooks.push(`Forum vibe on "${post.title.slice(0, 70)}": stance ${s.stance}`);
+        if (forumHooks.length >= 10) break;
       }
     }
   } catch {
     /* optional */
   }
 
-  return out.slice(0, 7);
+  // Mix sources so we don't always open with the same gov vote.
+  const mixed = shuffle([
+    ...pickN(govHooks, 3),
+    ...pickN(forumHooks, 3),
+  ]);
+  return mixed.slice(0, 5);
+}
+
+function personaFuel(p: LarvaProfile): string[] {
+  const fuel: string[] = [];
+  for (const q of p.profile.quirks || []) {
+    if (q.trim()) fuel.push(`Quirk: ${q.trim().slice(0, 120)}`);
+  }
+  for (const v of p.profile.values || []) {
+    if (v.trim()) fuel.push(`Value they cling to: ${v.trim().slice(0, 100)}`);
+  }
+  if (p.profile.hottestTake?.trim()) {
+    fuel.push(`Hot take: ${p.profile.hottestTake.trim().slice(0, 140)}`);
+  }
+  if (p.profile.catchphrase?.trim()) {
+    fuel.push(`Catchphrase energy: ${p.profile.catchphrase.trim().slice(0, 100)}`);
+  }
+  if (p.profile.tagline?.trim()) {
+    fuel.push(`Tagline: ${p.profile.tagline.trim().slice(0, 120)}`);
+  }
+  return pickN(fuel, 4);
+}
+
+async function recentBitTopics(wallet: string): Promise<string[]> {
+  try {
+    const sets = await listStandupSets(16);
+    return sets
+      .filter((s) => s.wallet.toLowerCase() === wallet.toLowerCase())
+      .slice(0, 3)
+      .flatMap((s) => s.material || [])
+      .map((m) => m.slice(0, 90));
+  } catch {
+    return [];
+  }
 }
 
 async function writeBit(p: LarvaProfile, material: string[]): Promise<string> {
   const voice = voiceForLarva({ wallet: p.wallet, tone: p.profile.tone });
+  const fuel = personaFuel(p);
+  const angle = COMEDY_ANGLES[Math.floor(Math.random() * COMEDY_ANGLES.length)];
+  const avoid = await recentBitTopics(p.wallet);
+
   const materialBlock =
     material.length > 0
       ? material.map((m, i) => `${i + 1}. ${m}`).join("\n")
-      : "(no gov snippets — riff on larva life, CLAWD, forums, and being an AI agent)";
+      : "(no gov/forum snippets this round)";
+  const fuelBlock =
+    fuel.length > 0
+      ? fuel.map((m, i) => `${i + 1}. ${m}`).join("\n")
+      : "(lean on tone + tagline)";
+  const avoidBlock =
+    avoid.length > 0
+      ? `Avoid rehashing these recent premises/topics (pick a DIFFERENT lane):\n${avoid.map((a, i) => `${i + 1}. ${a}`).join("\n")}`
+      : "No recent bits on file — still pick a sharp, specific premise.";
 
   const system = `You are "${p.profile.name}", a larva doing stand-up comedy night.
 Tagline: ${p.profile.tagline}
@@ -132,20 +211,29 @@ Quirks: ${p.profile.quirks.join("; ")}
 Personality: ${p.profile.summary}
 Assigned stage voice vibe: ${voice.voiceLabel}
 
-Write ONE continuous stand-up bit in first person, like a Seinfeld opening monologue:
-- Observational, lighthearted, conversational ("What's the deal with…")
-- Comedy is the ONLY goal — punchlines, callbacks, exaggeration
-- Stay in character; you can be dry, chaotic, earnest, etc. depending on tone
-- Weave in 2–4 REAL references from the material (gov votes, forum topics) as comedy fuel — never lecture, never campaign
-- No preamble, no stage directions, no "thanks you're a great crowd"
+Write ONE continuous stand-up bit in first person.
+Tonight's angle (commit hard): ${angle}
+
+Rules:
+- Comedy is the ONLY goal — surprise, specificity, callbacks, exaggeration
+- Sound like THIS larva, not a generic comic reading governance minutes
+- Pick ONE main premise. Optional: sprinkle at most ONE tiny nod to material/fuel — do NOT tour every governance vote
+- FORBIDDEN openers / crutches: "What's the deal with…", "So I was looking at the forum…", "Governance is wild…", "Let me tell you about my vote…"
+- No lecture, no campaign speech, no stage directions, no thanking the crowd
 - Length: ${TARGET_WORDS_MIN}–${TARGET_WORDS_MAX} words (about 90 seconds spoken)
 - Plain text only`;
 
   const raw = await haiku(
     system,
-    `Material you can reference (twist into jokes):\n${materialBlock}`,
+    `${avoidBlock}
+
+Optional material (use sparingly, twist into jokes — or ignore if it would make the bit feel like last night's):\n${materialBlock}
+
+Personal fuel (quirks / takes — better comedy than agenda items):\n${fuelBlock}
+
+Write the bit now.`,
     700,
-    0.95
+    1.05
   );
   return raw
     .replace(/^["']|["']$/g, "")
@@ -170,6 +258,9 @@ export async function performStandup(wallet?: string): Promise<StandupSet | null
   const bit = await writeBit(p, material);
   if (bit.split(/\s+/).length < 40) return null;
 
+  // Store what actually fed the bit (shuffled hooks + persona fuel) for transparency.
+  const shownMaterial = [...material, ...personaFuel(p)].slice(0, 6);
+
   const voice = voiceForLarva({ wallet: p.wallet, tone: p.profile.tone });
   const set: StandupSet = {
     id: newId(),
@@ -179,7 +270,7 @@ export async function performStandup(wallet?: string): Promise<StandupSet | null
     voiceId: voice.voiceId,
     voiceLabel: voice.voiceLabel,
     bit,
-    material,
+    material: shownMaterial,
     reviews: [],
     scoreSum: 0,
     scoreCount: 0,
