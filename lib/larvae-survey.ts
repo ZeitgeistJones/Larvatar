@@ -108,8 +108,13 @@ export const MAX_SURVEY_QUESTIONS = 60;
 
 const QUESTIONS_KEY = "lpp:survey:questions";
 const MAX_BOARD_ANSWERS = 8;
-/** Ideal playable pool. Auto-brew fills toward this (seeds go to 36). */
-export const TARGET_BOARD_COUNT = 24;
+/** Ideal playable pool — fill the seed bank so daily packs stay fresh. */
+export const TARGET_BOARD_COUNT = 36;
+
+/** Daily Wordle-style session: 3 main rounds + up to 5 Swarm Rush boards. */
+export const DAILY_MAIN_ROUNDS = 3;
+export const DAILY_FM_QUESTIONS = 5;
+export const DAILY_BOARD_NEED = DAILY_MAIN_ROUNDS + DAILY_FM_QUESTIONS;
 
 function seedAsQuestions(): SurveyQuestion[] {
   const stamp = "2026-01-01";
@@ -296,6 +301,111 @@ const BOARD_KEY = (id: string) => `lpp:survey:board:${id}`;
 const BOARD_INDEX_KEY = "lpp:survey:index";
 const BUILD_QUEUE_KEY = "lpp:survey:queue";
 const MATCH_COUNT_KEY = (day: string) => `lpp:survey:matches:${day}`;
+const DAILY_PACK_KEY = (day: string) => `lpp:survey:daily:${day}`;
+const DAILY_PLAYED_KEY = (day: string, playerId: string) =>
+  `lpp:survey:daily-played:${day}:${playerId}`;
+
+export type DailyPack = {
+  day: string;
+  mainIds: string[];
+  fmIds: string[];
+  createdAt: string;
+};
+
+/** UTC calendar day — shared global puzzle like a hive Wordle. */
+export function surveyUtcDay(d = new Date()): string {
+  return d.toISOString().slice(0, 10);
+}
+
+export function nextUtcMidnightMs(from = new Date()): number {
+  return Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate() + 1);
+}
+
+function hashSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Deterministic shuffle so everyone gets the same daily pack. */
+function seededPick(ids: string[], seed: string, n: number): string[] {
+  const a = [...ids];
+  let h = hashSeed(seed);
+  for (let i = a.length - 1; i > 0; i--) {
+    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+    const j = h % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, Math.min(n, a.length));
+}
+
+function dailyTtlSeconds(day: string): number {
+  // Live until end of that UTC day + 24h buffer, then vanish.
+  const [y, m, d] = day.split("-").map(Number);
+  const end = Date.UTC(y, m - 1, d + 2); // midnight after next day
+  return Math.max(3600, Math.ceil((end - Date.now()) / 1000));
+}
+
+export async function getDailyPack(day = surveyUtcDay()): Promise<DailyPack | null> {
+  const raw = await redis.get<string | DailyPack>(DAILY_PACK_KEY(day));
+  if (!raw) return null;
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+/**
+ * Create or return today's fixed pack (3 main + up to 5 FM).
+ * Same day + same pool → same boards for everyone.
+ */
+export async function getOrCreateDailyPack(day = surveyUtcDay()): Promise<DailyPack | null> {
+  const existing = await getDailyPack(day);
+  if (existing?.mainIds?.length) return existing;
+
+  const index = await getBoardIndex();
+  if (index.length < DAILY_MAIN_ROUNDS) return null;
+
+  const need = Math.min(DAILY_BOARD_NEED, index.length);
+  const picked = seededPick(index, `hive-daily-${day}`, need);
+  const pack: DailyPack = {
+    day,
+    mainIds: picked.slice(0, DAILY_MAIN_ROUNDS),
+    fmIds: picked.slice(DAILY_MAIN_ROUNDS, need),
+    createdAt: new Date().toISOString(),
+  };
+  await redis.set(DAILY_PACK_KEY(day), JSON.stringify(pack), { ex: dailyTtlSeconds(day) });
+  return pack;
+}
+
+export function isValidSurveyPlayerId(playerId: string): boolean {
+  return /^[a-zA-Z0-9_-]{8,64}$/.test(playerId);
+}
+
+export async function hasPlayedDaily(day: string, playerId: string): Promise<boolean> {
+  if (!isValidSurveyPlayerId(playerId)) return false;
+  const v = await redis.get(DAILY_PLAYED_KEY(day, playerId));
+  return Boolean(v);
+}
+
+/** Claim today's one play. Fails if already claimed. */
+export async function claimDailyPlay(
+  day: string,
+  playerId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!isValidSurveyPlayerId(playerId)) return { ok: false, reason: "bad player id" };
+  if (day !== surveyUtcDay()) return { ok: false, reason: "not today's puzzle" };
+
+  const key = DAILY_PLAYED_KEY(day, playerId);
+  const ttl = dailyTtlSeconds(day);
+  // Upstash returns "OK" on success, null when NX misses (already set).
+  const res = await redis.set(key, new Date().toISOString(), { nx: true, ex: ttl });
+  if (res === "OK") return { ok: true };
+  if (await redis.get(key)) return { ok: false, reason: "already played today" };
+  // Rare race: write without nx
+  await redis.set(key, new Date().toISOString(), { ex: ttl });
+  return { ok: true };
+}
 
 // ─── Redis ops ─────────────────────────────────────────────────────
 

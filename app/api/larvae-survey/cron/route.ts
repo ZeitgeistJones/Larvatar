@@ -16,13 +16,14 @@ import {
   getQuestionBank,
   mintQuestions,
   ensureQuestionBank,
+  getOrCreateDailyPack,
 } from "@/lib/larvae-survey";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const TIME_BUDGET_MS = 50_000;
-const MINT_PER_RUN = 3;
+const MINT_PER_RUN = 5;
 
 function authorized(req: NextRequest): boolean {
   const secret = req.nextUrl.searchParams.get("secret");
@@ -40,6 +41,7 @@ export async function GET(req: NextRequest) {
 
   await ensureQuestionBank();
   const minted = await mintQuestions(MINT_PER_RUN);
+  const daily = await getOrCreateDailyPack();
 
   const start = Date.now();
   let queue = await getBuildQueue();
@@ -72,6 +74,9 @@ export async function GET(req: NextRequest) {
 
   if (queue.length === 0) await clearBuildQueue();
 
+  // Rebuild today's pack if we just unlocked enough boards.
+  const dailyAfter = await getOrCreateDailyPack();
+
   return NextResponse.json({
     ok: true,
     done: queue.length === 0,
@@ -80,5 +85,10 @@ export async function GET(req: NextRequest) {
     builtThisRun,
     remaining: queue.length,
     failed: failed.length > 0 ? failed : undefined,
+    daily: dailyAfter
+      ? { day: dailyAfter.day, boards: dailyAfter.mainIds.length + dailyAfter.fmIds.length }
+      : daily
+        ? { day: daily.day, boards: daily.mainIds.length + daily.fmIds.length }
+        : null,
   });
 }

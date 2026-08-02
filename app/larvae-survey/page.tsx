@@ -64,46 +64,34 @@ type Phase =
 const MAIN_ROUNDS = 3;
 const MAX_STRIKES = 3;
 const ANSWER_TIMER = 20; // seconds per guess attempt
-const FM_QUESTIONS = 5; // max Swarm Rush questions (uses however many boards remain)
+const FM_QUESTIONS = 5; // max Swarm Rush questions
 const FM_TIMER = 15;
 const FM_UNLOCK = 200; // points from main rounds to unlock Swarm Rush
 const FM_BONUS_THRESHOLD = 100;
 const FM_BONUS = 500;
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
+const PLAYER_KEY = "larvae-survey-player-v1";
 
-const PLAYED_BOARDS_KEY = "larvae-survey-played-v1";
-
-function loadPlayedBoardIds(): string[] {
-  if (typeof window === "undefined") return [];
+function getSurveyPlayerId(): string {
+  if (typeof window === "undefined") return "";
   try {
-    const raw = JSON.parse(localStorage.getItem(PLAYED_BOARDS_KEY) || "[]");
-    return Array.isArray(raw) ? raw.map(String).filter(Boolean) : [];
+    let id = localStorage.getItem(PLAYER_KEY) || "";
+    if (!/^[a-zA-Z0-9_-]{8,64}$/.test(id)) {
+      id = `p_${crypto.randomUUID().replace(/-/g, "").slice(0, 22)}`;
+      localStorage.setItem(PLAYER_KEY, id);
+    }
+    return id;
   } catch {
-    return [];
+    return `p_${Date.now().toString(36)}`;
   }
 }
 
-function rememberPlayedBoardIds(ids: string[]) {
-  if (typeof window === "undefined" || ids.length === 0) return;
-  const merged = [...new Set([...loadPlayedBoardIds(), ...ids])].slice(-120);
-  localStorage.setItem(PLAYED_BOARDS_KEY, JSON.stringify(merged));
-}
-
-/** Prefer boards the player hasn't seen; only reuse when the fresh pool runs out. */
-function pickFreshBoards(all: BoardStub[], need: number): BoardStub[] {
-  const played = new Set(loadPlayedBoardIds());
-  const fresh = shuffle(all.filter((b) => !played.has(b.id)));
-  if (fresh.length >= need) return fresh.slice(0, need);
-  const reused = shuffle(all.filter((b) => played.has(b.id)));
-  return [...fresh, ...reused].slice(0, need);
+function formatResetCountdown(resetsAt: number): string {
+  const ms = Math.max(0, resetsAt - Date.now());
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  if (h <= 0) return `${m}m`;
+  return `${h}h ${m}m`;
 }
 
 /* ─── Component ───────────────────────────────────────────────────── */
@@ -114,9 +102,18 @@ export default function LarvaeSurveyPage() {
 
   /* Board data */
   const [boards, setBoards] = useState<BoardStub[]>([]);
+  const [poolTarget, setPoolTarget] = useState(36);
   const [brewing, setBrewing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [dailyDay, setDailyDay] = useState("");
+  const [dailyReady, setDailyReady] = useState(false);
+  const [dailyPlayed, setDailyPlayed] = useState(false);
+  const [resetsAt, setResetsAt] = useState(0);
+  const [resetLabel, setResetLabel] = useState("");
+  const [dailyMainIds, setDailyMainIds] = useState<string[]>([]);
+  const [dailyFmIds, setDailyFmIds] = useState<string[]>([]);
+  const [dailyBoardCount, setDailyBoardCount] = useState(0);
 
   /* Game state */
   const [phase, setPhase] = useState<Phase>("title");
@@ -211,14 +208,28 @@ export default function LarvaeSurveyPage() {
     }
 
     async function refresh() {
-      const [bd, lb] = await Promise.all([
+      const playerId = getSurveyPlayerId();
+      const [bd, lb, daily] = await Promise.all([
         fetch("/api/larvae-survey").then((r) => r.json()),
         fetch("/api/larvae-survey/leaderboard").then((r) => r.json()).catch(() => ({ leaderboard: [] })),
+        fetch(`/api/larvae-survey/daily?playerId=${encodeURIComponent(playerId)}`)
+          .then((r) => r.json())
+          .catch(() => null),
       ]);
       if (cancelled) return;
       setBoards(bd.boards || []);
+      setPoolTarget(Number(bd.target) || 36);
       setBrewing(Boolean(bd.brewing));
       setLeaderboard(lb.leaderboard || []);
+      if (daily) {
+        setDailyDay(String(daily.day || ""));
+        setDailyReady(Boolean(daily.ready));
+        setDailyPlayed(Boolean(daily.played));
+        setResetsAt(Number(daily.resetsAt) || 0);
+        setDailyMainIds(daily.pack?.mainIds || []);
+        setDailyFmIds(daily.pack?.fmIds || []);
+        setDailyBoardCount(Number(daily.pack?.boardCount) || 0);
+      }
       setLoading(false);
 
       const count = (bd.boards || []).length;
@@ -243,6 +254,14 @@ export default function LarvaeSurveyPage() {
       stopPoll();
     };
   }, []);
+
+  useEffect(() => {
+    if (!resetsAt) return;
+    const tick = () => setResetLabel(formatResetCountdown(resetsAt));
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, [resetsAt]);
 
   /* ─── Board loading ─────────────────────────────────────────────── */
 
@@ -374,35 +393,70 @@ export default function LarvaeSurveyPage() {
   async function startGame() {
     unlockSurveyAudio();
     setError(null);
-    if (boards.length < MAIN_ROUNDS) {
-      setError(`Hive still brewing — need ${MAIN_ROUNDS} boards (have ${boards.length}). Hang tight.`);
+    if (!dailyReady || dailyMainIds.length < MAIN_ROUNDS) {
+      setError(
+        `Hive still brewing today's puzzle — need ${MAIN_ROUNDS} boards (pool has ${boards.length}). Hang tight.`
+      );
       return;
     }
-    const picked = pickFreshBoards(boards, MAIN_ROUNDS + FM_QUESTIONS);
-    const mains = picked.slice(0, MAIN_ROUNDS).map((b) => b.id);
-    // Swarm Rush uses leftover boards (up to FM_QUESTIONS) — don't block Play for it.
-    const fms = picked.slice(MAIN_ROUNDS, MAIN_ROUNDS + FM_QUESTIONS).map((b) => b.id);
-    rememberPlayedBoardIds([...mains, ...fms]);
-    setMainIds(mains);
-    setFmIds(fms);
-    setRoundIndex(0);
-    setFmIndex(0);
-    setSessionScore(0);
-    setFmScore(0);
-    setFmAnswers([]);
-    setFmRevealIndex(-1);
-    setSubmittedRank(null);
-    setPlayerName("");
-    bonusPlayedRef.current = false;
+    if (dailyPlayed) {
+      setError(`Already played today's hive. Next puzzle in ${resetLabel || "a bit"}.`);
+      return;
+    }
+
+    const playerId = getSurveyPlayerId();
     setChecking(true);
     try {
+      // Load first board before claiming so a failed load doesn't burn the day.
+      const mains = dailyMainIds;
+      const fms = dailyFmIds;
       await loadBoard(mains[0]);
+
+      const claim = await fetch("/api/larvae-survey/daily", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ playerId, day: dailyDay }),
+      }).then(async (r) => {
+        const d = await r.json();
+        return { ok: r.ok, status: r.status, ...d };
+      });
+
+      if (!claim.ok) {
+        setDailyPlayed(true);
+        setError(
+          claim.status === 409
+            ? `Already played today. Next puzzle in ${resetLabel || "a bit"}.`
+            : claim.error || "Couldn't start today's game"
+        );
+        return;
+      }
+
+      const claimedMains = (claim.pack?.mainIds as string[]) || mains;
+      const claimedFms = (claim.pack?.fmIds as string[]) || fms;
+      // If pack drifted, reload first board from claimed pack.
+      if (claimedMains[0] && claimedMains[0] !== mains[0]) {
+        await loadBoard(claimedMains[0]);
+      }
+
+      setDailyPlayed(true);
+      setMainIds(claimedMains);
+      setFmIds(claimedFms);
+      setRoundIndex(0);
+      setFmIndex(0);
+      setSessionScore(0);
+      setFmScore(0);
+      setFmAnswers([]);
+      setFmRevealIndex(-1);
+      setSubmittedRank(null);
+      setPlayerName("");
+      bonusPlayedRef.current = false;
+
       setSecondsLeft(ANSWER_TIMER);
       playSurveyCue("start");
-      announce("Let's play Larvae Survey!");
+      announce("Today's Larvae Survey!");
       setPhase("round");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load board");
+      setError(e instanceof Error ? e.message : "Failed to start daily game");
     } finally {
       setChecking(false);
     }
@@ -659,7 +713,7 @@ export default function LarvaeSurveyPage() {
   /* ─── Derived ───────────────────────────────────────────────────── */
 
   const revealedByRank = new Map(revealed.map((a) => [a.rank, a]));
-  const canPlay = boards.length >= MAIN_ROUNDS;
+  const canPlay = dailyReady && !dailyPlayed && dailyMainIds.length >= MAIN_ROUNDS;
   const fmRunningTotal = fmAnswers.slice(0, fmRevealIndex + 1).reduce((s, a) => s + a.points, 0);
   const swarmRushCount = fmIds.length;
 
@@ -704,9 +758,9 @@ export default function LarvaeSurveyPage() {
           </div>
           {phase === "title" && (
             <p className="mt-2 max-w-xl text-sm opacity-75">
-              We surveyed the hive. Guess what they said. Three strikes ends the round.
-              Score {FM_UNLOCK}+ across three rounds to unlock Swarm Rush — up to five lightning
-              questions. Hit 100+ in Swarm Rush for a 500-point bonus.
+              Daily hive puzzle — one play per UTC day. Three survey rounds, then Swarm Rush (up to{" "}
+              {FM_QUESTIONS} lightning questions) if you score {FM_UNLOCK}+. Same boards for everyone
+              today; tomorrow it&apos;s gone and a fresh pack drops.
             </p>
           )}
         </header>
@@ -723,28 +777,38 @@ export default function LarvaeSurveyPage() {
               ) : (
                 <>
                   <div className="mb-5 space-y-2 font-mono text-[10px] uppercase tracking-widest opacity-55">
-                    <p>{MAIN_ROUNDS} survey rounds · {ANSWER_TIMER}s per guess · 3 strikes</p>
                     <p>
-                      Swarm Rush unlock · {FM_UNLOCK}+ · up to {FM_QUESTIONS} Q · {FM_TIMER}s each
+                      Today · {dailyDay || "…"} · {MAIN_ROUNDS} rounds + Swarm Rush · one play
                     </p>
                     <p>
-                      {boards.length} board{boards.length === 1 ? "" : "s"} ready
-                      {(brewing || boards.length < 24) && boards.length > 0
+                      Today&apos;s pack · {dailyBoardCount || dailyMainIds.length + dailyFmIds.length}/
+                      {MAIN_ROUNDS + FM_QUESTIONS} boards
+                      {resetLabel ? ` · resets in ${resetLabel}` : ""}
+                    </p>
+                    <p>
+                      Hive pool · {boards.length}/{poolTarget} boards ready
+                      {(brewing || boards.length < poolTarget) && boards.length > 0
                         ? " · brewing more in the background"
                         : ""}
                     </p>
-                    {(brewing || boards.length < MAIN_ROUNDS + FM_QUESTIONS) && (
+                    {(brewing || !dailyReady) && (
                       <p className="normal-case tracking-normal opacity-80">
-                        {boards.length < MAIN_ROUNDS
-                          ? "Hive is brewing boards — Play unlocks at 3. Leave this page open."
+                        {!dailyReady
+                          ? "Brewing today's puzzle — Play unlocks once 3 boards are ready. Leave this page open."
                           : "Leave this page open — new boards unlock as they finish brewing."}
                       </p>
                     )}
                   </div>
                   {error && <p className="mb-3 text-sm" style={{ color: CORAL }}>{error}</p>}
-                  {!canPlay && (
+                  {dailyPlayed && (
+                    <p className="mb-3 text-sm opacity-70">
+                      You already played today&apos;s hive.
+                      {resetLabel ? ` Next puzzle in ${resetLabel}.` : ""}
+                    </p>
+                  )}
+                  {!canPlay && !dailyPlayed && (
                     <p className="mb-3 text-sm opacity-60">
-                      Need {MAIN_ROUNDS} boards to play (have {boards.length}).
+                      Need today&apos;s {MAIN_ROUNDS}-board pack (pool has {boards.length}/{poolTarget}).
                     </p>
                   )}
                   <button
@@ -753,7 +817,15 @@ export default function LarvaeSurveyPage() {
                     className="w-full rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
                     style={{ background: CORAL }}
                   >
-                    {checking ? "…" : canPlay ? "Play" : brewing ? "Brewing…" : "Play"}
+                    {checking
+                      ? "…"
+                      : dailyPlayed
+                        ? "Come back tomorrow"
+                        : canPlay
+                          ? "Play today's hive"
+                          : brewing
+                            ? "Brewing…"
+                            : "Play today's hive"}
                   </button>
                 </>
               )}
