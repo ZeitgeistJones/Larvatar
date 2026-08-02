@@ -333,7 +333,7 @@ export default function ShareCompassClient() {
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
-      <div className="mx-auto max-w-3xl">
+      <div className="page-shell">
         <Nav />
         <header className="mb-6">
           <p className="font-mono text-xs uppercase tracking-widest" style={{ color: CORAL }}>

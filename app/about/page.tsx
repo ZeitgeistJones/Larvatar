@@ -24,7 +24,7 @@ export default function AboutPage() {
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
-      <div className="mx-auto max-w-2xl">
+      <div className="page-shell">
         <Nav />
 
         <header className="mb-8">

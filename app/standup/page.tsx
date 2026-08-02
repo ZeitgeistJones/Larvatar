@@ -304,7 +304,7 @@ export default function StandupPage() {
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
-      <div className="mx-auto max-w-3xl">
+      <div className="page-shell">
         <div
           className="sticky top-0 z-40 -mx-4 mb-2 px-4 pb-2 pt-1"
           style={{ background: SHEET }}

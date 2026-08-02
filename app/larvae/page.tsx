@@ -214,7 +214,7 @@ export default function LarvaePage() {
 
   return (
     <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
-      <div className="mx-auto max-w-5xl">
+      <div className="page-shell">
         <div
           className="sticky top-0 z-40 -mx-4 mb-2 px-4 pb-2 pt-1 max-md:mb-1 max-md:pb-1 max-md:pt-0"
           style={{ background: SHEET }}
@@ -351,7 +351,7 @@ export default function LarvaePage() {
           </p>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {visible.map((l) => {
                 const open = expanded === l.wallet;
                 return (

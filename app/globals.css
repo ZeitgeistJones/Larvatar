@@ -33,6 +33,14 @@ html.dark body {
   padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
 }
 
+/* Full-bleed page composition — Tripwire-style: no centered max-width column */
+.page-shell {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
+}
+
 /* Larva talking — head bob only (body stays still) */
 @keyframes larva-talk-head {
   0%,
