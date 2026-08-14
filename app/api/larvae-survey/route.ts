@@ -104,14 +104,24 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "board not found" }, { status: 404 });
   }
 
-  // Write a real least-picked "thinking" line (+ asides) when the board only
-  // has template/fallback copy — then cache it for the next play.
-  const enriched = await enrichLeastPicked(board);
+  // Flavor text must not block the round — hang here and the client freezes.
+  let answers = board.answers;
+  try {
+    const enriched = await Promise.race([
+      enrichLeastPicked(board),
+      new Promise<typeof board>((resolve) => {
+        setTimeout(() => resolve(board), 1500);
+      }),
+    ]);
+    answers = enriched.answers;
+  } catch (e) {
+    console.error("survey enrich failed", e);
+  }
 
   return NextResponse.json({
-    id: enriched.id,
-    question: enriched.question,
-    respondents: enriched.respondents,
-    answers: enriched.answers,
+    id: board.id,
+    question: board.question,
+    respondents: board.respondents,
+    answers,
   });
 }

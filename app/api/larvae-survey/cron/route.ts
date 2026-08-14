@@ -1,6 +1,5 @@
 // app/api/larvae-survey/cron/route.ts
-// Weekly job: mint a few creative questions, then build as many missing boards
-// as the time budget allows.
+// Daily job: mint questions when the unused pool is low, then build missing boards.
 //
 // Vercel Cron hits this with Authorization: Bearer $CRON_SECRET
 // Manual: /api/larvae-survey/cron?secret=YOUR_SECRET
@@ -17,13 +16,14 @@ import {
   mintQuestions,
   ensureQuestionBank,
   getOrCreateDailyPack,
+  unusedBoardCount,
+  DAILY_BOARD_NEED,
 } from "@/lib/larvae-survey";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const TIME_BUDGET_MS = 50_000;
-const MINT_PER_RUN = 5;
 
 function authorized(req: NextRequest): boolean {
   const secret = req.nextUrl.searchParams.get("secret");
@@ -40,7 +40,10 @@ export async function GET(req: NextRequest) {
   }
 
   await ensureQuestionBank();
-  const minted = await mintQuestions(MINT_PER_RUN);
+  // Mint extra when unused boards can't cover tomorrow's pack.
+  const unused = await unusedBoardCount();
+  const mintWant = unused < DAILY_BOARD_NEED ? DAILY_BOARD_NEED : 3;
+  const minted = await mintQuestions(mintWant);
   const daily = await getOrCreateDailyPack();
 
   const start = Date.now();

@@ -163,9 +163,14 @@ export default function LarvaeSurveyPage() {
   const questionRef = useRef("");
   const fmIndexRef = useRef(0);
   const fmIdsRef = useRef<string[]>([]);
+  const mainIdsRef = useRef<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const bonusPlayedRef = useRef(false);
   const boardAnswersRef = useRef<Answer[]>([]);
+  const checkingRef = useRef(false);
+  const strikesRef = useRef(0);
+  const roundScoreRef = useRef(0);
+  const slotsRef = useRef<Slot[]>([]);
 
   useEffect(() => {
     setSoundMuted(getSurveyMuted());
@@ -177,7 +182,12 @@ export default function LarvaeSurveyPage() {
   useEffect(() => { questionRef.current = question; }, [question]);
   useEffect(() => { fmIndexRef.current = fmIndex; }, [fmIndex]);
   useEffect(() => { fmIdsRef.current = fmIds; }, [fmIds]);
+  useEffect(() => { mainIdsRef.current = mainIds; }, [mainIds]);
   useEffect(() => { boardAnswersRef.current = boardAnswers; }, [boardAnswers]);
+  useEffect(() => { checkingRef.current = checking; }, [checking]);
+  useEffect(() => { strikesRef.current = strikes; }, [strikes]);
+  useEffect(() => { roundScoreRef.current = roundScore; }, [roundScore]);
+  useEffect(() => { slotsRef.current = slots; }, [slots]);
 
   /* Load boards + leaderboard; auto-brew missing boards (no secret URL). */
   useEffect(() => {
@@ -266,31 +276,52 @@ export default function LarvaeSurveyPage() {
   /* ─── Board loading ─────────────────────────────────────────────── */
 
   const loadBoard = useCallback(async (id: string) => {
-    const d = await fetch(`/api/larvae-survey?id=${id}`).then((r) => r.json());
-    if (d.error) throw new Error(d.error);
-    setActiveId(id);
-    setQuestion(d.question);
-    setRespondents(d.respondents);
-    setSlots(d.slots || []);
-    setRevealed([]);
-    setBoardAnswers([]);
-    setPendingReveal([]);
-    setStrikes(0);
-    setRoundScore(0);
-    setGuess("");
-    setFlash(null);
-    setLastFlipped(null);
-    endingRef.current = false;
-    return d;
+    if (!id) throw new Error("board id missing");
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 12_000);
+    try {
+      const r = await fetch(`/api/larvae-survey?id=${encodeURIComponent(id)}`, {
+        signal: ac.signal,
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "board not found");
+      setActiveId(id);
+      setQuestion(d.question);
+      setRespondents(d.respondents);
+      setSlots(d.slots || []);
+      setRevealed([]);
+      setBoardAnswers([]);
+      setPendingReveal([]);
+      setStrikes(0);
+      strikesRef.current = 0;
+      setRoundScore(0);
+      roundScoreRef.current = 0;
+      setGuess("");
+      setFlash(null);
+      setLastFlipped(null);
+      endingRef.current = false;
+      return d;
+    } finally {
+      clearTimeout(t);
+    }
   }, []);
 
   const fetchFullBoard = useCallback(async (id: string) => {
-    const d = await fetch("/api/larvae-survey", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id }),
-    }).then((r) => r.json());
-    return (d.answers || []) as Answer[];
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 12_000);
+    try {
+      const r = await fetch("/api/larvae-survey", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+        signal: ac.signal,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "reveal failed");
+      return (d.answers || []) as Answer[];
+    } finally {
+      clearTimeout(t);
+    }
   }, []);
 
   /* ─── Timer ─────────────────────────────────────────────────────── */
@@ -298,19 +329,20 @@ export default function LarvaeSurveyPage() {
   useEffect(() => {
     if (phase !== "round" && phase !== "fastmoney") return;
     if (secondsLeft <= 0) return;
+    if (checking) return; // pause while a guess is in flight
     if (secondsLeft <= 5) playSurveyCue("tick");
     const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, secondsLeft]);
+  }, [phase, secondsLeft, checking]);
 
   // Timer expired
   useEffect(() => {
     if (secondsLeft !== 0) return;
-    if (phase === "round" && activeId && !endingRef.current) {
-      // Time's up on this answer = strike
+    if (checkingRef.current || endingRef.current) return;
+    if (phase === "round" && activeId) {
       handleStrike();
     }
-    if (phase === "fastmoney" && !endingRef.current) {
+    if (phase === "fastmoney") {
       void resolveFastMoney(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -321,9 +353,15 @@ export default function LarvaeSurveyPage() {
   const finishMainRound = useCallback(async (id: string) => {
     if (endingRef.current) return;
     endingRef.current = true;
+    checkingRef.current = true;
     setChecking(true);
     try {
-      const answers = await fetchFullBoard(id);
+      let answers: Answer[] = [];
+      try {
+        answers = await fetchFullBoard(id);
+      } catch (e) {
+        console.error("survey reveal failed", e);
+      }
       const known = new Set(revealedRef.current.map((r) => r.rank));
       const pending = answers
         .filter((a) => !known.has(a.rank))
@@ -331,15 +369,14 @@ export default function LarvaeSurveyPage() {
         .map((a) => a.rank);
       setBoardAnswers(answers);
       setPendingReveal(pending);
-      // Keep player's hits on the board; flip the rest one-by-one.
-      setSessionScore((s) => s + roundScore);
+      setSessionScore((s) => s + roundScoreRef.current);
       if (pending.length === 0) playSurveyCue("reveal");
       else announce("Hive says…");
       setPhase("reveal");
     } finally {
+      checkingRef.current = false;
       setChecking(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchFullBoard]);
 
   function stepBoardReveal() {
@@ -372,7 +409,9 @@ export default function LarvaeSurveyPage() {
   }, [phase, pendingReveal]);
 
   function handleStrike() {
-    const next = strikes + 1;
+    if (endingRef.current) return;
+    const next = strikesRef.current + 1;
+    strikesRef.current = next;
     setStrikes(next);
     setStrikeAnim(true);
     setFlash("miss");
@@ -380,9 +419,9 @@ export default function LarvaeSurveyPage() {
     announce(next >= MAX_STRIKES ? "Three strikes." : "Strike.");
     setTimeout(() => { setStrikeAnim(false); setFlash(null); }, 800);
     if (next >= MAX_STRIKES) {
-      if (activeId) void finishMainRound(activeId);
+      if (activeIdRef.current) void finishMainRound(activeIdRef.current);
     } else {
-      setSecondsLeft(ANSWER_TIMER); // reset timer for next guess
+      setSecondsLeft(ANSWER_TIMER);
       setGuess("");
       setTimeout(() => inputRef.current?.focus(), 100);
     }
@@ -405,6 +444,7 @@ export default function LarvaeSurveyPage() {
     }
 
     const playerId = getSurveyPlayerId();
+    checkingRef.current = true;
     setChecking(true);
     try {
       // Load first board before claiming so a failed load doesn't burn the day.
@@ -458,6 +498,7 @@ export default function LarvaeSurveyPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start daily game");
     } finally {
+      checkingRef.current = false;
       setChecking(false);
     }
   }
@@ -465,9 +506,12 @@ export default function LarvaeSurveyPage() {
   /* ─── Main round guess ─────────────────────────────────────────── */
 
   async function submitMainGuess() {
-    if (!guess.trim() || checking || phase !== "round" || !activeId) return;
+    if (!guess.trim() || checkingRef.current || endingRef.current || phase !== "round" || !activeId) return;
+    checkingRef.current = true;
     setChecking(true);
     setFlash(null);
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 15_000);
     try {
       const d = await fetch("/api/larvae-survey", {
         method: "POST",
@@ -477,29 +521,41 @@ export default function LarvaeSurveyPage() {
           guess: guess.trim(),
           revealed: revealedRef.current.map((r) => r.rank),
         }),
+        signal: ac.signal,
       }).then((r) => r.json());
 
       if (d.match) {
+        setError(null);
         const next = [...revealedRef.current, d.match];
+        revealedRef.current = next;
         setRevealed(next);
-        setRoundScore((s) => s + d.match.points);
+        const pts = Number(d.match.points) || 0;
+        roundScoreRef.current += pts;
+        setRoundScore(roundScoreRef.current);
         setFlash("hit");
         setLastFlipped(d.match.rank);
         playSurveyCue("hit");
         setGuess("");
-        setSecondsLeft(ANSWER_TIMER); // reset timer
-        if (next.length === slots.length) {
+        const slotCount = slotsRef.current.length;
+        if (slotCount > 0 && next.length >= slotCount) {
           await finishMainRound(activeId);
-        } else {
-          setTimeout(() => inputRef.current?.focus(), 100);
+          return;
         }
+        setSecondsLeft(ANSWER_TIMER);
+        setTimeout(() => inputRef.current?.focus(), 100);
       } else {
-        // Miss = strike
         setGuess("");
         handleStrike();
       }
+    } catch (e) {
+      console.error("survey guess failed", e);
+      setError(e instanceof Error ? e.message : "Guess failed — try again");
     } finally {
-      setChecking(false);
+      clearTimeout(t);
+      if (!endingRef.current) {
+        checkingRef.current = false;
+        setChecking(false);
+      }
       setTimeout(() => setFlash(null), 600);
     }
   }
@@ -508,16 +564,26 @@ export default function LarvaeSurveyPage() {
 
   async function advanceAfterReveal() {
     const next = roundIndex + 1;
+    const ids = mainIdsRef.current;
     if (next < MAIN_ROUNDS) {
+      const nextId = ids[next];
+      if (!nextId) {
+        setError("Next round board is missing.");
+        return;
+      }
+      checkingRef.current = true;
       setChecking(true);
+      setError(null);
       try {
-        await loadBoard(mainIds[next]);
+        await loadBoard(nextId);
         setRoundIndex(next);
         setSecondsLeft(ANSWER_TIMER);
         setPhase("round");
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load board");
+        console.error("survey round load failed", e);
+        setError(e instanceof Error ? e.message : "Failed to load board — tap next to retry");
       } finally {
+        checkingRef.current = false;
         setChecking(false);
       }
       return;
@@ -534,8 +600,9 @@ export default function LarvaeSurveyPage() {
       return;
     }
     setChecking(true);
+    checkingRef.current = true;
     try {
-      await loadBoard(fmIds[0]);
+      await loadBoard(fmIdsRef.current[0] || fmIds[0]);
       setFmIndex(0);
       setSecondsLeft(FM_TIMER);
       playSurveyCue("fastMoney");
@@ -544,6 +611,7 @@ export default function LarvaeSurveyPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load board");
     } finally {
+      checkingRef.current = false;
       setChecking(false);
     }
   }
@@ -551,8 +619,14 @@ export default function LarvaeSurveyPage() {
   /* ─── Fast Money ────────────────────────────────────────────────── */
 
   async function resolveFastMoney(playerGuess: string | null) {
-    if (endingRef.current || phaseRef.current !== "fastmoney") return;
+    if (endingRef.current) return;
+    if (phaseRef.current !== "fastmoney") {
+      checkingRef.current = false;
+      setChecking(false);
+      return;
+    }
     endingRef.current = true;
+    checkingRef.current = true;
     setChecking(true);
     const id = activeIdRef.current;
     const q = questionRef.current;
@@ -614,12 +688,15 @@ export default function LarvaeSurveyPage() {
       setPhase("fm-reveal");
     }
     setChecking(false);
+    checkingRef.current = false;
   }
 
   async function submitFmGuess() {
-    if (!guess.trim() || checking || phase !== "fastmoney") return;
+    if (!guess.trim() || checkingRef.current || endingRef.current || phase !== "fastmoney") return;
     const g = guess.trim();
     setGuess("");
+    checkingRef.current = true;
+    setChecking(true);
     await resolveFastMoney(g);
   }
 
@@ -695,7 +772,10 @@ export default function LarvaeSurveyPage() {
     setActiveId(null);
     setRevealed([]);
     setGuess("");
+    setError(null);
     endingRef.current = false;
+    checkingRef.current = false;
+    setChecking(false);
   }
 
   function toggleSound() {
@@ -760,7 +840,7 @@ export default function LarvaeSurveyPage() {
             <p className="mt-2 max-w-xl text-sm opacity-75">
               Daily hive puzzle — one play per UTC day. Three survey rounds, then Swarm Rush (up to{" "}
               {FM_QUESTIONS} lightning questions) if you score {FM_UNLOCK}+. Same boards for everyone
-              today; tomorrow it&apos;s gone and a fresh pack drops.
+              today; tomorrow it&apos;s a fresh unused set, not a reshuffle of yesterday.
             </p>
           )}
         </header>
@@ -928,6 +1008,10 @@ export default function LarvaeSurveyPage() {
               </div>
             </section>
 
+            {error && (
+              <p className="mb-3 text-sm" style={{ color: CORAL }}>{error}</p>
+            )}
+
             {/* Board */}
             <div className="mb-5 space-y-2">
               {slots.map((slot) => {
@@ -977,6 +1061,7 @@ export default function LarvaeSurveyPage() {
                 maxLength={80}
                 autoFocus
                 placeholder="your guess…"
+                disabled={checking}
                 className="w-full rounded-lg border px-4 py-3 text-sm outline-none focus:ring-2 max-md:min-h-11"
                 style={{ borderColor: `${INK}25` }}
               />
@@ -1135,20 +1220,25 @@ export default function LarvaeSurveyPage() {
                 revealing #{pendingReveal[0]}…
               </p>
             ) : (
-              <button
-                onClick={advanceAfterReveal}
-                disabled={checking}
-                className="w-full rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
-                style={{ background: CORAL }}
-              >
-                {checking
-                  ? "…"
-                  : roundIndex + 1 < MAIN_ROUNDS
-                    ? `Next: Round ${roundIndex + 2}`
-                    : sessionScore >= FM_UNLOCK && swarmRushCount > 0
-                      ? "Swarm Rush →"
-                      : "Continue →"}
-              </button>
+              <>
+                {error && (
+                  <p className="mb-3 text-center text-sm" style={{ color: CORAL }}>{error}</p>
+                )}
+                <button
+                  onClick={advanceAfterReveal}
+                  disabled={checking}
+                  className="w-full rounded-lg px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
+                  style={{ background: CORAL }}
+                >
+                  {checking
+                    ? "…"
+                    : roundIndex + 1 < MAIN_ROUNDS
+                      ? `Next: Round ${roundIndex + 2}`
+                      : sessionScore >= FM_UNLOCK && swarmRushCount > 0
+                        ? "Swarm Rush →"
+                        : "Continue →"}
+                </button>
+              </>
             )}
           </>
         )}

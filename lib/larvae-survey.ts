@@ -304,6 +304,8 @@ const MATCH_COUNT_KEY = (day: string) => `lpp:survey:matches:${day}`;
 const DAILY_PACK_KEY = (day: string) => `lpp:survey:daily:${day}`;
 const DAILY_PLAYED_KEY = (day: string, playerId: string) =>
   `lpp:survey:daily-played:${day}:${playerId}`;
+/** Board ids already used in a daily pack, oldest first (LRU recycle). */
+const DAILY_USED_KEY = "lpp:survey:daily-used";
 
 export type DailyPack = {
   day: string;
@@ -315,6 +317,11 @@ export type DailyPack = {
 /** UTC calendar day — shared global puzzle like a hive Wordle. */
 export function surveyUtcDay(d = new Date()): string {
   return d.toISOString().slice(0, 10);
+}
+
+function surveyUtcDayOffset(day: string, offsetDays: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + offsetDays)).toISOString().slice(0, 10);
 }
 
 export function nextUtcMidnightMs(from = new Date()): number {
@@ -331,7 +338,7 @@ function hashSeed(s: string): number {
 }
 
 /** Deterministic shuffle so everyone gets the same daily pack. */
-function seededPick(ids: string[], seed: string, n: number): string[] {
+function seededShuffle(ids: string[], seed: string): string[] {
   const a = [...ids];
   let h = hashSeed(seed);
   for (let i = a.length - 1; i > 0; i--) {
@@ -339,7 +346,87 @@ function seededPick(ids: string[], seed: string, n: number): string[] {
     const j = h % (i + 1);
     [a[i], a[j]] = [a[j], a[i]];
   }
-  return a.slice(0, Math.min(n, a.length));
+  return a;
+}
+
+const THEME_STOP = new Set([
+  "name", "the", "that", "this", "which", "would", "could", "hive", "larva",
+  "larvae", "something", "someone", "always", "never", "best", "feels", "like",
+  "with", "from", "your", "their", "about", "after", "before", "every", "secret",
+  "popular", "typical", "describe", "describes", "matches", "belong", "belongs",
+]);
+
+/** True when two questions share a distinctive theme word (karaoke/karaoke). */
+function sameTheme(a: string, b: string): boolean {
+  if (tooSimilar(a, b)) return true;
+  const sig = (s: string) =>
+    new Set(
+      normQuestion(s)
+        .split(" ")
+        .filter((w) => w.length >= 5 && !THEME_STOP.has(w))
+    );
+  const sa = sig(a);
+  const sb = sig(b);
+  for (const w of sa) if (sb.has(w)) return true;
+  return false;
+}
+
+export async function getDailyUsedIds(): Promise<string[]> {
+  const raw = await redis.get<string | string[]>(DAILY_USED_KEY);
+  if (!raw) return [];
+  const ids = typeof raw === "string" ? JSON.parse(raw) : raw;
+  return Array.isArray(ids) ? ids.map(String).filter(Boolean) : [];
+}
+
+async function recordDailyUsed(ids: string[]) {
+  if (ids.length === 0) return;
+  const prev = await getDailyUsedIds();
+  const picked = new Set(ids);
+  const next = [...prev.filter((id) => !picked.has(id)), ...ids];
+  await redis.set(DAILY_USED_KEY, JSON.stringify(next.slice(-240)));
+}
+
+/** How many built boards have never appeared in a daily pack. */
+export async function unusedBoardCount(): Promise<number> {
+  const index = await getBoardIndex();
+  const used = new Set(await getDailyUsedIds());
+  return index.filter((id) => !used.has(id)).length;
+}
+
+/**
+ * Prefer never-used boards, then oldest-used. Skip same-theme questions
+ * in one pack so you don't get two karaoke rounds in a day.
+ */
+function pickDailyBoardIds(
+  index: string[],
+  used: string[],
+  textById: Map<string, string>,
+  seed: string,
+  n: number
+): string[] {
+  const usedSet = new Set(used);
+  const never = seededShuffle(
+    index.filter((id) => !usedSet.has(id)),
+    `${seed}-fresh`
+  );
+  const lru = used.filter((id) => index.includes(id));
+  const pool = [...never, ...lru.filter((id) => !never.includes(id))];
+
+  const picked: string[] = [];
+  const clashes = (id: string) => {
+    const t = textById.get(id) || "";
+    if (!t) return false;
+    return picked.some((p) => sameTheme(textById.get(p) || "", t));
+  };
+  for (const id of pool) {
+    if (picked.length >= n) break;
+    if (!picked.includes(id) && !clashes(id)) picked.push(id);
+  }
+  for (const id of pool) {
+    if (picked.length >= n) break;
+    if (!picked.includes(id)) picked.push(id);
+  }
+  return picked.slice(0, n);
 }
 
 function dailyTtlSeconds(day: string): number {
@@ -358,16 +445,32 @@ export async function getDailyPack(day = surveyUtcDay()): Promise<DailyPack | nu
 /**
  * Create or return today's fixed pack (3 main + up to 5 FM).
  * Same day + same pool → same boards for everyone.
+ * Never re-picks a used board until the unused pool is empty (then LRU).
  */
 export async function getOrCreateDailyPack(day = surveyUtcDay()): Promise<DailyPack | null> {
   const existing = await getDailyPack(day);
-  if (existing?.mainIds?.length) return existing;
+  if (existing?.mainIds?.length) {
+    const ids = [...existing.mainIds, ...(existing.fmIds || [])];
+    const used = await getDailyUsedIds();
+    if (!ids.every((id) => used.includes(id))) await recordDailyUsed(ids);
+    return existing;
+  }
 
   const index = await getBoardIndex();
   if (index.length < DAILY_MAIN_ROUNDS) return null;
 
   const need = Math.min(DAILY_BOARD_NEED, index.length);
-  const picked = seededPick(index, `hive-daily-${day}`, need);
+  const [used, bank, yesterday] = await Promise.all([
+    getDailyUsedIds(),
+    getQuestionBank(),
+    getDailyPack(surveyUtcDayOffset(day, -1)),
+  ]);
+  const yIds = yesterday ? [...yesterday.mainIds, ...(yesterday.fmIds || [])] : [];
+  const usedForPick = [...used];
+  for (const id of yIds) if (!usedForPick.includes(id)) usedForPick.push(id);
+
+  const textById = new Map(bank.map((q) => [q.id, q.text]));
+  const picked = pickDailyBoardIds(index, usedForPick, textById, `hive-daily-${day}`, need);
   const pack: DailyPack = {
     day,
     mainIds: picked.slice(0, DAILY_MAIN_ROUNDS),
@@ -375,6 +478,7 @@ export async function getOrCreateDailyPack(day = surveyUtcDay()): Promise<DailyP
     createdAt: new Date().toISOString(),
   };
   await redis.set(DAILY_PACK_KEY(day), JSON.stringify(pack), { ex: dailyTtlSeconds(day) });
+  await recordDailyUsed([...yIds, ...picked]);
   return pack;
 }
 
@@ -802,6 +906,7 @@ export async function clearAllBoards() {
   for (const id of index) await redis.del(BOARD_KEY(id));
   await redis.del(BOARD_INDEX_KEY);
   await redis.del(BUILD_QUEUE_KEY);
+  await redis.del(DAILY_USED_KEY);
 }
 
 const ENSURE_LOCK_KEY = "lpp:survey:ensure-lock";
