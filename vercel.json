@@ -3,6 +3,10 @@
     {
       "path": "/api/larvae-survey/cron",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/larvae/lobsters/cron",
+      "schedule": "30 * * * *"
     }
   ]
 }
