@@ -31,6 +31,20 @@ type Nomination = {
   pick: number;
   reason: string;
   against: number[];
+  verdicts: { id: number; rank: number; note: string }[];
+};
+
+type Judged = {
+  id: number;
+  species: string;
+  sciName: string;
+  photo: string;
+  page: string;
+  observer: string;
+  rank: number;
+  note: string;
+  judge: string;
+  heatSize: number;
 };
 
 type Payload = {
@@ -41,6 +55,7 @@ type Payload = {
   heatsRun?: number;
   nominees?: Candidate[];
   nominations?: Nomination[];
+  judged?: Judged[];
 };
 
 const PHASE_LABEL: Record<string, string> = {
@@ -67,6 +82,7 @@ export default function LobstersPage() {
 
   const nominees = data?.nominees || [];
   const nominations = data?.nominations || [];
+  const judged = data?.judged || [];
 
   // A nominee can be picked only once — heats never overlap — so this is 1:1.
   const byId = useMemo(() => new Map(nominees.map((n) => [n.id, n])), [nominees]);
@@ -80,6 +96,18 @@ export default function LobstersPage() {
     for (const n of nominees) counts.set(n.species, (counts.get(n.species) || 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [nominees]);
+
+  const judgedById = useMemo(() => {
+    const m = new Map<number, Judged>();
+    for (const j of judged) m.set(j.id, j);
+    return m;
+  }, [judged]);
+
+  /** Everything that was looked at and lost — the part a nominee-only page hides. */
+  const alsoRan = useMemo(
+    () => judged.filter((j) => j.rank > 1).sort((a, b) => a.rank - b.rank || a.species.localeCompare(b.species)),
+    [judged]
+  );
 
   const openNom = open === null ? null : nomByPick.get(open) || null;
   const openCand = open === null ? null : byId.get(open) || null;
@@ -123,7 +151,7 @@ export default function LobstersPage() {
               {[
                 { label: "considered", value: fmt(data.considered) },
                 { label: "shortlisted", value: fmt(data.shortlisted) },
-                { label: "heats", value: fmt(data.heatsRun) },
+                { label: "judged", value: fmt(judged.length) },
                 { label: "nominees", value: fmt(nominees.length) },
               ].map((s) => (
                 <div key={s.label} className="rounded-xl border p-4" style={{ borderColor: border, background: CARD }}>
@@ -169,6 +197,16 @@ export default function LobstersPage() {
                     <p className="mt-3 font-mono text-xs uppercase tracking-widest opacity-60">
                       beat {openNom.against.length} others in its heat
                     </p>
+                    {openNom.verdicts?.length > 1 && (
+                      <ul className="mt-2 space-y-1">
+                        {openNom.verdicts.slice(1).map((v) => (
+                          <li key={v.id} className="text-xs opacity-65">
+                            <span className="font-mono">#{v.rank}</span>{" "}
+                            {judgedById.get(v.id)?.species ?? "—"} — {v.note || "no comment"}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <a
                       href={openCand.page}
                       target="_blank"
@@ -215,6 +253,37 @@ export default function LobstersPage() {
                 })}
               </div>
             </section>
+
+            {alsoRan.length > 0 && (
+              <section className="mb-10">
+                <p className="mb-1 font-mono text-xs uppercase tracking-widest opacity-60">
+                  everything else that was looked at
+                </p>
+                <p className="mb-3 text-sm opacity-70">
+                  {alsoRan.length} lobsters were judged and passed over. Each one still got
+                  a placing and a line from the larva that rejected it.
+                </p>
+                <ul className="space-y-1.5">
+                  {alsoRan.slice(0, 120).map((j) => (
+                    <li key={j.id} className="text-sm">
+                      <span className="font-mono text-xs opacity-50">
+                        #{j.rank}/{j.heatSize}
+                      </span>{" "}
+                      <a
+                        href={j.page}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-bold underline decoration-dotted"
+                      >
+                        {j.species}
+                      </a>
+                      <span className="opacity-50"> · {j.judge}</span>
+                      <span className="opacity-75"> — {j.note || "no comment"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             <p className="font-mono text-xs opacity-50">
               Photographs from iNaturalist contributors under their stated licences. Each

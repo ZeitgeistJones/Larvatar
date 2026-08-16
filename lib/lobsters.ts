@@ -87,6 +87,14 @@ export type Candidate = {
   agrees: number;
 };
 
+/** One line on one lobster, in the voice of the larva that judged it. */
+export type Verdict = {
+  id: number;
+  /** 1 = nominated. Everything else placed below it, in order. */
+  rank: number;
+  note: string;
+};
+
 export type Nomination = {
   wallet: string;
   name: string;
@@ -94,6 +102,12 @@ export type Nomination = {
   reason: string;
   /** The other candidates this larva rejected — the runners-up matter. */
   against: number[];
+  /**
+   * Every lobster in this heat, ranked, with a line each. This is why the
+   * whole shortlist ends up annotated instead of only the ~118 nominees:
+   * four out of five would otherwise vanish with no record at all.
+   */
+  verdicts: Verdict[];
 };
 
 export type Results = {
@@ -103,6 +117,8 @@ export type Results = {
   heatsRun: number;
   nominees: Candidate[];
   nominations: Nomination[];
+  /** Every judged lobster, flattened, so the page can show the whole field. */
+  judged: (Candidate & { rank: number; note: string; judge: string; heatSize: number })[];
   updatedAt: string;
 };
 
@@ -461,9 +477,12 @@ ${CLAWD_BRIEF}
 
 ${NOMINATION_BRIEF}
 
-This is your set alone — your nominee goes forward to the final and the rest are discarded. Choose the way YOU would choose, out of your own values and quirks. If your reasoning could have been written by any other larva, it is the wrong reasoning.
+This is your set alone — your nominee goes forward and the rest are discarded. Choose the way YOU would choose, out of your own values and quirks. If your reasoning could have been written by any other larva, it is the wrong reasoning.
 
-Reply with ONLY: {"pick": <image number>, "reason": "<max 28 words, in your voice>"}`;
+Rank EVERY image, best first, and write one line on each — including the ones you are rejecting. Be specific about the animal in front of you. A dismissal that could apply to any lobster is a wasted line.
+
+Reply with ONLY a JSON object. "ranked" is ordered best to worst and must contain every image exactly once:
+{"ranked":[{"i":<image number>,"note":"<max 20 words, your verdict on this one>"}],"reason":"<max 40 words on why your top pick won, in your voice>"}`;
 
 export async function heatSlice(
   deadline: number,
@@ -525,16 +544,38 @@ export async function heatSlice(
     parts.push({ text: `Nominate one of the ${present.length} images. JSON only.` });
 
     try {
-      const raw = await callGemini(NOMINATE_MODEL, NOMINATE_SYSTEM, parts, 400, 1.0);
+      const raw = await callGemini(NOMINATE_MODEL, NOMINATE_SYSTEM, parts, 900, 1.0);
       const obj = parseJsonObject(raw);
-      const chosen = present[Number(obj?.pick) - 1];
+
+      // Build verdicts from the ranked list, ignoring any slot the model
+      // repeated or invented. Order in the array IS the rank.
+      const seen = new Set<number>();
+      const verdicts: Verdict[] = [];
+      for (const row of Array.isArray(obj?.ranked) ? obj.ranked : []) {
+        const c = present[Number(row?.i) - 1];
+        if (!c || seen.has(c.id)) continue;
+        seen.add(c.id);
+        verdicts.push({
+          id: c.id,
+          rank: verdicts.length + 1,
+          note: String(row?.note || "").slice(0, 200),
+        });
+      }
+      // Anything the model skipped still gets a place, just unremarked on.
+      for (const c of present) {
+        if (seen.has(c.id)) continue;
+        verdicts.push({ id: c.id, rank: verdicts.length + 1, note: "" });
+      }
+
+      const chosen = present.find((c) => c.id === verdicts[0]?.id);
       if (chosen) {
         nominations.push({
           wallet,
           name: profile.profile.name,
           pick: chosen.id,
-          reason: String(obj.reason || "").slice(0, 240),
+          reason: String(obj.reason || "").slice(0, 300),
           against: present.filter((c) => c.id !== chosen.id).map((c) => c.id),
+          verdicts,
         });
         count += 1;
       } else {
@@ -575,6 +616,14 @@ export async function publish(state: State): Promise<Results> {
     .map((n) => byId.get(n.pick))
     .filter(Boolean) as Candidate[];
 
+  const judged = nominations.flatMap((n) =>
+    (n.verdicts || []).flatMap((v) => {
+      const c = byId.get(v.id);
+      if (!c) return [];
+      return [{ ...c, rank: v.rank, note: v.note, judge: n.name, heatSize: n.verdicts.length }];
+    })
+  );
+
   const results: Results = {
     round: state.round,
     considered: state.considered,
@@ -582,6 +631,7 @@ export async function publish(state: State): Promise<Results> {
     heatsRun: heats.length,
     nominees,
     nominations,
+    judged,
     updatedAt: new Date().toISOString(),
   };
 
