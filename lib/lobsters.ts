@@ -577,17 +577,30 @@ export async function seedVoteQueue(): Promise<number> {
 function voteSystem(): string {
   return `You are a single larva casting one vote for the lobster that best represents clawdbotatg — an autonomous AI builder agent whose mascot, Clawd, is a red triangular character in a tuxedo holding a teacup.
 
-Two things matter, and a lobster can satisfy both:
-
-LOOKS LIKE CLAWD:
-${CLAWD_TRAITS.map((t) => `- ${t}`).join("\n")}
-
-IS CLAWDBOTATG:
-${BOT_TRAITS.map((t) => `- ${t}`).join("\n")}
-
-Weigh these THROUGH YOUR OWN PERSONALITY. A cynical larva and an earnest one should reach different verdicts from the same photographs, and that disagreement is the point. Do not hedge toward a safe consensus pick.
+These 12 have already been pre-selected as the strongest candidates. Do NOT re-evaluate them against criteria. Pick the one YOU would back based on your own values and quirks, and say why in your own voice. Different larvae should reach different conclusions.
 
 Reply with ONLY: {"pick": <image number>, "reason": "<max 24 words, in your voice>"}`;
+}
+
+function hashSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Deterministic shuffle so each larva sees finalists in a different order. */
+function seededShuffle<T>(items: T[], seed: string): T[] {
+  const a = [...items];
+  let h = hashSeed(seed);
+  for (let i = a.length - 1; i > 0; i--) {
+    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+    const j = h % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 export async function voteSlice(
@@ -597,15 +610,13 @@ export async function voteSlice(
   const queue = await jget<string[]>(K.voteQ, []);
   let votes = await jget<Vote[]>(K.votes, []);
 
-  // Fetch the finalist images once and reuse them for every larva.
-  const imageParts: Part[] = [];
-  for (let i = 0; i < finalists.length; i++) {
-    const img = await imagePart(finalists[i].photo);
-    if (!img) continue;
-    imageParts.push({ text: `Image ${i + 1} — ${finalists[i].species}:` });
-    imageParts.push(img);
+  // Fetch each finalist image once; per-larva order is shuffled below.
+  const imgById = new Map<number, Part>();
+  for (const f of finalists) {
+    const img = await imagePart(f.photo);
+    if (img) imgById.set(f.id, img);
   }
-  if (imageParts.length === 0) return { done: true, cast: 0, failed: 0, quota: false };
+  if (imgById.size === 0) return { done: true, cast: 0, failed: 0, quota: false };
 
   let cast = 0;
   let failed = 0;
@@ -625,17 +636,27 @@ export async function voteSlice(
       `Quirks: ${p.profile.quirks.join("; ")}\n` +
       `${p.profile.summary}`;
 
+    const ordered = seededShuffle(
+      finalists.filter((f) => imgById.has(f.id)),
+      wallet.toLowerCase()
+    );
+    const imageParts: Part[] = [];
+    for (let i = 0; i < ordered.length; i++) {
+      imageParts.push({ text: `Image ${i + 1} — ${ordered[i].species}:` });
+      imageParts.push(imgById.get(ordered[i].id)!);
+    }
+
     const parts: Part[] = [
       { text: who },
       ...imageParts,
-      { text: `Pick one of the ${finalists.length} images. JSON only.` },
+      { text: `Pick one of the ${ordered.length} images. JSON only.` },
     ];
 
     try {
       const raw = await callVision(VOTE_MODEL, voteSystem(), parts, 300, 1.0);
       const obj = parseJsonObject(raw);
       const idx = Number(obj?.pick) - 1;
-      const chosen = finalists[idx];
+      const chosen = ordered[idx];
       if (chosen) {
         votes.push({
           wallet,
@@ -669,6 +690,12 @@ export async function voteSlice(
 
 export async function publish(state: State): Promise<Results> {
   const finalists = await pickFinalists();
+  // Never clobber a good published round with an empty rebuild mid-wipe.
+  if (finalists.length === 0) {
+    const existing = await getResults();
+    if (existing) return existing;
+  }
+
   const scores = await jget<Score[]>(K.scores, []);
   const shortlist = await jget<Candidate[]>(K.shortlist, []);
   const votes = await jget<Vote[]>(K.votes, []);

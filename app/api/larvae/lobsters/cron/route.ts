@@ -182,18 +182,5 @@ export async function GET(req: NextRequest) {
   }
 
   // ── done ────────────────────────────────────────────────────────────────
-  // Weekly re-run: clear the working keys on a Monday and start fresh. The
-  // published results stay up the whole time.
-  const weekly = process.env.LOBSTER_WEEKLY !== "false";
-  if (weekly && new Date().getUTCDay() === 1 && state.round !== new Date().toISOString().slice(0, 10)) {
-    await resetRun();
-    return NextResponse.json({
-      ok: true,
-      done: false,
-      phase: "restarting",
-      message: "New week — starting a fresh round on the next call.",
-    });
-  }
-
   return NextResponse.json({ ok: true, done: true, phase: "done", round: state.round });
 }
