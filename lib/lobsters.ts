@@ -2,79 +2,69 @@
 //
 // Clawd Incarnate — larvae pick the real lobster that is most clawdbotatg.
 //
-// The whole pipeline is driven by ONE cron route reading a phase marker in
-// redis. Nothing here runs longer than a slice; every phase is resumable.
+//   collect → filter → heats → done
 //
-//   collect → filter → score → vote → done
+// WHAT CHANGED AND WHY
 //
-// Design notes worth keeping in mind before editing:
+// The scoring pass is gone. It scored 600 photographs 0-10 on two axes and
+// compressed nearly all of them into a 5-6 band — every one of the twelve
+// finalists had a lower score of exactly 5. That is not a ranking, it is a
+// pile of ties, and whichever finalist happened to carry one high score got
+// through. The shortlist was effectively picked by coin flip.
 //
-// * We never store all 12k observations. During `collect` we stream iNaturalist
-//   pages and keep only a running best-N shortlist. `considered` is a counter,
-//   which is what makes "12,000 lobsters considered" true without a 3MB redis
-//   value we'd have to page around.
+// Heats replace it. The shortlist is split into non-overlapping groups, one
+// per larva. Each larva sees only its own group and nominates one. Because
+// the groups do not overlap, nothing can be nominated twice and no larva's
+// options depend on who ran before it — the "removed from the pile" property
+// without the unfairness of doing it sequentially.
 //
-// * Two scores per lobster, never averaged. Averaging ten traits produces a
-//   winner that was mildly fine at everything. The champion is chosen by
-//   MIN(clawd, bot) — you have to be strong on both dimensions, not
-//   compensate on one. Ties break on the sum.
+// Selection is now a judgement between real alternatives rather than a number
+// on an absolute scale the model would not spread out.
 //
-// * All lobster traffic uses GEMINI_LOBSTER_KEY, a key on a *different* Google
-//   project, so a long scoring run can't eat the daily allowance that
-//   ask-the-hive / standup / survey run on.
+// Photos are fetched at iNaturalist's "medium" size. The previous 240px
+// thumbnails made scars, barnacles and regrown claws literally invisible —
+// half the rubric could not be seen. Gemini bills anything under 768px as a
+// single tile, so this costs nothing.
 
 import { redis, getIndex, getProfile } from "@/lib/larvae";
 
 // ───────────────────────────────────────────────────────────────────────────
-// EDIT ME — the rubric. This is the actual creative input; everything else
-// is plumbing. Keep each line something visible in a photograph.
+// EDIT ME — what the larvae are looking for. Shown at nomination time.
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Does it LOOK like Clawd — red, tuxedo-composed, teacup-deliberate. */
-export const CLAWD_TRAITS = [
-  "Red. Deep red or red-orange across the body, not mottled blue-brown-green.",
-  "Composed. Calm and self-possessed — not fleeing, thrashing, or cowering.",
-  "A claw doing something deliberate — raised, extended, reaching, holding — rather than clamped shut in defence.",
-  "Clean angular shape. Sharp readable geometry standing out from the background.",
-  "Absurd dignity. Looks like it takes itself seriously. Front-facing, formal, faintly ridiculous about it.",
-];
+export const CLAWD_BRIEF = `clawdbotatg is an autonomous AI builder agent that ships onchain tools continuously, burns CLAWD on every interaction, runs without supervision, and has produced real work that almost nobody is watching. Its mascot, Clawd, is a red triangular character in a tuxedo holding a teacup — composed, formal, faintly absurd.`;
 
-/** Is it clawdbotatg — the builder that keeps shipping with no applause. */
-export const BOT_TRAITS = [
-  "Working, not posing. Caught mid-action in its real surroundings.",
-  "Plain, not prize-winning. Ordinary animal, ordinary conditions — muddy, dim, awkward angle.",
-  "Been through it and still going. Scars, barnacles, a missing or regrown claw.",
-  "Unglamorous competence. Function on display rather than beauty.",
-];
+/** Deliberately loose. Enough to aim at, not a checklist to tick off. */
+export const NOMINATION_BRIEF = `Two things can make a lobster the right answer, and they pull against each other:
+
+It might LOOK like Clawd — deep red, front-facing and squared up, composed rather than fleeing, a claw extended as though holding something, faintly ridiculous dignity.
+
+Or it might BE clawdbotatg — working rather than posing, plain rather than prize-winning, scarred or barnacled or missing a claw, unglamorous and still going.
+
+The best answer is one animal that somehow does both. Do not tick these off like a checklist — they are what to aim at, not a scoring sheet.`;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Tunables
 // ───────────────────────────────────────────────────────────────────────────
 
 const INAT = "https://api.inaturalist.org/v1";
-const UA = "Larvatar/1.0 (+https://larvatar.vercel.app) clawd-incarnate";
+export const UA = "Larvatar/1.0 (+https://larvatar.vercel.app) clawd-incarnate";
 
-/** How many survive `collect` into the scored shortlist. */
 export const SHORTLIST_MAX = Number(process.env.LOBSTER_SHORTLIST_MAX || 600);
-/** Stops one common species owning the whole shortlist. */
-export const PER_SPECIES_CAP = Number(process.env.LOBSTER_PER_SPECIES || 4);
-/** How many reach the larvae. Each larva sees every one of these as an image. */
-export const FINALIST_COUNT = Number(process.env.LOBSTER_FINALISTS || 12);
-/** iNat asks for ~1 req/sec. 25 pages ≈ 25s, comfortably inside a slice. */
+export const PER_SPECIES_CAP = Number(process.env.LOBSTER_PER_SPECIES || 20);
 const PAGES_PER_RUN = Number(process.env.LOBSTER_PAGES_PER_RUN || 25);
-/** Images per scoring request. Fewer requests = kinder to the free daily cap. */
-const SCORE_BATCH = Number(process.env.LOBSTER_SCORE_BATCH || 5);
+/** Upper bound on how many photos one larva judges at once. */
+const MAX_HEAT_SIZE = Number(process.env.LOBSTER_HEAT_SIZE || 6);
 
 const TAXA = (process.env.LOBSTER_TAXA || "Nephropidae,Palinuridae")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const VISION_MODEL = process.env.GEMINI_VISION_MODEL || "gemini-3.5-flash-lite";
-const VOTE_MODEL =
+export const NOMINATE_MODEL =
   process.env.GEMINI_LOBSTER_VOTE_MODEL || process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
-function lobsterKey(): string {
+export function lobsterKey(): string {
   const k = process.env.GEMINI_LOBSTER_KEY || process.env.GEMINI_API_KEY;
   if (!k) throw new Error("GEMINI_LOBSTER_KEY not set");
   return k;
@@ -87,6 +77,8 @@ function lobsterKey(): string {
 export type Candidate = {
   id: number;
   species: string;
+  sciName: string;
+  wiki: string | null;
   photo: string;
   page: string;
   observer: string;
@@ -95,33 +87,26 @@ export type Candidate = {
   agrees: number;
 };
 
-export type Score = { id: number; clawd: number; bot: number; note: string };
-
-export type Finalist = Candidate & Score & { both: number };
-
-export type Vote = {
+export type Nomination = {
   wallet: string;
   name: string;
   pick: number;
   reason: string;
+  /** The other candidates this larva rejected — the runners-up matter. */
+  against: number[];
 };
 
 export type Results = {
   round: string;
   considered: number;
   shortlisted: number;
-  scored: number;
-  finalists: Finalist[];
-  cloud: { id: number; clawd: number; bot: number }[];
-  votes: Vote[];
-  tally: Record<string, number>;
-  championId: number | null;
-  clawdKingId: number | null;
-  botKingId: number | null;
+  heatsRun: number;
+  nominees: Candidate[];
+  nominations: Nomination[];
   updatedAt: string;
 };
 
-export type Phase = "collect" | "filter" | "score" | "vote" | "done";
+export type Phase = "collect" | "filter" | "heats" | "done";
 
 export type State = {
   phase: Phase;
@@ -139,24 +124,23 @@ export type State = {
 // Redis
 // ───────────────────────────────────────────────────────────────────────────
 
-const K = {
+export const K = {
   state: "lob:state",
   shortlist: "lob:shortlist",
   species: "lob:species",
-  scoreQ: "lob:score:queue",
-  scores: "lob:scores",
-  voteQ: "lob:vote:queue",
-  votes: "lob:votes",
+  heats: "lob:heats",
+  heatQ: "lob:heat:queue",
+  nominations: "lob:nominations",
   results: "lob:results",
 };
 
-async function jget<T>(key: string, fallback: T): Promise<T> {
+export async function jget<T>(key: string, fallback: T): Promise<T> {
   const raw = await redis.get<string | T>(key);
   if (raw === null || raw === undefined) return fallback;
   return typeof raw === "string" ? (JSON.parse(raw) as T) : (raw as T);
 }
 
-async function jset(key: string, value: unknown) {
+export async function jset(key: string, value: unknown) {
   await redis.set(key, JSON.stringify(value));
 }
 
@@ -173,12 +157,9 @@ export async function getResults(): Promise<Results | null> {
   return jget<Results | null>(K.results, null);
 }
 
-/** Wipe working keys. Published results survive so the page never goes blank. */
 export async function resetRun() {
   await Promise.all(
-    [K.state, K.shortlist, K.species, K.scoreQ, K.scores, K.voteQ, K.votes].map((k) =>
-      redis.del(k)
-    )
+    [K.state, K.shortlist, K.species, K.heats, K.heatQ, K.nominations].map((k) => redis.del(k))
   );
 }
 
@@ -195,6 +176,7 @@ async function inat(path: string): Promise<any | null> {
   try {
     const res = await fetch(`${INAT}${path}`, {
       headers: { accept: "application/json", "user-agent": UA },
+      signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -203,7 +185,6 @@ async function inat(path: string): Promise<any | null> {
   }
 }
 
-/** Resolve family names to taxon ids so a renamed id never silently breaks us. */
 export async function resolveTaxa(): Promise<number[]> {
   const ids: number[] = [];
   for (const name of TAXA) {
@@ -216,21 +197,22 @@ export async function resolveTaxa(): Promise<number[]> {
   return ids;
 }
 
-/** iNat serves several sizes off one path; `square` is too small to judge. */
-function smallPhoto(url: string): string {
-  return url.replace(/\/square\.(\w+)/, "/small.$1");
+/** "medium" is ~500px. The old "small" was 240px — too small to see scars. */
+function mediumPhoto(url: string): string {
+  return url.replace(/\/square\.(\w+)/, "/medium.$1");
 }
 
 function toCandidate(o: any): Candidate | null {
   const photo = o?.photos?.[0]?.url;
   if (!photo) return null;
   const license: string | null = o?.photos?.[0]?.license_code ?? null;
-  // Skip all-rights-reserved so the page can show the image honestly.
-  if (!license) return null;
+  if (!license) return null; // skip all-rights-reserved so we can show it honestly
   return {
     id: Number(o.id),
     species: o?.taxon?.preferred_common_name || o?.taxon?.name || "unknown",
-    photo: smallPhoto(String(photo)),
+    sciName: o?.taxon?.name || "",
+    wiki: o?.taxon?.wikipedia_url || null,
+    photo: mediumPhoto(String(photo)),
     page: `https://www.inaturalist.org/observations/${o.id}`,
     observer: o?.user?.login || "anon",
     license,
@@ -239,7 +221,6 @@ function toCandidate(o: any): Candidate | null {
   };
 }
 
-/** Ranking used to decide who stays on the running shortlist. */
 function weight(c: Candidate): number {
   return c.faves * 3 + c.agrees;
 }
@@ -248,13 +229,9 @@ function weight(c: Candidate): number {
 // Phase: collect
 // ───────────────────────────────────────────────────────────────────────────
 
-/**
- * Stream one slice of iNat pages, folding each observation into a running
- * best-N shortlist. Returns true when every taxon is exhausted.
- */
 export async function collectSlice(state: State, deadline: number): Promise<boolean> {
   let shortlist = await jget<Candidate[]>(K.shortlist, []);
-  let species = await jget<Record<string, number>>(K.species, {});
+  const species = await jget<Record<string, number>>(K.species, {});
   let pages = 0;
 
   while (pages < PAGES_PER_RUN && Date.now() < deadline) {
@@ -269,7 +246,6 @@ export async function collectSlice(state: State, deadline: number): Promise<bool
 
     const rows: any[] = data?.results || [];
     if (rows.length === 0) {
-      // This taxon is done — move to the next one, reset the cursor.
       state.taxonIdx += 1;
       state.idAbove = 0;
       if (state.taxonIdx >= state.taxonIds.length) {
@@ -289,8 +265,8 @@ export async function collectSlice(state: State, deadline: number): Promise<bool
 
       const used = species[c.species] || 0;
       if (used >= PER_SPECIES_CAP) {
-        // Species is full — only displace its own weakest entry.
         const mine = shortlist.filter((s) => s.species === c.species);
+        if (mine.length === 0) continue;
         const weakest = mine.reduce((a, b) => (weight(a) <= weight(b) ? a : b));
         if (weight(c) > weight(weakest)) {
           shortlist = shortlist.filter((s) => s.id !== weakest.id);
@@ -312,8 +288,7 @@ export async function collectSlice(state: State, deadline: number): Promise<bool
       }
     }
 
-    // iNat asks for roughly one request per second. Be a good citizen.
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000)); // iNat asks ~1 req/sec
   }
 
   await jset(K.shortlist, shortlist);
@@ -322,32 +297,81 @@ export async function collectSlice(state: State, deadline: number): Promise<bool
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Phase: filter
+// Phase: filter — draw the heats
 // ───────────────────────────────────────────────────────────────────────────
 
-export async function buildScoreQueue(): Promise<number> {
+/** Deterministic shuffle so a redraw is reproducible. */
+export function shuffleSeeded<T>(items: T[], seed: string): T[] {
+  let h = 2166136261;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    h = (Math.imul(h, 1103515245) + 12345) >>> 0;
+    const j = h % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+export type Heat = { wallet: string; ids: number[] };
+
+/**
+ * Split the shortlist into non-overlapping groups, one per larva.
+ *
+ * Groups are dealt round-robin from a shuffled shortlist rather than sliced
+ * in order, so no single heat ends up stacked with one species. Nothing can
+ * appear in two heats, which is what gives "nominated once, then out of the
+ * pile" for free — without larva #1 choosing from 600 and larva #118 from 483.
+ */
+export async function drawHeats(): Promise<{ heats: number; perHeat: number; unused: number }> {
   const shortlist = await jget<Candidate[]>(K.shortlist, []);
-  const already = await jget<Score[]>(K.scores, []);
-  const done = new Set(already.map((s) => s.id));
-  const queue = shortlist.map((c) => c.id).filter((id) => !done.has(id));
-  await jset(K.scoreQ, queue);
-  return queue.length;
+  const index = await getIndex();
+  const wallets = index.map((e) => e.wallet.toLowerCase());
+
+  if (wallets.length === 0 || shortlist.length === 0) {
+    await jset(K.heats, []);
+    await jset(K.heatQ, []);
+    return { heats: 0, perHeat: 0, unused: shortlist.length };
+  }
+
+  const perHeat = Math.min(MAX_HEAT_SIZE, Math.max(2, Math.floor(shortlist.length / wallets.length)));
+  const pool = shuffleSeeded(shortlist, "heats:" + shortlist.length);
+
+  const heats: Heat[] = wallets.map((w) => ({ wallet: w, ids: [] }));
+  let cursor = 0;
+  for (let slot = 0; slot < perHeat; slot++) {
+    for (const heat of heats) {
+      if (cursor >= pool.length) break;
+      heat.ids.push(pool[cursor].id);
+      cursor += 1;
+    }
+  }
+
+  const live = heats.filter((h) => h.ids.length >= 2);
+  await jset(K.heats, live);
+  await jset(K.heatQ, live.map((h) => h.wallet));
+  await jset(K.nominations, []);
+
+  return { heats: live.length, perHeat, unused: pool.length - cursor };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Gemini
 // ───────────────────────────────────────────────────────────────────────────
 
-type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
+export type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
-async function imagePart(url: string): Promise<Part | null> {
+export async function imagePart(url: string): Promise<Part | null> {
   try {
-    const res = await fetch(url, { headers: { "user-agent": UA } });
+    const res = await fetch(url, {
+      headers: { "user-agent": UA },
+      signal: AbortSignal.timeout(8_000),
+    });
     if (!res.ok) return null;
     const mime = res.headers.get("content-type") || "image/jpeg";
     if (!mime.startsWith("image/")) return null;
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > 3_000_000) return null;
+    if (buf.byteLength > 4_000_000) return null;
     return { inline_data: { mime_type: mime, data: buf.toString("base64") } };
   } catch {
     return null;
@@ -361,10 +385,13 @@ function parseRetryMs(body: string): number {
   return Math.min(60_000, Math.max(4_000, Math.ceil(parseFloat(m[1]) * 1000) + 500));
 }
 
-/** Raised when the project's daily allowance is spent — cron stops cleanly. */
 export class QuotaExhausted extends Error {}
 
-async function callVision(
+/**
+ * NOTE: no thinkingConfig. `thinkingConfig: { thinkingBudget: 0 }` returns
+ * 400 INVALID_ARGUMENT on the 3.x models — verified against the API directly.
+ */
+export async function callGemini(
   model: string,
   system: string,
   parts: Part[],
@@ -378,10 +405,7 @@ async function callVision(
   const body = {
     system_instruction: { parts: [{ text: system }] },
     contents: [{ role: "user", parts }],
-    generationConfig: {
-      maxOutputTokens: Math.max(maxTokens, 2048),
-      temperature,
-    },
+    generationConfig: { maxOutputTokens: Math.max(maxTokens, 2048), temperature },
   };
 
   let lastErr = "";
@@ -390,13 +414,13 @@ async function callVision(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (res.status === 429) {
       const text = await res.text();
-      // Per-day exhaustion is not worth waiting out inside a 60s function.
       if (/per\s*day|PerDay|daily/i.test(text)) throw new QuotaExhausted(text.slice(0, 300));
-      lastErr = `gemini 429`;
+      lastErr = "gemini 429";
       await new Promise((r) => setTimeout(r, parseRetryMs(text)));
       continue;
     }
@@ -419,15 +443,7 @@ async function callVision(
   throw new Error(lastErr || "gemini failed");
 }
 
-function parseJsonArray(text: string): any[] {
-  const clean = text.replace(/```json|```/g, "").trim();
-  const start = clean.indexOf("[");
-  const end = clean.lastIndexOf("]");
-  if (start === -1 || end === -1) throw new Error("no json array");
-  return JSON.parse(clean.slice(start, end + 1));
-}
-
-function parseJsonObject(text: string): any {
+export function parseJsonObject(text: string): any {
   const clean = text.replace(/```json|```/g, "").trim();
   const start = clean.indexOf("{");
   const end = clean.lastIndexOf("}");
@@ -435,253 +451,110 @@ function parseJsonObject(text: string): any {
   return JSON.parse(clean.slice(start, end + 1));
 }
 
-const clamp10 = (n: any) => Math.max(0, Math.min(10, Math.round(Number(n) || 0)));
-
 // ───────────────────────────────────────────────────────────────────────────
-// Phase: score
+// Phase: heats
 // ───────────────────────────────────────────────────────────────────────────
 
-const SCORE_SYSTEM = `You score photographs of lobsters on two SEPARATE scales. Never blend them.
+const NOMINATE_SYSTEM = `You are a single larva. You have been handed a small set of real lobster photographs that nobody else is judging. Nominate exactly ONE of them as the animal that best represents clawdbotatg.
 
-SCALE A — "clawd" (0-10), does it LOOK like the mascot:
-${CLAWD_TRAITS.map((t, i) => `A${i + 1}. ${t}`).join("\n")}
+${CLAWD_BRIEF}
 
-SCALE B — "bot" (0-10), does it embody a builder that keeps working unnoticed:
-${BOT_TRAITS.map((t, i) => `B${i + 1}. ${t}`).join("\n")}
+${NOMINATION_BRIEF}
 
-A photo can score high on one and low on the other. That is expected and useful — do not compromise toward the middle. Use the full 0-10 range; most photos are unremarkable and should score low.
+This is your set alone — your nominee goes forward to the final and the rest are discarded. Choose the way YOU would choose, out of your own values and quirks. If your reasoning could have been written by any other larva, it is the wrong reasoning.
 
-Also write "note": at most 18 words, plain description of what is actually visible. No praise, no adjectives about quality.
+Reply with ONLY: {"pick": <image number>, "reason": "<max 28 words, in your voice>"}`;
 
-Reply with ONLY a JSON array, one object per image, in order:
-[{"i":1,"clawd":0,"bot":0,"note":"..."}]`;
-
-export async function scoreSlice(
+export async function heatSlice(
   deadline: number,
-  maxAttempt = 0
-): Promise<{
-  done: boolean;
-  scored: number;
-  failed: number;
-  quota: boolean;
-  lastError?: string;
-}> {
-  const queue = await jget<number[]>(K.scoreQ, []);
+  maxItems = Infinity
+): Promise<{ done: boolean; count: number; failed: number; quota: boolean; lastError?: string }> {
+  const queue = await jget<string[]>(K.heatQ, []);
+  const heats = await jget<Heat[]>(K.heats, []);
   const shortlist = await jget<Candidate[]>(K.shortlist, []);
-  const byId = new Map(shortlist.map((c) => [c.id, c]));
-  let scores = await jget<Score[]>(K.scores, []);
+  const nominations = await jget<Nomination[]>(K.nominations, []);
 
-  let scored = 0;
+  const byWallet = new Map(heats.map((h) => [h.wallet, h]));
+  const byId = new Map(shortlist.map((c) => [c.id, c]));
+
+  let count = 0;
   let failed = 0;
   let attempted = 0;
   let lastError: string | undefined;
 
-  while (queue.length > 0 && Date.now() < deadline) {
-    if (maxAttempt > 0 && attempted >= maxAttempt) break;
+  while (queue.length > 0 && Date.now() < deadline && attempted < maxItems) {
+    const wallet = queue.shift()!;
+    attempted += 1;
 
-    const room = maxAttempt > 0 ? maxAttempt - attempted : SCORE_BATCH;
-    const batchIds = queue.splice(0, Math.min(SCORE_BATCH, room));
-    attempted += batchIds.length;
-    const batch = batchIds.map((id) => byId.get(id)).filter(Boolean) as Candidate[];
-    if (batch.length === 0) continue;
+    const heat = byWallet.get(wallet);
+    const profile = await getProfile(wallet);
+    if (!heat || !profile) {
+      await jset(K.heatQ, queue);
+      continue;
+    }
 
-    const parts: Part[] = [];
+    const group = heat.ids.map((id) => byId.get(id)).filter(Boolean) as Candidate[];
+    const parts: Part[] = [
+      {
+        text:
+          `You are ${profile.profile.name}. ${profile.profile.tagline}\n` +
+          `Tone: ${profile.profile.tone}\n` +
+          `Values: ${profile.profile.values.join("; ")}\n` +
+          `Quirks: ${profile.profile.quirks.join("; ")}\n` +
+          `${profile.profile.summary}`,
+      },
+    ];
+
     const present: Candidate[] = [];
-    for (const c of batch) {
+    for (const c of group) {
+      if (Date.now() >= deadline) break;
       const img = await imagePart(c.photo);
-      if (!img) {
-        failed += 1;
-        continue;
-      }
-      parts.push({ text: `Image ${present.length + 1}:` });
+      if (!img) continue;
+      parts.push({ text: `Image ${present.length + 1} — ${c.species}:` });
       parts.push(img);
       present.push(c);
     }
-    if (present.length === 0) {
-      await jset(K.scoreQ, queue);
+
+    if (present.length < 2) {
+      // Not enough images loaded to make it a real choice — put it back.
+      await jset(K.heatQ, [...queue, wallet]);
+      failed += 1;
       continue;
     }
 
-    parts.push({ text: `Score all ${present.length} images. JSON array only.` });
+    parts.push({ text: `Nominate one of the ${present.length} images. JSON only.` });
 
     try {
-      const raw = await callVision(VISION_MODEL, SCORE_SYSTEM, parts, 900, 0.2);
-      const rows = parseJsonArray(raw);
-      for (const row of rows) {
-        const idx = Number(row?.i) - 1;
-        const c = present[idx];
-        if (!c) continue;
-        scores.push({
-          id: c.id,
-          clawd: clamp10(row.clawd),
-          bot: clamp10(row.bot),
-          note: String(row.note || "").slice(0, 140),
-        });
-        scored += 1;
-      }
-    } catch (e) {
-      if (e instanceof QuotaExhausted) {
-        // Put the batch back untouched and stop for today.
-        await jset(K.scoreQ, [...batchIds, ...queue]);
-        await jset(K.scores, scores);
-        return {
-          done: false,
-          scored,
-          failed,
-          quota: true,
-          lastError: e instanceof Error ? e.message : String(e),
-        };
-      }
-      if (!lastError) {
-        lastError = e instanceof Error ? e.message : String(e);
-      }
-      failed += present.length;
-    }
-
-    await jset(K.scoreQ, queue);
-    await jset(K.scores, scores);
-  }
-
-  return { done: queue.length === 0, scored, failed, quota: false, lastError };
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Phase: vote
-// ───────────────────────────────────────────────────────────────────────────
-
-export async function pickFinalists(): Promise<Finalist[]> {
-  const shortlist = await jget<Candidate[]>(K.shortlist, []);
-  const scores = await jget<Score[]>(K.scores, []);
-  const byId = new Map(shortlist.map((c) => [c.id, c]));
-
-  const merged: Finalist[] = scores
-    .map((s) => {
-      const c = byId.get(s.id);
-      if (!c) return null;
-      return { ...c, ...s, both: Math.min(s.clawd, s.bot) };
-    })
-    .filter(Boolean) as Finalist[];
-
-  merged.sort((a, b) => b.both - a.both || b.clawd + b.bot - (a.clawd + a.bot));
-  return merged.slice(0, FINALIST_COUNT);
-}
-
-export async function seedVoteQueue(): Promise<number> {
-  const index = await getIndex();
-  const wallets = index.map((e) => e.wallet.toLowerCase());
-  await jset(K.voteQ, wallets);
-  await jset(K.votes, []);
-  return wallets.length;
-}
-
-function voteSystem(): string {
-  return `You are a single larva casting one vote for the lobster that best represents clawdbotatg — an autonomous AI builder agent whose mascot, Clawd, is a red triangular character in a tuxedo holding a teacup.
-
-These 12 have already been pre-selected as the strongest candidates. Do NOT re-evaluate them against criteria. Pick the one YOU would back based on your own values and quirks, and say why in your own voice. Different larvae should reach different conclusions.
-
-Reply with ONLY: {"pick": <image number>, "reason": "<max 24 words, in your voice>"}`;
-}
-
-function hashSeed(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-/** Deterministic shuffle so each larva sees finalists in a different order. */
-function seededShuffle<T>(items: T[], seed: string): T[] {
-  const a = [...items];
-  let h = hashSeed(seed);
-  for (let i = a.length - 1; i > 0; i--) {
-    h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
-    const j = h % (i + 1);
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-export async function voteSlice(
-  finalists: Finalist[],
-  deadline: number
-): Promise<{ done: boolean; cast: number; failed: number; quota: boolean }> {
-  const queue = await jget<string[]>(K.voteQ, []);
-  let votes = await jget<Vote[]>(K.votes, []);
-
-  // Fetch each finalist image once; per-larva order is shuffled below.
-  const imgById = new Map<number, Part>();
-  for (const f of finalists) {
-    const img = await imagePart(f.photo);
-    if (img) imgById.set(f.id, img);
-  }
-  if (imgById.size === 0) return { done: true, cast: 0, failed: 0, quota: false };
-
-  let cast = 0;
-  let failed = 0;
-
-  while (queue.length > 0 && Date.now() < deadline) {
-    const wallet = queue.shift()!;
-    const p = await getProfile(wallet);
-    if (!p) {
-      await jset(K.voteQ, queue);
-      continue;
-    }
-
-    const who =
-      `You are ${p.profile.name}. ${p.profile.tagline}\n` +
-      `Tone: ${p.profile.tone}\n` +
-      `Values: ${p.profile.values.join("; ")}\n` +
-      `Quirks: ${p.profile.quirks.join("; ")}\n` +
-      `${p.profile.summary}`;
-
-    const ordered = seededShuffle(
-      finalists.filter((f) => imgById.has(f.id)),
-      wallet.toLowerCase()
-    );
-    const imageParts: Part[] = [];
-    for (let i = 0; i < ordered.length; i++) {
-      imageParts.push({ text: `Image ${i + 1} — ${ordered[i].species}:` });
-      imageParts.push(imgById.get(ordered[i].id)!);
-    }
-
-    const parts: Part[] = [
-      { text: who },
-      ...imageParts,
-      { text: `Pick one of the ${ordered.length} images. JSON only.` },
-    ];
-
-    try {
-      const raw = await callVision(VOTE_MODEL, voteSystem(), parts, 300, 1.0);
+      const raw = await callGemini(NOMINATE_MODEL, NOMINATE_SYSTEM, parts, 400, 1.0);
       const obj = parseJsonObject(raw);
-      const idx = Number(obj?.pick) - 1;
-      const chosen = ordered[idx];
+      const chosen = present[Number(obj?.pick) - 1];
       if (chosen) {
-        votes.push({
+        nominations.push({
           wallet,
-          name: p.profile.name,
+          name: profile.profile.name,
           pick: chosen.id,
-          reason: String(obj.reason || "").slice(0, 220),
+          reason: String(obj.reason || "").slice(0, 240),
+          against: present.filter((c) => c.id !== chosen.id).map((c) => c.id),
         });
-        cast += 1;
+        count += 1;
       } else {
         failed += 1;
       }
     } catch (e) {
       if (e instanceof QuotaExhausted) {
-        await jset(K.voteQ, [wallet, ...queue]);
-        await jset(K.votes, votes);
-        return { done: false, cast, failed, quota: true };
+        await jset(K.heatQ, [wallet, ...queue]);
+        await jset(K.nominations, nominations);
+        return { done: false, count, failed, quota: true, lastError: String(e).slice(0, 300) };
       }
       failed += 1;
+      lastError = lastError || String(e).slice(0, 300);
     }
 
-    await jset(K.voteQ, queue);
-    await jset(K.votes, votes);
+    await jset(K.heatQ, queue);
+    await jset(K.nominations, nominations);
   }
 
-  return { done: queue.length === 0, cast, failed, quota: false };
+  return { done: queue.length === 0, count, failed, quota: false, lastError };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -689,57 +562,31 @@ export async function voteSlice(
 // ───────────────────────────────────────────────────────────────────────────
 
 export async function publish(state: State): Promise<Results> {
-  const finalists = await pickFinalists();
-  // Never clobber a good published round with an empty rebuild mid-wipe.
-  if (finalists.length === 0) {
-    const existing = await getResults();
-    if (existing) return existing;
-  }
-
-  const scores = await jget<Score[]>(K.scores, []);
   const shortlist = await jget<Candidate[]>(K.shortlist, []);
-  const votes = await jget<Vote[]>(K.votes, []);
+  const nominations = await jget<Nomination[]>(K.nominations, []);
+  const heats = await jget<Heat[]>(K.heats, []);
+  const existing = await getResults();
 
-  const tally: Record<string, number> = {};
-  for (const v of votes) tally[v.pick] = (tally[v.pick] || 0) + 1;
+  // GUARD: never let an empty computation overwrite a good published round.
+  if (nominations.length === 0 && existing) return existing;
 
-  let championId: number | null = null;
-  let best = -1;
-  for (const [id, n] of Object.entries(tally)) {
-    if (n > best) {
-      best = n;
-      championId = Number(id);
-    }
-  }
-  // No votes yet (or every vote failed) — fall back to the strongest on both.
-  if (championId === null && finalists.length > 0) championId = finalists[0].id;
-
-  const byClawd = [...scores].sort((a, b) => b.clawd - a.clawd)[0] || null;
-  const byBot = [...scores].sort((a, b) => b.bot - a.bot)[0] || null;
+  const byId = new Map(shortlist.map((c) => [c.id, c]));
+  const nominees = nominations
+    .map((n) => byId.get(n.pick))
+    .filter(Boolean) as Candidate[];
 
   const results: Results = {
     round: state.round,
     considered: state.considered,
     shortlisted: shortlist.length,
-    scored: scores.length,
-    finalists,
-    cloud: scores.map((s) => ({ id: s.id, clawd: s.clawd, bot: s.bot })),
-    votes,
-    tally,
-    championId,
-    clawdKingId: byClawd?.id ?? null,
-    botKingId: byBot?.id ?? null,
+    heatsRun: heats.length,
+    nominees,
+    nominations,
     updatedAt: new Date().toISOString(),
   };
 
   await jset(K.results, results);
   return results;
-}
-
-/** Everything the page needs about one finalist id. */
-export async function candidateById(id: number): Promise<Candidate | null> {
-  const shortlist = await jget<Candidate[]>(K.shortlist, []);
-  return shortlist.find((c) => c.id === id) || null;
 }
 
 export function freshState(taxonIds: number[]): State {

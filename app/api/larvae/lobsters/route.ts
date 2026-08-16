@@ -1,5 +1,5 @@
 // app/api/larvae/lobsters/route.ts
-// Public read. Never calls a model — the page is free to load however often.
+// Public read. Never calls a model — the page is free to load as often as it likes.
 
 import { NextResponse } from "next/server";
 import { getResults, getState } from "@/lib/lobsters";
@@ -17,9 +17,5 @@ export async function GET() {
     });
   }
 
-  return NextResponse.json({
-    ready: true,
-    phase: state?.phase ?? "done",
-    ...results,
-  });
+  return NextResponse.json({ ready: true, phase: state?.phase ?? "done", ...results });
 }

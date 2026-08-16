@@ -1,38 +1,38 @@
 // app/api/larvae/lobsters/cron/route.ts
 //
-// The whole Lobster Crown pipeline, driven by one route.
+// Clawd Incarnate, driven by one route.
 //
-// Each visit reads the phase marker, does one slice of whatever comes next,
-// saves progress, and returns. It never runs long enough to time out, so it
-// does not matter whether it is Vercel Cron calling it or you refreshing.
+//   collect → filter → heats → done
 //
-//   Vercel Cron : Authorization: Bearer $CRON_SECRET
+// Each visit does one slice and returns. Nothing runs long enough to time
+// out, so it makes no difference whether Vercel Cron calls it or you refresh.
+//
 //   Manual      : /api/larvae/lobsters/cron?secret=YOUR_SECRET
-//   Start over  : ...&reset=true          (keeps the published results visible)
-//   Nuke it     : ...&hardReset=true      (also clears the published results)
-//   Smoke test  : ...&limit=5             (scores 5 and stops — run this first)
+//   Start over  : ...&reset=true        (published results stay up)
+//   Nuke it     : ...&hardReset=true
+//   Smoke test  : ...&limit=3           (runs at most 3 heats, then stops)
+//
+// There is deliberately NO automatic weekly reset. An earlier version had one
+// and it deleted a completed round mid-run.
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  buildScoreQueue,
   collectSlice,
+  drawHeats,
   freshState,
   getState,
   hardReset,
-  pickFinalists,
+  heatSlice,
   publish,
   resetRun,
   resolveTaxa,
-  scoreSlice,
-  seedVoteQueue,
   setState,
-  voteSlice,
 } from "@/lib/lobsters";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const TIME_BUDGET_MS = 45_000;
+const TIME_BUDGET_MS = 35_000;
 
 function authorized(req: NextRequest): boolean {
   const secret = req.nextUrl.searchParams.get("secret");
@@ -49,16 +49,14 @@ export async function GET(req: NextRequest) {
   }
 
   const params = req.nextUrl.searchParams;
-  const start = Date.now();
-  // Leave a little headroom so we always get to write state before the cutoff.
-  const deadline = start + TIME_BUDGET_MS;
+  const deadline = Date.now() + TIME_BUDGET_MS;
 
   if (params.get("hardReset") === "true") await hardReset();
   else if (params.get("reset") === "true") await resetRun();
 
-  let state = await getState();
+  const state = await getState();
 
-  // ── nothing in flight: start a round ────────────────────────────────────
+  // ── start a round ───────────────────────────────────────────────────────
   if (!state) {
     const taxonIds = await resolveTaxa();
     if (taxonIds.length === 0) {
@@ -67,12 +65,12 @@ export async function GET(req: NextRequest) {
         { status: 502 }
       );
     }
-    state = freshState(taxonIds);
-    await setState(state);
+    const fresh = freshState(taxonIds);
+    await setState(fresh);
     return NextResponse.json({
       ok: true,
       done: false,
-      phase: state.phase,
+      phase: fresh.phase,
       taxonIds,
       message: "Round started. Call again to begin collecting.",
     });
@@ -88,70 +86,42 @@ export async function GET(req: NextRequest) {
       done: false,
       phase: state.phase,
       considered: state.considered,
-      message: finished
-        ? "Collected every lobster. Filtering next."
-        : "Still collecting — call again to continue.",
+      message: finished ? "Collected every lobster. Drawing heats next." : "Still collecting.",
     });
   }
 
-  // ── filter ──────────────────────────────────────────────────────────────
+  // ── filter — draw the heats ─────────────────────────────────────────────
   if (state.phase === "filter") {
-    const queued = await buildScoreQueue();
-    state.phase = "score";
-    state.note = `${queued} to score`;
+    const draw = await drawHeats();
+    if (draw.heats === 0) {
+      return NextResponse.json(
+        { error: "no heats drawn — is the specimen index empty?" },
+        { status: 500 }
+      );
+    }
+    state.phase = "heats";
+    state.note = `${draw.heats} heats of ${draw.perHeat}`;
     await setState(state);
     return NextResponse.json({
       ok: true,
       done: false,
       phase: state.phase,
       considered: state.considered,
-      queued,
+      heats: draw.heats,
+      perHeat: draw.perHeat,
+      unused: draw.unused,
+      message: `${draw.heats} larvae will each judge ${draw.perHeat} lobsters.`,
     });
   }
 
-  // ── score ───────────────────────────────────────────────────────────────
-  if (state.phase === "score") {
-    // ?limit=5 scores at most that many lobsters and stops, so the very first
-    // run tells you whether the key and the model actually work before it burns quota.
+  // ── heats ───────────────────────────────────────────────────────────────
+  if (state.phase === "heats") {
     const limit = Number(params.get("limit") || 0);
+    const r = await heatSlice(deadline, limit > 0 ? limit : Infinity);
 
-    const r = await scoreSlice(deadline, limit > 0 ? limit : 0);
     if (r.done && limit === 0) {
-      state.phase = "vote";
+      state.phase = "done";
       state.note = undefined;
-      await setState(state);
-      await seedVoteQueue();
-    } else {
-      await setState(state);
-    }
-    return NextResponse.json({
-      ok: true,
-      done: false,
-      phase: state.phase,
-      scoredThisRun: r.scored,
-      failed: r.failed,
-      quotaExhausted: r.quota,
-      lastError: r.lastError,
-      message: r.quota
-        ? "Daily allowance spent. Picks up automatically tomorrow."
-        : r.done
-          ? "Scoring finished. Larvae vote next."
-          : "Still scoring — call again to continue.",
-    });
-  }
-
-  // ── vote ────────────────────────────────────────────────────────────────
-  if (state.phase === "vote") {
-    const finalists = await pickFinalists();
-    if (finalists.length === 0) {
-      state.phase = "done";
-      await setState(state);
-      return NextResponse.json({ ok: true, done: true, error: "no finalists — nothing scored" });
-    }
-
-    const r = await voteSlice(finalists, deadline);
-    if (r.done) {
-      state.phase = "done";
       await setState(state);
       const results = await publish(state);
       return NextResponse.json({
@@ -159,25 +129,22 @@ export async function GET(req: NextRequest) {
         done: true,
         phase: "done",
         considered: results.considered,
-        scored: results.scored,
-        votes: results.votes.length,
-        championId: results.championId,
+        shortlisted: results.shortlisted,
+        nominees: results.nominees.length,
       });
     }
 
-    // Publish partial results as we go so the page fills in live.
+    // Publish as we go so the page fills in live.
     await publish(state);
-    await setState(state);
     return NextResponse.json({
       ok: true,
       done: false,
       phase: state.phase,
-      castThisRun: r.cast,
+      nominatedThisRun: r.count,
       failed: r.failed,
       quotaExhausted: r.quota,
-      message: r.quota
-        ? "Daily allowance spent. Picks up automatically tomorrow."
-        : "Still voting — call again to continue.",
+      lastError: r.lastError,
+      message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Heats running.",
     });
   }
 
