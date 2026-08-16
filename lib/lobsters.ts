@@ -235,7 +235,7 @@ function toCandidate(o: any): Candidate | null {
     observer: o?.user?.login || "anon",
     license,
     faves: Number(o?.faves_count || 0),
-    agrees: Number(o?.identifications_most_agree || o?.num_identification_agreements || 0),
+    agrees: Number(o?.identifications_count ?? o?.num_identification_agreements ?? 0),
   };
 }
 
