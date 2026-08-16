@@ -111,12 +111,11 @@ export async function GET(req: NextRequest) {
 
   // ── score ───────────────────────────────────────────────────────────────
   if (state.phase === "score") {
-    // ?limit=5 scores a handful and stops, so the very first run tells you
-    // whether the key and the model actually work before it burns quota.
+    // ?limit=5 scores at most that many lobsters and stops, so the very first
+    // run tells you whether the key and the model actually work before it burns quota.
     const limit = Number(params.get("limit") || 0);
-    const sliceDeadline = limit > 0 ? Math.min(deadline, Date.now() + 15_000) : deadline;
 
-    const r = await scoreSlice(sliceDeadline);
+    const r = await scoreSlice(deadline, limit > 0 ? limit : 0);
     if (r.done && limit === 0) {
       state.phase = "vote";
       state.note = undefined;
@@ -132,6 +131,7 @@ export async function GET(req: NextRequest) {
       scoredThisRun: r.scored,
       failed: r.failed,
       quotaExhausted: r.quota,
+      lastError: r.lastError,
       message: r.quota
         ? "Daily allowance spent. Picks up automatically tomorrow."
         : r.done

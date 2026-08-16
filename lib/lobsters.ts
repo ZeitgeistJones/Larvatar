@@ -379,9 +379,8 @@ async function callVision(
     system_instruction: { parts: [{ text: system }] },
     contents: [{ role: "user", parts }],
     generationConfig: {
-      maxOutputTokens: Math.max(maxTokens, 1024),
+      maxOutputTokens: Math.max(maxTokens, 2048),
       temperature,
-      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
@@ -457,11 +456,15 @@ Also write "note": at most 18 words, plain description of what is actually visib
 Reply with ONLY a JSON array, one object per image, in order:
 [{"i":1,"clawd":0,"bot":0,"note":"..."}]`;
 
-export async function scoreSlice(deadline: number): Promise<{
+export async function scoreSlice(
+  deadline: number,
+  maxAttempt = 0
+): Promise<{
   done: boolean;
   scored: number;
   failed: number;
   quota: boolean;
+  lastError?: string;
 }> {
   const queue = await jget<number[]>(K.scoreQ, []);
   const shortlist = await jget<Candidate[]>(K.shortlist, []);
@@ -470,9 +473,15 @@ export async function scoreSlice(deadline: number): Promise<{
 
   let scored = 0;
   let failed = 0;
+  let attempted = 0;
+  let lastError: string | undefined;
 
   while (queue.length > 0 && Date.now() < deadline) {
-    const batchIds = queue.splice(0, SCORE_BATCH);
+    if (maxAttempt > 0 && attempted >= maxAttempt) break;
+
+    const room = maxAttempt > 0 ? maxAttempt - attempted : SCORE_BATCH;
+    const batchIds = queue.splice(0, Math.min(SCORE_BATCH, room));
+    attempted += batchIds.length;
     const batch = batchIds.map((id) => byId.get(id)).filter(Boolean) as Candidate[];
     if (batch.length === 0) continue;
 
@@ -515,7 +524,16 @@ export async function scoreSlice(deadline: number): Promise<{
         // Put the batch back untouched and stop for today.
         await jset(K.scoreQ, [...batchIds, ...queue]);
         await jset(K.scores, scores);
-        return { done: false, scored, failed, quota: true };
+        return {
+          done: false,
+          scored,
+          failed,
+          quota: true,
+          lastError: e instanceof Error ? e.message : String(e),
+        };
+      }
+      if (!lastError) {
+        lastError = e instanceof Error ? e.message : String(e);
       }
       failed += present.length;
     }
@@ -524,7 +542,7 @@ export async function scoreSlice(deadline: number): Promise<{
     await jset(K.scores, scores);
   }
 
-  return { done: queue.length === 0, scored, failed, quota: false };
+  return { done: queue.length === 0, scored, failed, quota: false, lastError };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
