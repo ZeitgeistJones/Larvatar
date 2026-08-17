@@ -34,14 +34,24 @@ import { redis, getIndex, getProfile } from "@/lib/larvae";
 
 export const CLAWD_BRIEF = `clawdbotatg is an autonomous AI builder agent that ships onchain tools continuously, burns CLAWD on every interaction, runs without supervision, and has produced real work that almost nobody is watching. Its mascot, Clawd, is a red triangular character in a tuxedo holding a teacup — composed, formal, faintly absurd.`;
 
-/** Deliberately loose. Enough to aim at, not a checklist to tick off. */
-export const NOMINATION_BRIEF = `Two things can make a lobster the right answer, and they pull against each other:
+/**
+ * Red is a GATE, not a preference. Clawd is red; a brown lobster is simply
+ * the wrong answer however good the photograph. Everything after the gate is
+ * deliberately loose — something to aim at, not a checklist to tick off.
+ */
+export const NOMINATION_BRIEF = `FIRST, THE ONE HARD RULE. Clawd is red. A lobster that is not red is not Clawd, no matter how good the photograph is.
 
-It might LOOK like Clawd — deep red, front-facing and squared up, composed rather than fleeing, a claw extended as though holding something, faintly ridiculous dignity.
+A lobster is ELIGIBLE only if the animal itself clearly reads red, red-orange, or deep orange — the colour of the body and shell, not of coral, sponge, algae or lighting around it. Mottled brown, olive, green, grey, blue, sandy and dull yellow are all INELIGIBLE. Judge the animal, not the scene. If you would not call it a red lobster looking at it plainly, it is out.
+
+Being striking, characterful or well-photographed does NOT make an ineligible animal eligible. If nothing in your set is red, nominate nothing. An honest empty heat is better than a brown compromise.
+
+SECOND, AMONG THE RED ONES ONLY, two things can make one the right answer, and they pull against each other:
+
+It might LOOK like Clawd — front-facing and squared up, composed rather than fleeing, a claw extended as though holding something, faintly ridiculous dignity.
 
 Or it might BE clawdbotatg — working rather than posing, plain rather than prize-winning, scarred or barnacled or missing a claw, unglamorous and still going.
 
-The best answer is one animal that somehow does both. Do not tick these off like a checklist — they are what to aim at, not a scoring sheet.`;
+The best answer is one red animal that somehow does both.`;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Tunables
@@ -50,11 +60,11 @@ The best answer is one animal that somehow does both. Do not tick these off like
 const INAT = "https://api.inaturalist.org/v1";
 export const UA = "Larvatar/1.0 (+https://larvatar.vercel.app) clawd-incarnate";
 
-export const SHORTLIST_MAX = Number(process.env.LOBSTER_SHORTLIST_MAX || 600);
-export const PER_SPECIES_CAP = Number(process.env.LOBSTER_PER_SPECIES || 20);
+export const SHORTLIST_MAX = Number(process.env.LOBSTER_SHORTLIST_MAX || 1000);
+export const PER_SPECIES_CAP = Number(process.env.LOBSTER_PER_SPECIES || 25);
 const PAGES_PER_RUN = Number(process.env.LOBSTER_PAGES_PER_RUN || 25);
 /** Upper bound on how many photos one larva judges at once. */
-const MAX_HEAT_SIZE = Number(process.env.LOBSTER_HEAT_SIZE || 6);
+const MAX_HEAT_SIZE = Number(process.env.LOBSTER_HEAT_SIZE || 8);
 
 const TAXA = (process.env.LOBSTER_TAXA || "Nephropidae,Palinuridae")
   .split(",")
@@ -90,15 +100,18 @@ export type Candidate = {
 /** One line on one lobster, in the voice of the larva that judged it. */
 export type Verdict = {
   id: number;
-  /** 1 = nominated. Everything else placed below it, in order. */
+  /** 1 = nominated (or best of an ineligible field). Others in order below. */
   rank: number;
   note: string;
+  /** Did the larva judge this animal red enough to be eligible at all? */
+  red: boolean;
 };
 
 export type Nomination = {
   wallet: string;
   name: string;
-  pick: number;
+  /** null when the whole heat failed the red gate and the larva abstained. */
+  pick: number | null;
   reason: string;
   /** The other candidates this larva rejected — the runners-up matter. */
   against: number[];
@@ -117,8 +130,18 @@ export type Results = {
   heatsRun: number;
   nominees: Candidate[];
   nominations: Nomination[];
+  /** Heats where nothing was red enough to nominate. */
+  abstentions: number;
+  /** How many judged animals passed the red gate at all. */
+  redCount: number;
   /** Every judged lobster, flattened, so the page can show the whole field. */
-  judged: (Candidate & { rank: number; note: string; judge: string; heatSize: number })[];
+  judged: (Candidate & {
+    rank: number;
+    note: string;
+    red: boolean;
+    judge: string;
+    heatSize: number;
+  })[];
   updatedAt: string;
 };
 
@@ -350,7 +373,7 @@ export async function drawHeats(): Promise<{ heats: number; perHeat: number; unu
     return { heats: 0, perHeat: 0, unused: shortlist.length };
   }
 
-  const perHeat = Math.min(MAX_HEAT_SIZE, Math.max(2, Math.ceil(shortlist.length / wallets.length)));
+  const perHeat = Math.min(MAX_HEAT_SIZE, Math.max(2, Math.floor(shortlist.length / wallets.length)));
   const pool = shuffleSeeded(shortlist, "heats:" + shortlist.length);
 
   const heats: Heat[] = wallets.map((w) => ({ wallet: w, ids: [] }));
@@ -481,8 +504,12 @@ This is your set alone — your nominee goes forward and the rest are discarded.
 
 Rank EVERY image, best first, and write one line on each — including the ones you are rejecting. Be specific about the animal in front of you. A dismissal that could apply to any lobster is a wasted line.
 
+Set "red": true only for animals that pass the colour gate, false for the rest. Put every red one above every non-red one in the ranking. If none are red, rank them anyway with all "red": false — that is an abstention and it is a valid answer.
+
+Never refer to a candidate by its image number in "note" or "reason". Talk about the animal. The number belongs only in the "i" field.
+
 Reply with ONLY a JSON object. "ranked" is ordered best to worst and must contain every image exactly once:
-{"ranked":[{"i":<image number>,"note":"<max 20 words, your verdict on this one>"}],"reason":"<max 40 words on why your top pick won, in your voice>"}`;
+{"ranked":[{"i":<image number>,"red":true,"note":"<max 20 words, your verdict on this one>"}],"reason":"<max 40 words on why your top pick won, or why nothing qualified, in your voice>"}`;
 
 export async function heatSlice(
   deadline: number,
@@ -559,22 +586,27 @@ export async function heatSlice(
           id: c.id,
           rank: verdicts.length + 1,
           note: String(row?.note || "").slice(0, 200),
+          red: row?.red === true,
         });
       }
       // Anything the model skipped still gets a place, just unremarked on.
       for (const c of present) {
         if (seen.has(c.id)) continue;
-        verdicts.push({ id: c.id, rank: verdicts.length + 1, note: "" });
+        verdicts.push({ id: c.id, rank: verdicts.length + 1, note: "", red: false });
       }
 
-      const chosen = present.find((c) => c.id === verdicts[0]?.id);
-      if (chosen) {
+      // The gate decides the nominee, not the ranking order — if the model
+      // ranked a brown animal first, it still cannot be nominated.
+      const eligible = verdicts.find((v) => v.red);
+      const chosen = eligible ? present.find((c) => c.id === eligible.id) : undefined;
+
+      if (verdicts.length > 0) {
         nominations.push({
           wallet,
           name: profile.profile.name,
-          pick: chosen.id,
+          pick: chosen ? chosen.id : null,
           reason: String(obj.reason || "").slice(0, 300),
-          against: present.filter((c) => c.id !== chosen.id).map((c) => c.id),
+          against: chosen ? present.filter((c) => c.id !== chosen.id).map((c) => c.id) : [],
           verdicts,
         });
         count += 1;
@@ -613,14 +645,17 @@ export async function publish(state: State): Promise<Results> {
 
   const byId = new Map(shortlist.map((c) => [c.id, c]));
   const nominees = nominations
-    .map((n) => byId.get(n.pick))
+    .map((n) => (n.pick === null ? undefined : byId.get(n.pick)))
     .filter(Boolean) as Candidate[];
+  const abstentions = nominations.filter((n) => n.pick === null).length;
 
   const judged = nominations.flatMap((n) =>
     (n.verdicts || []).flatMap((v) => {
       const c = byId.get(v.id);
       if (!c) return [];
-      return [{ ...c, rank: v.rank, note: v.note, judge: n.name, heatSize: n.verdicts.length }];
+      return [
+        { ...c, rank: v.rank, note: v.note, red: v.red, judge: n.name, heatSize: n.verdicts.length },
+      ];
     })
   );
 
@@ -631,6 +666,8 @@ export async function publish(state: State): Promise<Results> {
     heatsRun: heats.length,
     nominees,
     nominations,
+    abstentions,
+    redCount: judged.filter((j) => j.red).length,
     judged,
     updatedAt: new Date().toISOString(),
   };

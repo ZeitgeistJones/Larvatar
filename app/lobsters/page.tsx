@@ -28,10 +28,10 @@ type Candidate = {
 type Nomination = {
   wallet: string;
   name: string;
-  pick: number;
+  pick: number | null;
   reason: string;
   against: number[];
-  verdicts: { id: number; rank: number; note: string }[];
+  verdicts: { id: number; rank: number; note: string; red: boolean }[];
 };
 
 type Judged = {
@@ -43,6 +43,7 @@ type Judged = {
   observer: string;
   rank: number;
   note: string;
+  red: boolean;
   judge: string;
   heatSize: number;
 };
@@ -56,6 +57,8 @@ type Payload = {
   nominees?: Candidate[];
   nominations?: Nomination[];
   judged?: Judged[];
+  abstentions?: number;
+  redCount?: number;
 };
 
 const PHASE_LABEL: Record<string, string> = {
@@ -87,7 +90,7 @@ export default function LobstersPage() {
   // A nominee can be picked only once — heats never overlap — so this is 1:1.
   const byId = useMemo(() => new Map(nominees.map((n) => [n.id, n])), [nominees]);
   const nomByPick = useMemo(
-    () => new Map(nominations.map((n) => [n.pick, n])),
+    () => new Map(nominations.filter((n) => n.pick !== null).map((n) => [n.pick as number, n])),
     [nominations]
   );
 
@@ -127,8 +130,9 @@ export default function LobstersPage() {
           <h1 className="mt-1 text-4xl font-bold tracking-tight">Clawd Incarnate</h1>
           <p className="mt-2 max-w-2xl text-sm opacity-75">
             Every lobster observation on iNaturalist, narrowed to a shortlist, then dealt
-            out so each larva judged its own handful that nobody else saw. One nomination
-            each. Nothing could be nominated twice.
+            out so each larva judged its own handful that nobody else saw. Clawd is red,
+            so only red animals are eligible — a larva holding nothing red nominates
+            nothing. One nomination each, and nothing could be nominated twice.
           </p>
         </header>
 
@@ -152,7 +156,7 @@ export default function LobstersPage() {
                 { label: "considered", value: fmt(data.considered) },
                 { label: "shortlisted", value: fmt(data.shortlisted) },
                 { label: "judged", value: fmt(judged.length) },
-                { label: "nominees", value: fmt(nominees.length) },
+                { label: "red enough", value: fmt(data.redCount) },
               ].map((s) => (
                 <div key={s.label} className="rounded-xl border p-4" style={{ borderColor: border, background: CARD }}>
                   <p className="font-mono text-xs uppercase tracking-widest opacity-60">{s.label}</p>
@@ -168,9 +172,19 @@ export default function LobstersPage() {
             )}
 
             {speciesSpread.length > 0 && (
+              <p className="mb-2 text-sm opacity-70">
+                {nominees.length} nominees across {speciesSpread.length} species. Most
+                nominated: <span style={{ color: CORAL }}>{speciesSpread[0][0]}</span> (
+                {speciesSpread[0][1]}).
+              </p>
+            )}
+
+            {(data.abstentions ?? 0) > 0 && (
               <p className="mb-6 text-sm opacity-70">
-                {speciesSpread.length} species among the nominees. Most nominated:{" "}
-                <span style={{ color: CORAL }}>{speciesSpread[0][0]}</span> ({speciesSpread[0][1]}).
+                <span style={{ color: SEA }}>{data.abstentions}</span> of{" "}
+                {nominations.length} larvae found nothing red enough in their set and
+                nominated nobody. Those heats are recorded below with everything they
+                rejected — an empty heat is a real answer, not a failure.
               </p>
             )}
 
@@ -278,6 +292,12 @@ export default function LobstersPage() {
                         {j.species}
                       </a>
                       <span className="opacity-50"> · {j.judge}</span>
+                      {!j.red && (
+                        <span className="font-mono text-xs" style={{ color: SEA }}>
+                          {" "}
+                          · not red
+                        </span>
+                      )}
                       <span className="opacity-75"> — {j.note || "no comment"}</span>
                     </li>
                   ))}
