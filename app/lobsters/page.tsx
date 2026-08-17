@@ -48,6 +48,9 @@ type Judged = {
   heatSize: number;
 };
 
+type SemiRow = { id: number; votes: number; views: number; meanRank: number };
+type SemiBallot = { wallet: string; name: string; pick: number; reason: string; order: number[] };
+
 type Payload = {
   ready: boolean;
   phase: string | null;
@@ -59,13 +62,18 @@ type Payload = {
   judged?: Judged[];
   abstentions?: number;
   redCount?: number;
+  semi?: SemiRow[];
+  semiBallots?: SemiBallot[];
+  finalists?: Candidate[];
 };
 
 const PHASE_LABEL: Record<string, string> = {
   collect: "reading the database",
   filter: "drawing the heats",
   heats: "the larvae are nominating",
-  done: "nominations closed",
+  draw: "drawing the semifinal",
+  semi: "the semifinal is running",
+  done: "complete",
 };
 
 export default function LobstersPage() {
@@ -86,6 +94,9 @@ export default function LobstersPage() {
   const nominees = data?.nominees || [];
   const nominations = data?.nominations || [];
   const judged = data?.judged || [];
+  const semi = data?.semi || [];
+  const semiBallots = data?.semiBallots || [];
+  const finalists = data?.finalists || [];
 
   // A nominee can be picked only once — heats never overlap — so this is 1:1.
   const byId = useMemo(() => new Map(nominees.map((n) => [n.id, n])), [nominees]);
@@ -231,6 +242,101 @@ export default function LobstersPage() {
                     </a>
                   </div>
                 </div>
+              </section>
+            )}
+
+            {/* ── the finalists ────────────────────────────────────────── */}
+            {finalists.length > 0 && (
+              <section className="mb-8">
+                <p className="mb-1 font-mono text-xs uppercase tracking-widest" style={{ color: GOLD }}>
+                  the finalists
+                </p>
+                <p className="mb-3 text-sm opacity-75">
+                  Every nominee was judged by about{" "}
+                  {semi[0]?.views ?? "several"} different larvae. These came top.
+                </p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+                  {finalists.map((c, i) => {
+                    const row = semi.find((r) => r.id === c.id);
+                    return (
+                      <div
+                        key={c.id}
+                        className="overflow-hidden rounded-xl border"
+                        style={{ borderColor: `${GOLD}55`, background: CARD }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={c.photo} alt={c.species} className="h-28 w-full object-cover" />
+                        <div className="p-2">
+                          <p className="font-mono text-xs" style={{ color: GOLD }}>
+                            #{i + 1}
+                          </p>
+                          <p className="truncate text-xs font-bold">{c.species}</p>
+                          <p className="mt-0.5 font-mono text-xs opacity-55">
+                            {row?.votes ?? 0} of {row?.views ?? 0}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* ── semifinal standings ──────────────────────────────────── */}
+            {semi.length > 0 && (
+              <section className="mb-8 rounded-xl border p-5" style={{ borderColor: border, background: CARD }}>
+                <p className="font-mono text-xs uppercase tracking-widest opacity-60">
+                  semifinal standings
+                </p>
+                <p className="mt-1 mb-3 text-sm opacity-75">
+                  First-place votes out of how many larvae saw it. Ties break on mean
+                  placing, so a nominee with no wins can still finish above one that
+                  nobody ranked highly.
+                </p>
+                <ul className="space-y-1">
+                  {semi.slice(0, 40).map((r, i) => {
+                    const c = nominees.find((n) => n.id === r.id) || finalists.find((n) => n.id === r.id);
+                    const through = finalists.some((f) => f.id === r.id);
+                    return (
+                      <li key={r.id} className="text-sm" style={{ opacity: through ? 1 : 0.6 }}>
+                        <span className="font-mono text-xs opacity-50">#{i + 1}</span>{" "}
+                        <span className="font-bold">{c?.species ?? "—"}</span>
+                        <span className="font-mono text-xs opacity-60">
+                          {" "}
+                          · {r.votes}/{r.views} · mean {r.meanRank.toFixed(2)}
+                        </span>
+                        {through && (
+                          <span className="font-mono text-xs" style={{ color: GOLD }}>
+                            {" "}
+                            · through
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
+
+            {/* ── semifinal reasoning ──────────────────────────────────── */}
+            {semiBallots.length > 0 && (
+              <section className="mb-8 rounded-xl border p-5" style={{ borderColor: border, background: CARD }}>
+                <p className="font-mono text-xs uppercase tracking-widest opacity-60">
+                  how the semifinal was argued
+                </p>
+                <ul className="mt-3 space-y-1.5">
+                  {semiBallots.slice(0, 40).map((b, i) => {
+                    const c =
+                      nominees.find((n) => n.id === b.pick) || finalists.find((n) => n.id === b.pick);
+                    return (
+                      <li key={b.wallet + i} className="text-sm">
+                        <span className="font-bold" style={{ color: CORAL }}>{b.name}</span>
+                        <span className="opacity-50"> → {c?.species ?? "—"}</span>
+                        <span className="opacity-75"> — {b.reason}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
               </section>
             )}
 

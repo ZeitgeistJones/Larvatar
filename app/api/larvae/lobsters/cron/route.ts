@@ -2,7 +2,7 @@
 //
 // Clawd Incarnate, driven by one route.
 //
-//   collect → filter → heats → done
+//   collect → filter → heats → draw → semi → done
 //
 // Each visit does one slice and returns. Nothing runs long enough to time
 // out, so it makes no difference whether Vercel Cron calls it or you refresh.
@@ -10,7 +10,10 @@
 //   Manual      : /api/larvae/lobsters/cron?secret=YOUR_SECRET
 //   Start over  : ...&reset=true        (published results stay up)
 //   Nuke it     : ...&hardReset=true
-//   Smoke test  : ...&limit=3           (runs at most 3 heats, then stops)
+//   Smoke test  : ...&limit=3           (runs at most 3 judgements, then stops)
+//   Resume      : ...&resume=draw       (move the phase marker WITHOUT wiping
+//                                        anything — needed when new phases are
+//                                        added after a run already finished)
 //
 // There is deliberately NO automatic weekly reset. An earlier version had one
 // and it deleted a completed round mid-run.
@@ -27,7 +30,9 @@ import {
   resetRun,
   resolveTaxa,
   setState,
+  type Phase,
 } from "@/lib/lobsters";
+import { drawSlates, freezeFinalists, semiSlice } from "@/lib/lobster-semi";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -55,6 +60,29 @@ export async function GET(req: NextRequest) {
   else if (params.get("reset") === "true") await resetRun();
 
   const state = await getState();
+
+  // Move the phase marker without touching any collected data. This exists
+  // because new phases get added after a run has already reached `done`, and
+  // a reset would throw away work that is still perfectly good.
+  const resume = params.get("resume");
+  if (resume && state) {
+    const allowed: Phase[] = ["collect", "filter", "heats", "draw", "semi", "done"];
+    if (!allowed.includes(resume as Phase)) {
+      return NextResponse.json(
+        { error: `resume must be one of ${allowed.join(", ")}` },
+        { status: 400 }
+      );
+    }
+    state.phase = resume as Phase;
+    state.note = `resumed at ${resume}`;
+    await setState(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      message: `Phase set to ${resume}. Nothing was wiped. Call again to continue.`,
+    });
+  }
 
   // ── start a round ───────────────────────────────────────────────────────
   if (!state) {
@@ -120,17 +148,19 @@ export async function GET(req: NextRequest) {
     const r = await heatSlice(deadline, limit > 0 ? limit : Infinity);
 
     if (r.done && limit === 0) {
-      state.phase = "done";
+      state.phase = "draw";
       state.note = undefined;
       await setState(state);
       const results = await publish(state);
       return NextResponse.json({
         ok: true,
-        done: true,
-        phase: "done",
+        done: false,
+        phase: "draw",
         considered: results.considered,
         shortlisted: results.shortlisted,
         nominees: results.nominees.length,
+        abstentions: results.abstentions,
+        message: "Heats closed. Drawing the semifinal next.",
       });
     }
 
@@ -145,6 +175,62 @@ export async function GET(req: NextRequest) {
       quotaExhausted: r.quota,
       lastError: r.lastError,
       message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Heats running.",
+    });
+  }
+
+  // ── draw — deal the semifinal slates ────────────────────────────────────
+  if (state.phase === "draw") {
+    const draw = await drawSlates();
+    if (draw.slates === 0) {
+      return NextResponse.json(
+        { error: "no slates drawn — are there any nominees?" },
+        { status: 500 }
+      );
+    }
+    state.phase = "semi";
+    state.note = `${draw.slates} slates of ${draw.slateSize}`;
+    await setState(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      slates: draw.slates,
+      slateSize: draw.slateSize,
+      viewsEach: draw.viewsEach,
+      message: `Every nominee will be judged by about ${draw.viewsEach} larvae.`,
+    });
+  }
+
+  // ── semi ────────────────────────────────────────────────────────────────
+  if (state.phase === "semi") {
+    const limit = Number(params.get("limit") || 0);
+    const r = await semiSlice(deadline, limit > 0 ? limit : Infinity);
+
+    if (r.done && limit === 0) {
+      const finalists = await freezeFinalists();
+      state.phase = "done";
+      state.note = undefined;
+      await setState(state);
+      const results = await publish(state);
+      return NextResponse.json({
+        ok: true,
+        done: true,
+        phase: "done",
+        nominees: results.nominees.length,
+        finalists: finalists.length,
+      });
+    }
+
+    await publish(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      votedThisRun: r.count,
+      failed: r.failed,
+      quotaExhausted: r.quota,
+      lastError: r.lastError,
+      message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Semifinal running.",
     });
   }
 

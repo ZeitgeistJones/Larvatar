@@ -134,6 +134,12 @@ export type Results = {
   abstentions: number;
   /** How many judged animals passed the red gate at all. */
   redCount: number;
+  /** Semifinal standings — every nominee with votes, views and mean rank. */
+  semi: { id: number; votes: number; views: number; meanRank: number }[];
+  /** What the semifinal returned for each larva, for the page to quote. */
+  semiBallots: { wallet: string; name: string; pick: number; reason: string; order: number[] }[];
+  /** The top slice of the semifinal. Empty until the semifinal closes. */
+  finalists: Candidate[];
   /** Every judged lobster, flattened, so the page can show the whole field. */
   judged: (Candidate & {
     rank: number;
@@ -145,7 +151,7 @@ export type Results = {
   updatedAt: string;
 };
 
-export type Phase = "collect" | "filter" | "heats" | "done";
+export type Phase = "collect" | "filter" | "heats" | "draw" | "semi" | "done";
 
 export type State = {
   phase: Phase;
@@ -170,6 +176,11 @@ export const K = {
   heats: "lob:heats",
   heatQ: "lob:heat:queue",
   nominations: "lob:nominations",
+  semiSlates: "lob:semi:slates",
+  semiQ: "lob:semi:queue",
+  semiBallots: "lob:semi:ballots",
+  semiResults: "lob:semi:results",
+  finalists: "lob:finalists",
   results: "lob:results",
 };
 
@@ -198,7 +209,19 @@ export async function getResults(): Promise<Results | null> {
 
 export async function resetRun() {
   await Promise.all(
-    [K.state, K.shortlist, K.species, K.heats, K.heatQ, K.nominations].map((k) => redis.del(k))
+    [
+      K.state,
+      K.shortlist,
+      K.species,
+      K.heats,
+      K.heatQ,
+      K.nominations,
+      K.semiSlates,
+      K.semiQ,
+      K.semiBallots,
+      K.semiResults,
+      K.finalists,
+    ].map((k) => redis.del(k))
   );
 }
 
@@ -641,6 +664,7 @@ export async function publish(state: State): Promise<Results> {
   const existing = await getResults();
 
   // GUARD: never let an empty computation overwrite a good published round.
+  // A weekly reset once wiped mid-run and publish wrote the emptiness back out.
   if (nominations.length === 0 && existing) return existing;
 
   const byId = new Map(shortlist.map((c) => [c.id, c]));
@@ -659,11 +683,18 @@ export async function publish(state: State): Promise<Results> {
     })
   );
 
+  const semi = await jget<Results["semi"]>(K.semiResults, []);
+  const semiBallots = await jget<Results["semiBallots"]>(K.semiBallots, []);
+  const finalists = await jget<Candidate[]>(K.finalists, []);
+
   const results: Results = {
     round: state.round,
     considered: state.considered,
     shortlisted: shortlist.length,
     heatsRun: heats.length,
+    semi,
+    semiBallots,
+    finalists,
     nominees,
     nominations,
     abstentions,
