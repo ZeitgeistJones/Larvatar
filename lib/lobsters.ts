@@ -123,6 +123,15 @@ export type Nomination = {
   verdicts: Verdict[];
 };
 
+export type Standing = {
+  id: number;
+  liveVotes: number;
+  seedRate: number;
+  liveNorm: number;
+  seedNorm: number;
+  score: number;
+};
+
 export type Results = {
   round: string;
   considered: number;
@@ -140,6 +149,32 @@ export type Results = {
   semiBallots: { wallet: string; name: string; pick: number; reason: string; order: number[] }[];
   /** The top slice of the semifinal. Empty until the semifinal closes. */
   finalists: Candidate[];
+  /** Press conference: one question per larva, answered from the species record. */
+  questions: {
+    wallet: string;
+    name: string;
+    target: number;
+    question: string;
+    answer?: string;
+    grounded?: boolean;
+  }[];
+  /** Both final voting stages, tagged by stage. */
+  finalBallots: {
+    stage: 1 | 2;
+    wallet: string;
+    name: string;
+    pick: number;
+    reason: string;
+    switchedFrom?: number;
+  }[];
+  /** Stage 1 blends the semifinal seed with the live vote; stage 2 is live only. */
+  stand1: Standing[];
+  stand2: Standing[];
+  /** Survivors of the first cut. */
+  five: Candidate[];
+  championId: number | null;
+  /** Post-hoc: why each of the final five placed where it did. */
+  placings: { id: number; place: number; votes: number; verdict: string; sourced: number }[];
   /** Every judged lobster, flattened, so the page can show the whole field. */
   judged: (Candidate & {
     rank: number;
@@ -151,7 +186,19 @@ export type Results = {
   updatedAt: string;
 };
 
-export type Phase = "collect" | "filter" | "heats" | "draw" | "semi" | "done";
+export type Phase =
+  | "collect"
+  | "filter"
+  | "heats"
+  | "draw"
+  | "semi"
+  | "dossier"
+  | "ask"
+  | "answer"
+  | "f1"
+  | "f2"
+  | "verdict"
+  | "done";
 
 export type State = {
   phase: Phase;
@@ -181,6 +228,19 @@ export const K = {
   semiBallots: "lob:semi:ballots",
   semiResults: "lob:semi:results",
   finalists: "lob:finalists",
+  dossiers: "lob:dossiers",
+  askQ: "lob:ask:queue",
+  answerQ: "lob:answer:queue",
+  questions: "lob:questions",
+  f1Q: "lob:f1:queue",
+  f2Q: "lob:f2:queue",
+  finalBallots: "lob:final:ballots",
+  stand1: "lob:stand1",
+  stand2: "lob:stand2",
+  finalFive: "lob:final:five",
+  champion: "lob:champion",
+  verdictQ: "lob:verdict:queue",
+  verdicts: "lob:verdicts",
   results: "lob:results",
 };
 
@@ -221,6 +281,19 @@ export async function resetRun() {
       K.semiBallots,
       K.semiResults,
       K.finalists,
+      K.dossiers,
+      K.askQ,
+      K.answerQ,
+      K.questions,
+      K.f1Q,
+      K.f2Q,
+      K.finalBallots,
+      K.stand1,
+      K.stand2,
+      K.finalFive,
+      K.champion,
+      K.verdictQ,
+      K.verdicts,
     ].map((k) => redis.del(k))
   );
 }
@@ -686,6 +759,22 @@ export async function publish(state: State): Promise<Results> {
   const semi = await jget<Results["semi"]>(K.semiResults, []);
   const semiBallots = await jget<Results["semiBallots"]>(K.semiBallots, []);
   const finalists = await jget<Candidate[]>(K.finalists, []);
+  const questions = await jget<Results["questions"]>(K.questions, []);
+  const finalBallots = await jget<Results["finalBallots"]>(K.finalBallots, []);
+  const stand1 = await jget<Standing[]>(K.stand1, []);
+  const stand2 = await jget<Standing[]>(K.stand2, []);
+  const five = await jget<Candidate[]>(K.finalFive, []);
+  const championId = await jget<number | null>(K.champion, null);
+  const verdicts = await jget<Record<string, string>>(K.verdicts, {});
+  const placings: Results["placings"] = stand2.map((r, i) => ({
+    id: r.id,
+    place: i + 1,
+    votes: r.liveVotes,
+    verdict: verdicts[String(r.id)] || "",
+    sourced:
+      finalBallots.filter((b) => b.pick === r.id || b.switchedFrom === r.id).length +
+      semiBallots.filter((b) => b.pick === r.id).length,
+  }));
 
   const results: Results = {
     round: state.round,
@@ -695,6 +784,13 @@ export async function publish(state: State): Promise<Results> {
     semi,
     semiBallots,
     finalists,
+    questions,
+    finalBallots,
+    stand1,
+    stand2,
+    five,
+    championId,
+    placings,
     nominees,
     nominations,
     abstentions,

@@ -2,7 +2,8 @@
 //
 // Clawd Incarnate, driven by one route.
 //
-//   collect → filter → heats → draw → semi → done
+//   collect → filter → heats → draw → semi
+//     → dossier → ask → answer → f1 → f2 → verdict → done
 //
 // Each visit does one slice and returns. Nothing runs long enough to time
 // out, so it makes no difference whether Vercel Cron calls it or you refresh.
@@ -33,6 +34,19 @@ import {
   type Phase,
 } from "@/lib/lobsters";
 import { drawSlates, freezeFinalists, semiSlice } from "@/lib/lobster-semi";
+import {
+  answerSlice,
+  askSlice,
+  buildDossiers,
+  closeStageOne,
+  closeStageTwo,
+  seedAnswerQueue,
+  seedAskQueue,
+  seedVerdictQueue,
+  seedVoteQueue,
+  verdictSlice,
+  voteSlice,
+} from "@/lib/lobster-final";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -66,7 +80,20 @@ export async function GET(req: NextRequest) {
   // a reset would throw away work that is still perfectly good.
   const resume = params.get("resume");
   if (resume && state) {
-    const allowed: Phase[] = ["collect", "filter", "heats", "draw", "semi", "done"];
+    const allowed: Phase[] = [
+      "collect",
+      "filter",
+      "heats",
+      "draw",
+      "semi",
+      "dossier",
+      "ask",
+      "answer",
+      "f1",
+      "f2",
+      "verdict",
+      "done",
+    ];
     if (!allowed.includes(resume as Phase)) {
       return NextResponse.json(
         { error: `resume must be one of ${allowed.join(", ")}` },
@@ -208,16 +235,17 @@ export async function GET(req: NextRequest) {
 
     if (r.done && limit === 0) {
       const finalists = await freezeFinalists();
-      state.phase = "done";
+      state.phase = "dossier";
       state.note = undefined;
       await setState(state);
       const results = await publish(state);
       return NextResponse.json({
         ok: true,
-        done: true,
-        phase: "done",
+        done: false,
+        phase: "dossier",
         nominees: results.nominees.length,
         finalists: finalists.length,
+        message: "Semifinal closed. Press conference next.",
       });
     }
 
@@ -231,6 +259,171 @@ export async function GET(req: NextRequest) {
       quotaExhausted: r.quota,
       lastError: r.lastError,
       message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Semifinal running.",
+    });
+  }
+
+  // ── dossier ─────────────────────────────────────────────────────────────
+  if (state.phase === "dossier") {
+    const built = await buildDossiers(deadline);
+    if (built === 0) {
+      const seeded = await seedAskQueue();
+      state.phase = "ask";
+      state.note = `${seeded} questions to ask`;
+      await setState(state);
+      return NextResponse.json({
+        ok: true,
+        done: false,
+        phase: state.phase,
+        message: "Species records ready. Larvae asking next.",
+      });
+    }
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      dossiersBuilt: built,
+      message: "Fetching species records.",
+    });
+  }
+
+  // ── ask ─────────────────────────────────────────────────────────────────
+  if (state.phase === "ask") {
+    const limit = Number(params.get("limit") || 0);
+    const r = await askSlice(deadline, limit > 0 ? limit : Infinity);
+    if (r.done && limit === 0) {
+      const seeded = await seedAnswerQueue();
+      state.phase = "answer";
+      state.note = `${seeded} to answer`;
+      await setState(state);
+    }
+    await publish(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      askedThisRun: r.count,
+      failed: r.failed,
+      quotaExhausted: r.quota,
+      lastError: r.lastError,
+      message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Larvae asking questions.",
+    });
+  }
+
+  // ── answer ──────────────────────────────────────────────────────────────
+  if (state.phase === "answer") {
+    const limit = Number(params.get("limit") || 0);
+    const r = await answerSlice(deadline, limit > 0 ? limit : Infinity);
+    if (r.done && limit === 0) {
+      const seeded = await seedVoteQueue(1);
+      state.phase = "f1";
+      state.note = `${seeded} voters`;
+      await setState(state);
+    }
+    await publish(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      answeredThisRun: r.count,
+      failed: r.failed,
+      quotaExhausted: r.quota,
+      lastError: r.lastError,
+      message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Answering from the record.",
+    });
+  }
+
+  // ── f1 — vote on 12, cut to 5 (seeded) ──────────────────────────────────
+  if (state.phase === "f1") {
+    const limit = Number(params.get("limit") || 0);
+    const r = await voteSlice(1, deadline, limit > 0 ? limit : Infinity);
+    if (r.done && limit === 0) {
+      const five = await closeStageOne();
+      const seeded = await seedVoteQueue(2);
+      state.phase = "f2";
+      state.note = `${five.length} left, ${seeded} voters`;
+      await setState(state);
+      await publish(state);
+      return NextResponse.json({
+        ok: true,
+        done: false,
+        phase: "f2",
+        cutTo: five.length,
+        message: "First cut made. Final vote next.",
+      });
+    }
+    await publish(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      votedThisRun: r.count,
+      failed: r.failed,
+      quotaExhausted: r.quota,
+      lastError: r.lastError,
+      message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Voting on the twelve.",
+    });
+  }
+
+  // ── f2 — vote on 5, champion (live vote only) ───────────────────────────
+  if (state.phase === "f2") {
+    const limit = Number(params.get("limit") || 0);
+    const r = await voteSlice(2, deadline, limit > 0 ? limit : Infinity);
+    if (r.done && limit === 0) {
+      const championId = await closeStageTwo();
+      const queued = await seedVerdictQueue();
+      state.phase = "verdict";
+      state.note = `${queued} verdicts to write`;
+      await setState(state);
+      await publish(state);
+      return NextResponse.json({
+        ok: true,
+        done: false,
+        phase: "verdict",
+        championId,
+        message: "Champion decided. Writing up why each one placed where it did.",
+      });
+    }
+    await publish(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      votedThisRun: r.count,
+      failed: r.failed,
+      quotaExhausted: r.quota,
+      lastError: r.lastError,
+      message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Final vote.",
+    });
+  }
+
+  // ── verdict — one synthesis per finalist, from the ballots only ─────────
+  if (state.phase === "verdict") {
+    const r = await verdictSlice(deadline);
+    if (r.done) {
+      state.phase = "done";
+      state.note = undefined;
+      await setState(state);
+      const results = await publish(state);
+      return NextResponse.json({
+        ok: true,
+        done: true,
+        phase: "done",
+        championId: results.championId,
+        questions: results.questions.length,
+        ballots: results.finalBallots.length,
+        placings: results.placings.length,
+      });
+    }
+    await publish(state);
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: state.phase,
+      writtenThisRun: r.count,
+      failed: r.failed,
+      quotaExhausted: r.quota,
+      lastError: r.lastError,
+      message: r.quota ? "Daily allowance spent. Resumes tomorrow." : "Writing verdicts.",
     });
   }
 
