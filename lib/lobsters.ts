@@ -350,7 +350,7 @@ export async function drawHeats(): Promise<{ heats: number; perHeat: number; unu
     return { heats: 0, perHeat: 0, unused: shortlist.length };
   }
 
-  const perHeat = Math.min(MAX_HEAT_SIZE, Math.max(2, Math.floor(shortlist.length / wallets.length)));
+  const perHeat = Math.min(MAX_HEAT_SIZE, Math.max(2, Math.ceil(shortlist.length / wallets.length)));
   const pool = shuffleSeeded(shortlist, "heats:" + shortlist.length);
 
   const heats: Heat[] = wallets.map((w) => ({ wallet: w, ids: [] }));
