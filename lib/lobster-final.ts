@@ -194,6 +194,8 @@ ${CLAWD_BRIEF}
 
 Ask ONE question about ONE of them. It must be something only YOU would think to ask, given your values and quirks — if any other larva could plausibly have asked it, it is the wrong question. Ask about the animal's life, behaviour, habitat, or biology. Not about the photograph.
 
+Your question will be answered ONLY from that species' Wikipedia article, so ask something an encyclopedia could actually answer — a plain, concrete question about the animal. Let your personality show in WHAT you are curious about, not in the vocabulary you dress it in. Do not use business, finance, protocol, or infrastructure metaphors in the question itself.
+
 Never refer to a candidate by its image number in your question. Name the animal.
 
 Reply with ONLY: {"target": <image number>, "question": "<max 20 words>"}`;
