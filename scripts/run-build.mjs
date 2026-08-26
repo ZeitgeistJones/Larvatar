@@ -30,6 +30,7 @@ const PATHS = {
   profiles: "/api/larvae/build",
   alignment: "/api/larvae/alignment/build",
   portrait: "/api/larvae/portrait/build",
+  "build-intent": "/api/larvae/build-intent/build",
 };
 
 /** Load .env.local / .env from repo root (gitignored) into process.env. */

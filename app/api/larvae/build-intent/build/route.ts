@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildIntentProgress,
   clearBuildIntent,
+  clearBuildIntentProgress,
   collectForumIntoQueue,
   finalizeBuildIntent,
   getBuildIntentPartial,
@@ -106,7 +107,7 @@ export async function GET(req: NextRequest) {
     const totalForum = partial.length;
     const result = finalizeBuildIntent(partial, totalForum);
     await saveBuildIntentResult(result);
-    await clearBuildIntent();
+    await clearBuildIntentProgress();
     return NextResponse.json({
       ok: true,
       done: true,

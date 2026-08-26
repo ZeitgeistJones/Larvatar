@@ -180,9 +180,13 @@ export async function saveBuildIntentResult(result: BuildIntentResult) {
   await redis.set(RESULT_KEY, JSON.stringify(result));
 }
 
-export async function clearBuildIntent() {
+export async function clearBuildIntentProgress() {
   await redis.del(QUEUE_KEY);
   await redis.del(PARTIAL_KEY);
+}
+
+export async function clearBuildIntent() {
+  await clearBuildIntentProgress();
   await redis.del(RESULT_KEY);
 }
 
