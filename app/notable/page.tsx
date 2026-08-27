@@ -1,7 +1,7 @@
 // app/notable/page.tsx
 //
-// Notable forum posts — build / structural-change intent scores (Gemini).
-// Default view hides general Q&A. Austin larva column for quick divergence scan.
+// Notable forum posts — multi-axis build / structural-change intent (Gemini).
+// Default view hides general Q&A, check-ins, and soft discussion.
 
 "use client";
 
@@ -9,18 +9,30 @@ import { useEffect, useMemo, useState } from "react";
 import Nav from "@/components/Nav";
 import { useTheme } from "@/components/ThemeProvider";
 
+type ScoreAxes = {
+  specificity: number;
+  actionability: number;
+  structuralDepth: number;
+  swarmUrgency: number;
+};
+
 type Post = {
   postId: string;
   title: string;
   bodySnippet: string;
   respondentCount: number;
+  category?: string;
+  axes?: ScoreAxes;
   communityBuildIntent: number;
   isGeneralQuestion: boolean;
   notable: boolean;
   rationale: string;
+  evidence?: string[];
   austinBuildIntent: number | null;
+  austinAxes?: ScoreAxes | null;
   austinResponded: boolean;
   austinSnippet: string | null;
+  austinNote?: string | null;
   link: string;
 };
 
@@ -28,6 +40,7 @@ type Payload = {
   posts: Post[];
   computedAt: string;
   austinWallet: string;
+  model?: string;
   meta: {
     totalForumPosts: number;
     scored: number;
@@ -40,6 +53,34 @@ function scoreColor(n: number, coral: string, green: string, ink: string) {
   if (n >= 70) return green;
   if (n >= 45) return coral;
   return ink;
+}
+
+function AxisBar({
+  label,
+  value,
+  ink,
+  coral,
+}: {
+  label: string;
+  value: number;
+  ink: string;
+  coral: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider opacity-70">
+      <span className="w-16 shrink-0">{label}</span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full" style={{ background: `${ink}18` }}>
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${Math.max(2, value)}%`,
+            background: value >= 70 ? coral : `${ink}55`,
+          }}
+        />
+      </div>
+      <span className="w-6 text-right tabular-nums">{value}</span>
+    </div>
+  );
 }
 
 export default function NotablePostsPage() {
@@ -106,13 +147,14 @@ export default function NotablePostsPage() {
           </p>
           <h1 className="mt-2 text-4xl font-bold tracking-tight">Notable Posts</h1>
           <p className="mt-3 text-base opacity-70">
-            Each forum thread scored for build or structural-change intent — not vibes, not
-            general Q&A. Community score from the whole thread; Austin column is only his larva&apos;s
-            response when he posted.
+            Multi-axis scoring: specificity, actionability, structural depth, swarm urgency.
+            Soft discussion and general Q&A are capped and filtered. Austin column uses only his
+            response, scored against his governance-infrastructure lens.
           </p>
           {data && (
             <p className="mt-2 font-mono text-xs opacity-50">
               {data.meta.notable} notable · {data.meta.filtered} filtered · scored {built}
+              {data.model ? ` · ${data.model}` : ""}
             </p>
           )}
         </header>
@@ -124,7 +166,7 @@ export default function NotablePostsPage() {
               checked={showAll}
               onChange={(e) => setShowAll(e.target.checked)}
             />
-            Show filtered (general Q&A)
+            Show filtered
           </label>
           <label className="font-mono text-xs uppercase tracking-widest opacity-70">
             Sort
@@ -158,7 +200,7 @@ export default function NotablePostsPage() {
           {rows.map((p) => {
             const divergence =
               p.austinBuildIntent != null ? p.austinBuildIntent - p.communityBuildIntent : null;
-            const hotDivergence = divergence != null && Math.abs(divergence) >= 20;
+            const hotDivergence = divergence != null && Math.abs(divergence) >= 15;
 
             return (
               <li
@@ -169,8 +211,19 @@ export default function NotablePostsPage() {
                   borderColor: p.notable ? `${GOLD}55` : `${INK}15`,
                 }}
               >
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0 flex-1">
+                    <div className="mb-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-widest opacity-55">
+                      {p.category && <span style={{ color: CORAL }}>{p.category}</span>}
+                      <span>·</span>
+                      <span>{p.respondentCount} larvae</span>
+                      {p.isGeneralQuestion && (
+                        <>
+                          <span>·</span>
+                          <span>general Q&A</span>
+                        </>
+                      )}
+                    </div>
                     <a
                       href={p.link}
                       target="_blank"
@@ -180,55 +233,73 @@ export default function NotablePostsPage() {
                     >
                       {p.title}
                     </a>
-                    {p.bodySnippet && (
-                      <p className="mt-2 text-sm opacity-60 line-clamp-2">{p.bodySnippet}</p>
+                    <p className="mt-2 text-sm opacity-80">{p.rationale}</p>
+                    {p.evidence && p.evidence.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {p.evidence.map((e) => (
+                          <li
+                            key={e}
+                            className="font-mono text-xs opacity-55 before:mr-2 before:content-['→']"
+                          >
+                            {e}
+                          </li>
+                        ))}
+                      </ul>
                     )}
-                    <p className="mt-2 text-sm opacity-75">{p.rationale}</p>
-                    <p className="mt-2 font-mono text-xs opacity-45">
-                      {p.respondentCount} larvae ·{" "}
-                      {p.isGeneralQuestion ? "general Q&A" : "build path"}
-                    </p>
-                    {p.austinSnippet && (
-                      <p className="mt-2 text-xs opacity-55 italic">
-                        Austin: {p.austinSnippet}…
+                    {p.austinNote && (
+                      <p className="mt-3 text-xs opacity-60">
+                        <span className="font-mono uppercase tracking-wider" style={{ color: GOLD }}>
+                          Austin
+                        </span>{" "}
+                        {p.austinNote}
                       </p>
                     )}
                   </div>
 
-                  <div className="flex shrink-0 gap-4 font-mono text-sm">
-                    <div className="text-center">
-                      <p className="text-xs uppercase tracking-widest opacity-50">Hive</p>
-                      <p
-                        className="text-2xl font-bold tabular-nums"
-                        style={{ color: scoreColor(p.communityBuildIntent, CORAL, GREEN, INK) }}
-                      >
-                        {p.communityBuildIntent}
-                      </p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-xs uppercase tracking-widest opacity-50">Austin</p>
-                      <p
-                        className="text-2xl font-bold tabular-nums"
-                        style={{
-                          color:
-                            p.austinBuildIntent != null
-                              ? scoreColor(p.austinBuildIntent, CORAL, GREEN, INK)
-                              : `${INK}40`,
-                        }}
-                      >
-                        {p.austinBuildIntent ?? "—"}
-                      </p>
-                    </div>
-                    {hotDivergence && divergence != null && (
+                  <div className="flex shrink-0 flex-col gap-4 sm:flex-row lg:flex-col lg:w-56">
+                    <div className="flex gap-5 font-mono text-sm">
                       <div className="text-center">
-                        <p className="text-xs uppercase tracking-widest opacity-50">Δ</p>
+                        <p className="text-xs uppercase tracking-widest opacity-50">Hive</p>
                         <p
-                          className="text-lg font-bold tabular-nums"
-                          style={{ color: divergence > 0 ? GREEN : CORAL }}
+                          className="text-2xl font-bold tabular-nums"
+                          style={{ color: scoreColor(p.communityBuildIntent, CORAL, GREEN, INK) }}
                         >
-                          {divergence > 0 ? "+" : ""}
-                          {divergence}
+                          {p.communityBuildIntent}
                         </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-xs uppercase tracking-widest opacity-50">Austin</p>
+                        <p
+                          className="text-2xl font-bold tabular-nums"
+                          style={{
+                            color:
+                              p.austinBuildIntent != null
+                                ? scoreColor(p.austinBuildIntent, CORAL, GREEN, INK)
+                                : `${INK}40`,
+                          }}
+                        >
+                          {p.austinBuildIntent ?? "—"}
+                        </p>
+                      </div>
+                      {hotDivergence && divergence != null && (
+                        <div className="text-center">
+                          <p className="text-xs uppercase tracking-widest opacity-50">Δ</p>
+                          <p
+                            className="text-lg font-bold tabular-nums"
+                            style={{ color: divergence > 0 ? GREEN : CORAL }}
+                          >
+                            {divergence > 0 ? "+" : ""}
+                            {divergence}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    {p.axes && (
+                      <div className="space-y-1.5 min-w-[10rem]">
+                        <AxisBar label="spec" value={p.axes.specificity} ink={INK} coral={CORAL} />
+                        <AxisBar label="act" value={p.axes.actionability} ink={INK} coral={CORAL} />
+                        <AxisBar label="struct" value={p.axes.structuralDepth} ink={INK} coral={CORAL} />
+                        <AxisBar label="swarm" value={p.axes.swarmUrgency} ink={INK} coral={CORAL} />
                       </div>
                     )}
                   </div>
@@ -239,8 +310,9 @@ export default function NotablePostsPage() {
         </ul>
 
         <p className="mt-10 border-t pt-6 font-mono text-xs leading-relaxed opacity-45">
-          Scores are Gemini estimates of build / structural-change push, not votes. Run{" "}
-          <code>/api/larvae/build-intent/build?secret=…</code> until done to refresh.
+          Rollup = specificity×0.3 + actionability×0.3 + structuralDepth×0.25 + swarmUrgency×0.15,
+          then category ceilings. Discussion/check-in/meta cannot fake a high score. Refresh via{" "}
+          <code>/api/larvae/build-intent/build?secret=…&amp;reset=true</code>.
         </p>
       </div>
     </main>

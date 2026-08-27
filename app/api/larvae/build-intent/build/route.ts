@@ -25,7 +25,8 @@ import {
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const TIME_BUDGET_MS = 28_000;
+// Pro models are slower — leave headroom under the 60s function limit.
+const TIME_BUDGET_MS = 45_000;
 
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
