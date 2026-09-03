@@ -36,7 +36,8 @@ import {
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const TIME_BUDGET_MS = 35_000;
+// Hobby maxDuration=60s; leave headroom for cold start + Redis flush.
+const TIME_BUDGET_MS = 52_000;
 
 function authorized(req: NextRequest): boolean {
   const secret = req.nextUrl.searchParams.get("secret");
