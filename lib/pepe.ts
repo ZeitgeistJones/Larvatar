@@ -4,12 +4,13 @@
 //
 // Lean pipeline (deliberately smaller than Clawd Incarnate):
 //
-//   collect → filter → heats → rank → done
+//   collect → filter → heats → rank → done → (optional) final
 //
 // Same bones as lobsters: iNaturalist research-grade photos, colour GATE,
-// non-overlapping nomination heats, then one overlapping ranking pass so a
-// champion is an aggregate rather than a coin flip. No press conference,
-// no multi-stage final — those can wait for a round 2 if the field is good.
+// non-overlapping nomination heats, then one overlapping ranking pass.
+// Ranking exposure is uneven — near-perfect frogs can tie without ever meeting.
+// An optional FINAL round re-ranks only those strong frogs on identical slates
+// so the champion is a true head-to-head, not an observation-id coin flip.
 //
 // Env (optional; defaults are fine to ship):
 //   PEPE_TAXA            comma names, default Hylidae,Ranidae
@@ -23,6 +24,8 @@
 //   PEPE_RANK_MAX_SLATES cap ranking voters (default 96) — keeps vision cost lean
 //   PEPE_RANK_BALLOT_TARGET soft mid-run cap (default 96); trims queue without wipe
 //   PEPE_TOP_N           how many standings to keep on the page, default 12
+//   PEPE_FINAL_MAX       max finalists in the equal-exposure final (default 8)
+//   PEPE_FINAL_BALLOTS   how many larvae vote in the final (default 16)
 //   GEMINI_PEPE_KEY      preferred; else GEMINI_LOBSTER_KEY (separate Google project);
 //                        else GEMINI_API_KEY
 //   GEMINI_MODEL         default gemini-3.6-flash
@@ -72,6 +75,10 @@ const RANK_MAX_SLATES = Number(process.env.PEPE_RANK_MAX_SLATES || 96);
 /** Soft ceiling on ranking ballots — trims remaining queue mid-run without a wipe. */
 const RANK_BALLOT_TARGET = Number(process.env.PEPE_RANK_BALLOT_TARGET || 96);
 export const TOP_N = Number(process.env.PEPE_TOP_N || 12);
+/** Cap near-perfect frogs invited to the equal-exposure final. */
+export const FINAL_MAX = Number(process.env.PEPE_FINAL_MAX || 8);
+/** How many larvae vote in the final (each sees every finalist). */
+export const FINAL_BALLOT_TARGET = Number(process.env.PEPE_FINAL_BALLOTS || 16);
 
 const TAXA = (process.env.PEPE_TAXA || "Hylidae,Ranidae")
   .split(",")
@@ -145,6 +152,20 @@ export type Standing = {
   meanRank: number;
 };
 
+export type FinalRound = {
+  /** Near-perfect frogs selected from ranking standings. */
+  finalistIds: number[];
+  candidates: Candidate[];
+  ballots: RankBallot[];
+  standings: Standing[];
+  championId: number | null;
+  /** Champion from the uneven ranking pass, before the final. */
+  preliminaryChampionId: number | null;
+  ballotTarget: number;
+  status: "seeded" | "running" | "done";
+  updatedAt: string;
+};
+
 export type Results = {
   round: string;
   considered: number;
@@ -168,6 +189,8 @@ export type Results = {
     judge: string;
     heatSize: number;
   })[];
+  /** Equal-exposure final among near-perfect frogs (optional). */
+  final?: FinalRound | null;
   updatedAt: string;
 };
 
@@ -206,6 +229,14 @@ export const K = {
   top: "pepe:top",
   champion: "pepe:champion",
   results: "pepe:results",
+  /** Equal-exposure final among near-perfect ranking frogs. */
+  finalIds: "pepe:final:ids",
+  finalSlates: "pepe:final:slates",
+  finalQ: "pepe:final:queue",
+  finalBallots: "pepe:final:ballots",
+  finalStandings: "pepe:final:standings",
+  finalChampion: "pepe:final:champion",
+  finalMeta: "pepe:final:meta",
 };
 
 export async function jget<T>(key: string, fallback: T): Promise<T> {
@@ -246,6 +277,28 @@ export async function resetRun() {
       K.standings,
       K.top,
       K.champion,
+      K.finalIds,
+      K.finalSlates,
+      K.finalQ,
+      K.finalBallots,
+      K.finalStandings,
+      K.finalChampion,
+      K.finalMeta,
+    ].map((k) => redis.del(k))
+  );
+}
+
+/** Clear only the final round — leaves heats/ranking/results intact. */
+export async function resetFinal() {
+  await Promise.all(
+    [
+      K.finalIds,
+      K.finalSlates,
+      K.finalQ,
+      K.finalBallots,
+      K.finalStandings,
+      K.finalChampion,
+      K.finalMeta,
     ].map((k) => redis.del(k))
   );
 }
@@ -959,6 +1012,356 @@ export async function freezeChampion(): Promise<{ championId: number | null; top
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Final — equal-exposure vote among near-perfect ranking frogs
+// ───────────────────────────────────────────────────────────────────────────
+
+export type FinalMeta = {
+  status: "seeded" | "running" | "done";
+  ballotTarget: number;
+  preliminaryChampionId: number | null;
+  seededAt: string;
+  updatedAt: string;
+  note?: string;
+};
+
+/**
+ * Near-perfect on firsts under uneven exposure:
+ *   - ≥5 firsts and firsts/views ≥ 0.8  (covers 5/5, 5/6, 6/6, 6/7, 7/7…)
+ *   - or ≥6 absolute firsts regardless of ratio
+ */
+export function isStrongStanding(s: Standing): boolean {
+  if (s.views <= 0 || s.votes <= 0) return false;
+  const ratio = s.votes / s.views;
+  return (s.votes >= 5 && ratio >= 0.8) || s.votes >= 6;
+}
+
+export function selectFinalistIds(
+  standings: Standing[],
+  max = FINAL_MAX
+): number[] {
+  return [...standings]
+    .filter(isStrongStanding)
+    .sort(
+      (a, b) =>
+        b.votes - a.votes ||
+        b.votes / b.views - a.votes / a.views ||
+        a.meanRank - b.meanRank ||
+        a.id - b.id
+    )
+    .slice(0, Math.max(2, max))
+    .map((s) => s.id);
+}
+
+const FINAL_SYSTEM = `You are a single larva in the FINAL vote for Pepe Incarnate. Every frog in front of you already went near-perfect in the ranking heats — they all look green enough and they all won their overlapping slates. Colour is settled. Heat luck is settled.
+
+${PEPE_BRIEF}
+
+What decides it now is a tension:
+
+It might LOOK like Pepe — front-facing, big eyes, that blank or faintly smug mouth, meme silhouette.
+
+Or it might FEEL like Pepe — blank internet energy, not glamorous wildlife photography, a little sad or resigned.
+
+These pull against each other. A frog that only poses is a sticker. A frog that only mopes is invisible. Say which side you weighted and why, in your own voice — if your reasoning could have been written by any other larva, it is the wrong reasoning.
+
+You see EVERY finalist. Rank EVERY image, best first. Never refer to a candidate by its image number in your prose. Talk about the animal.
+
+Reply with ONLY: {"ranked":[<image numbers, best first, each exactly once>],"reason":"<max 40 words on why your top choice won, in your voice>"}`;
+
+/** Seed equal-exposure final slates from ranking standings. Does not wipe heats/rank. */
+export async function seedFinal(): Promise<{
+  finalists: number;
+  ballots: number;
+  ids: number[];
+  species: string[];
+}> {
+  const results = await getResults();
+  if (!results || (results.standings || []).length === 0) {
+    throw new Error("no ranking standings — finish the ranking pass first");
+  }
+
+  const ids = selectFinalistIds(results.standings, FINAL_MAX);
+  if (ids.length < 2) {
+    throw new Error("fewer than 2 strong finalists — nothing to decide");
+  }
+
+  const byId = new Map(
+    [...(results.nominees || []), ...(results.top || [])].map((c) => [c.id, c])
+  );
+  const candidates = ids.map((id) => byId.get(id)).filter(Boolean) as Candidate[];
+  if (candidates.length < 2) {
+    throw new Error("finalist candidates missing from nominees/top");
+  }
+
+  const index = await getIndex();
+  let wallets = index.map((e: { wallet: string }) => e.wallet.toLowerCase());
+  wallets = shuffleSeeded(wallets, `pepe-final:${ids.join(",")}`).slice(
+    0,
+    FINAL_BALLOT_TARGET
+  );
+
+  // Every larva sees EVERY finalist — only presentation order is shuffled.
+  const slates: Slate[] = wallets.map((wallet) => ({
+    wallet,
+    ids: shuffleSeeded(ids, `pepe-final-order:${wallet}`),
+  }));
+
+  const preliminaryChampionId =
+    results.championId ?? (await jget<number | null>(K.champion, null));
+
+  const now = new Date().toISOString();
+  const meta: FinalMeta = {
+    status: "seeded",
+    ballotTarget: FINAL_BALLOT_TARGET,
+    preliminaryChampionId,
+    seededAt: now,
+    updatedAt: now,
+    note: `${candidates.length} finalists · ${slates.length} equal-exposure ballots`,
+  };
+
+  await jset(K.finalIds, ids);
+  await jset(K.finalSlates, slates);
+  await jset(K.finalQ, slates.map((s) => s.wallet));
+  await jset(K.finalBallots, []);
+  await jset(K.finalStandings, []);
+  await jset(K.finalChampion, null);
+  await jset(K.finalMeta, meta);
+
+  return {
+    finalists: candidates.length,
+    ballots: slates.length,
+    ids,
+    species: candidates.map((c) => c.species),
+  };
+}
+
+export async function finalSlice(
+  deadline: number,
+  maxItems = Infinity
+): Promise<{ done: boolean; count: number; failed: number; quota: boolean; lastError?: string }> {
+  let queue = await jget<string[]>(K.finalQ, []);
+  const slates = await jget<Slate[]>(K.finalSlates, []);
+  const ballots = await jget<RankBallot[]>(K.finalBallots, []);
+  const ids = await jget<number[]>(K.finalIds, []);
+  const meta = await jget<FinalMeta | null>(K.finalMeta, null);
+  const results = await getResults();
+
+  if (ids.length < 2 || slates.length === 0) {
+    return { done: true, count: 0, failed: 0, quota: false, lastError: "final not seeded" };
+  }
+
+  if (queue.length === 0) {
+    return { done: true, count: 0, failed: 0, quota: false };
+  }
+
+  if (meta) {
+    meta.status = "running";
+    meta.updatedAt = new Date().toISOString();
+    await jset(K.finalMeta, meta);
+  }
+
+  const byWallet = new Map(slates.map((s) => [s.wallet, s]));
+  const byId = new Map(
+    [...(results?.nominees || []), ...(results?.top || [])].map((c) => [c.id, c])
+  );
+
+  let count = 0;
+  let failed = 0;
+  let attempted = 0;
+  let lastError: string | undefined;
+
+  while (queue.length > 0 && Date.now() < deadline && attempted < maxItems) {
+    const wallet = queue.shift()!;
+    attempted += 1;
+
+    const slate = byWallet.get(wallet);
+    const profile = await getProfile(wallet);
+    if (!slate || !profile) {
+      await jset(K.finalQ, queue);
+      continue;
+    }
+
+    const parts: Part[] = [
+      {
+        text:
+          `You are ${profile.profile.name}. ${profile.profile.tagline}\n` +
+          `Tone: ${profile.profile.tone}\n` +
+          `Values: ${profile.profile.values.join("; ")}\n` +
+          `Quirks: ${profile.profile.quirks.join("; ")}\n` +
+          `${profile.profile.summary}`,
+      },
+    ];
+
+    const present: Candidate[] = [];
+    for (const id of slate.ids) {
+      if (Date.now() >= deadline) break;
+      const c = byId.get(id);
+      if (!c) continue;
+      const img = await imagePart(c.photo);
+      if (!img) continue;
+      parts.push({ text: `Image ${present.length + 1} — ${c.species}:` });
+      parts.push(img);
+      present.push(c);
+    }
+
+    if (present.length < 2) {
+      await jset(K.finalQ, [...queue, wallet]);
+      failed += 1;
+      continue;
+    }
+
+    parts.push({
+      text: `This is the FINAL. Rank all ${present.length} frogs. JSON only.`,
+    });
+
+    try {
+      const raw = await callGemini(NOMINATE_MODEL, FINAL_SYSTEM, parts, 600, 1.0);
+      const obj = parseJsonObject(raw);
+
+      const seen = new Set<number>();
+      const order: number[] = [];
+      for (const n of Array.isArray(obj?.ranked) ? obj.ranked : []) {
+        const c = present[Number(n) - 1];
+        if (!c || seen.has(c.id)) continue;
+        seen.add(c.id);
+        order.push(c.id);
+      }
+      for (const c of present) {
+        if (!seen.has(c.id)) order.push(c.id);
+      }
+
+      if (order.length === 0) {
+        failed += 1;
+      } else {
+        ballots.push({
+          wallet,
+          name: profile.profile.name,
+          pick: order[0],
+          reason: String(obj.reason || "").slice(0, 300),
+          order,
+        });
+        count += 1;
+      }
+    } catch (e) {
+      if (e instanceof QuotaExhausted) {
+        await jset(K.finalQ, [wallet, ...queue]);
+        await jset(K.finalBallots, ballots);
+        return { done: false, count, failed, quota: true, lastError: String(e).slice(0, 300) };
+      }
+      failed += 1;
+      lastError = lastError || String(e).slice(0, 300);
+    }
+
+    await jset(K.finalQ, queue);
+    await jset(K.finalBallots, ballots);
+  }
+
+  return { done: queue.length === 0, count, failed, quota: false, lastError };
+}
+
+/** Tally final ballots (equal views). Promote winner to pepe:champion. */
+export async function freezeFinalChampion(): Promise<{
+  championId: number | null;
+  standings: Standing[];
+  changed: boolean;
+  preliminaryChampionId: number | null;
+}> {
+  const ids = await jget<number[]>(K.finalIds, []);
+  const ballots = await jget<RankBallot[]>(K.finalBallots, []);
+  const meta = await jget<FinalMeta | null>(K.finalMeta, null);
+  const results = await getResults();
+  const byId = new Map(
+    [...(results?.nominees || []), ...(results?.top || [])].map((c) => [c.id, c])
+  );
+
+  const stats = new Map<number, { votes: number; ranks: number[]; views: number }>();
+  for (const id of ids) {
+    stats.set(id, { votes: 0, ranks: [], views: 0 });
+  }
+
+  for (const b of ballots) {
+    const pick = stats.get(b.pick);
+    if (pick) pick.votes += 1;
+    b.order.forEach((id, i) => {
+      const s = stats.get(id);
+      if (!s) return;
+      s.views += 1;
+      s.ranks.push(i + 1);
+    });
+  }
+
+  const standings: Standing[] = [...stats.entries()]
+    .map(([id, s]) => ({
+      id,
+      votes: s.votes,
+      views: s.views,
+      meanRank: s.ranks.length ? s.ranks.reduce((a, b) => a + b, 0) / s.ranks.length : 99,
+    }))
+    .sort((a, b) => b.votes - a.votes || a.meanRank - b.meanRank || a.id - b.id);
+
+  const championId = standings[0]?.votes > 0 ? standings[0].id : null;
+  const preliminaryChampionId =
+    meta?.preliminaryChampionId ?? results?.championId ?? null;
+  const changed = championId !== null && championId !== preliminaryChampionId;
+
+  const now = new Date().toISOString();
+  await jset(K.finalStandings, standings);
+  await jset(K.finalChampion, championId);
+  if (championId !== null) {
+    await jset(K.champion, championId);
+    // Keep ranking top-12 as the field; only the declared champ moves.
+    const champ = byId.get(championId);
+    if (champ && results) {
+      const top = [champ, ...(results.top || []).filter((c) => c.id !== championId)].slice(
+        0,
+        TOP_N
+      );
+      await jset(K.top, top);
+    }
+  }
+
+  if (meta) {
+    meta.status = "done";
+    meta.updatedAt = now;
+    meta.note = changed
+      ? `final overturned ranking champ ${preliminaryChampionId} → ${championId}`
+      : `final confirmed ranking champ ${championId}`;
+    await jset(K.finalMeta, meta);
+  }
+
+  const state = await getState();
+  if (state) await publish(state);
+
+  return { championId, standings, changed, preliminaryChampionId };
+}
+
+export async function getFinalRound(): Promise<FinalRound | null> {
+  const meta = await jget<FinalMeta | null>(K.finalMeta, null);
+  if (!meta) return null;
+  const ids = await jget<number[]>(K.finalIds, []);
+  const ballots = await jget<RankBallot[]>(K.finalBallots, []);
+  const standings = await jget<Standing[]>(K.finalStandings, []);
+  const championId = await jget<number | null>(K.finalChampion, null);
+  const results = await getResults();
+  const byId = new Map(
+    [...(results?.nominees || []), ...(results?.top || [])].map((c) => [c.id, c])
+  );
+  const candidates = ids.map((id) => byId.get(id)).filter(Boolean) as Candidate[];
+
+  return {
+    finalistIds: ids,
+    candidates,
+    ballots,
+    standings,
+    championId,
+    preliminaryChampionId: meta.preliminaryChampionId,
+    ballotTarget: meta.ballotTarget,
+    status: meta.status,
+    updatedAt: meta.updatedAt,
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Publish
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -968,7 +1371,25 @@ export async function publish(state: State): Promise<Results> {
   const heats = await jget<Heat[]>(K.heats, []);
   const existing = await getResults();
 
-  if (nominations.length === 0 && existing) return existing;
+  if (nominations.length === 0 && existing) {
+    // Still refresh final payload onto existing results when heats are frozen.
+    const final = await getFinalRound();
+    if (final) {
+      const champ =
+        final.status === "done" && final.championId !== null
+          ? final.championId
+          : existing.championId;
+      const merged: Results = {
+        ...existing,
+        championId: champ,
+        final,
+        updatedAt: new Date().toISOString(),
+      };
+      await jset(K.results, merged);
+      return merged;
+    }
+    return existing;
+  }
 
   const byId = new Map(shortlist.map((c) => [c.id, c]));
   const nominees = nominations
@@ -997,6 +1418,7 @@ export async function publish(state: State): Promise<Results> {
   const standings = await jget<Standing[]>(K.standings, []);
   const top = await jget<Candidate[]>(K.top, []);
   const championId = await jget<number | null>(K.champion, null);
+  const final = await getFinalRound();
 
   const results: Results = {
     round: state.round,
@@ -1012,6 +1434,7 @@ export async function publish(state: State): Promise<Results> {
     top,
     championId,
     judged,
+    final,
     updatedAt: new Date().toISOString(),
   };
 
