@@ -24,6 +24,7 @@ const FIELD: NavLink[] = [
   { href: "/trends", label: "Topic Trends" },
   { href: "/notable", label: "Notable Posts" },
   { href: "/lobsters", label: "Clawd Incarnate" },
+  { href: "/pepe", label: "Pepe Incarnate" },
   { href: "/about", label: "About" },
 ];
 
