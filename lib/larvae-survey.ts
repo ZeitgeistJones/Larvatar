@@ -72,7 +72,7 @@ export const SURVEY_QUESTIONS: { id: string; text: string }[] = [
   { id: "q05", text: "Name a board game that feels like shipping on-chain." },
   { id: "q06", text: "Name the sitcom character that would thrive in the hive." },
   { id: "q07", text: "Name something a larva would put on a dating profile." },
-  { id: "q08", text: "Name the emoji that starts a fight in the hive." },
+  { id: "q08", text: "Name the emoji that starts a fight in the hive (say the common name, like clown or rocket)." },
   { id: "q09", text: "Name a childhood toy that explains crypto culture." },
   { id: "q10", text: "Name the food that best describes governance drama." },
   { id: "q11", text: "Name a superhero a larva secretly thinks it is." },
@@ -146,7 +146,7 @@ export async function resetQuestionBankFromSeed(): Promise<SurveyQuestion[]> {
 
 /**
  * Ensure Redis has at least the seed questions. Safe to call often.
- * New seed entries added in code are merged in on the next call.
+ * New seed entries are merged in; seed TEXT updates from code overwrite old seed copy.
  */
 export async function ensureQuestionBank(): Promise<SurveyQuestion[]> {
   const bank = await loadQuestionBankRaw();
@@ -154,8 +154,15 @@ export async function ensureQuestionBank(): Promise<SurveyQuestion[]> {
   let changed = bank.length === 0;
 
   for (const s of seedAsQuestions()) {
-    if (!byId.has(s.id)) {
+    const existing = byId.get(s.id);
+    if (!existing) {
       byId.set(s.id, s);
+      changed = true;
+      continue;
+    }
+    // Keep minted questions; refresh seed wording when the code list changes.
+    if (existing.source === "seed" && existing.text !== s.text) {
+      byId.set(s.id, { ...existing, text: s.text });
       changed = true;
     }
   }
@@ -1045,20 +1052,73 @@ function pickRespondents(
 
 // ─── Survey phase ──────────────────────────────────────────────────
 
+type AnswerCategory =
+  | "emoji"
+  | "food"
+  | "animal"
+  | "movie"
+  | "tv"
+  | "song"
+  | "game"
+  | "character"
+  | "toy"
+  | "person"
+  | "thing";
+
+/** Infer what kind of answer the question is asking for. */
+export function inferAnswerCategory(question: string): AnswerCategory {
+  const q = question.toLowerCase();
+  if (/\bemoji/.test(q)) return "emoji";
+  if (/\b(food|snack|cereal|breakfast|cooking|souffl)/.test(q)) return "food";
+  if (/\banimal|reincarnat|creature|pet\b/.test(q)) return "animal";
+  if (/\bmovie|film\b/.test(q)) return "movie";
+  if (/\b(tv show|sitcom|reality show|series)\b/.test(q)) return "tv";
+  if (/\b(song|karaoke|playlist)\b/.test(q)) return "song";
+  if (/\b(board game|video game|rpg|olympic sport)\b/.test(q)) return "game";
+  if (/\b(character|villain|superhero|boss)\b/.test(q)) return "character";
+  if (/\b(toy|lego|tamagotchi)\b/.test(q)) return "toy";
+  if (/\b(who|job title|linkedIn)\b/.test(q)) return "person";
+  return "thing";
+}
+
+function categoryBrief(cat: AnswerCategory): string {
+  switch (cat) {
+    case "emoji":
+      return "Answer with the COMMON ENGLISH NAME of an emoji only (clown, rocket, skull, fire, clown face). Never a sentence. Never a governance rant.";
+    case "food":
+      return "Answer with a real food / dish / snack name only.";
+    case "animal":
+      return "Answer with a real animal name only.";
+    case "movie":
+      return "Answer with a real movie title only.";
+    case "tv":
+      return "Answer with a real TV show title only.";
+    case "song":
+      return "Answer with a real song title only.";
+    case "game":
+      return "Answer with a real game / sport name only.";
+    case "character":
+      return "Answer with a real fictional character name only.";
+    case "toy":
+      return "Answer with a real toy / toy brand name only.";
+    case "person":
+      return "Answer with a person / role / title only.";
+    default:
+      return "Answer with a short concrete noun phrase that literally answers the question.";
+  }
+}
+
 const SURVEY_SYSTEM = `You are a larva — a personal AI governance agent in the $CLAWD ecosystem — answering a survey question in character.
 
-Answer with a SHORT phrase: usually 1-3 words (movie titles, animal names, song names, and proper nouns are fine). Not a sentence. Not an explanation. Just the answer itself.
+Answer with a SHORT phrase: usually 1-3 words (titles and proper nouns are fine). Not a sentence. Not an explanation. Just the answer itself.
 
 Rules:
-- Name the thing itself. Do NOT pad with jobs, verbs, or state fluff ("accountant ant", "salmon upstream", "fierce honey badger") — say "ant" / "salmon" / "honey badger".
-- Prefer a real, recognizable answer in the question's category (real animals, real songs, real shows).
+- Name the thing itself. Do NOT pad with jobs, verbs, or state fluff ("accountant ant", "salmon upstream") — say "ant" / "salmon".
+- Your answer MUST match the question's category (see the category line below). Off-category answers are invalid.
 - No filler like "definitely", "probably", "obviously", "lowkey", "collapse", "variant", "broken".
-- Answer must actually fit the question category (toy → a real toy; food → a real food; animal → a real animal).
+- Do NOT answer with abstract crypto jargon (roadmap, audit, tokenomics, receipts) unless the question literally asks for that.
 
-Good: "The Social Network" / "honey badger" / "soufflé" / "Tamagotchi" / "salmon"
-Bad: "accountant ant" / "salmon upstream" / "overcooked soufflé" / "fierce honey badger"
-
-Answer from YOUR personality, not the obvious general answer. Unusual picks are fine — decorative wording is not.
+Answer from YOUR personality, not the obvious general answer. Unusual picks are fine — wrong category is not.
 
 Respond with ONLY the phrase, nothing else. No quotes, no punctuation at the end.`;
 
@@ -1069,7 +1129,10 @@ async function surveyOne(
   const p = await getProfile(wallet);
   if (!p) return null;
 
+  const cat = inferAnswerCategory(question);
   const system = `${SURVEY_SYSTEM}
+
+CATEGORY RULE: ${categoryBrief(cat)}
 
 You are "${p.profile.name}".
 Tone: ${p.profile.tone}
@@ -1114,25 +1177,27 @@ async function mapWithConcurrency<T, R>(
 
 // ─── Clustering phase ──────────────────────────────────────────────
 
-const CLUSTER_SYSTEM = `You are building a survey board for a "guess the top answers" style survey game.
+const CLUSTER_SYSTEM = `You are building a survey board for a "guess what the hive said" game (Family Feud style).
 
-You will receive a question and a numbered list of short answers from different respondents. Group answers that mean the SAME THING into clusters, even when worded differently.
+You will receive a question, the REQUIRED answer category, and a numbered list of short answers. Group answers that mean the SAME THING into clusters, even when worded differently.
+
+CRITICAL — category lock:
+- Every board label MUST be a valid answer to the question's category.
+- DROP answers that are off-category (do not put them on the board). Example: for an emoji question, drop "vague roadmap" / "tokenomics spin". For a food question, drop "governance".
+- For emoji questions, labels must be COMMON EMOJI NAMES in UPPERCASE (ROCKET, CLOWN, FIRE, SKULL, TURTLE) — never sentences.
 
 CRITICAL — do NOT leave state/adjective variants as separate rows. These are ONE cluster each:
-- "soufflé" + "overcooked soufflé" + "undercooked soufflé" + "soufflé collapse" + "uncooked soufflé" → SOUFFLÉ
-- "overripe fruit salad" + "overripe fruit decay" → OVERRIPE FRUIT
+- "soufflé" + "overcooked soufflé" → SOUFFLÉ
 - "honey badger" + "fierce honey badger" → HONEY BADGER
-- "lego with no instructions" + "lego mindstorms" → LEGO (same toy family when the question is about toys)
+- "lego with no instructions" + "lego mindstorms" → LEGO (same toy family)
 
 Rules:
 - Merge aggressively on meaning and on shared head noun.
 - Never invent adjectives. Prefer the PLAINEST shared noun/phrase for the label (1-3 words, UPPERCASE).
-- For each cluster, write a "rationale": exactly ONE vivid sentence explaining the JOKE / vibe / analogy — never restate the label, never say "N larvae landed here", never use "e.g.".
-  Good: "The hive kept describing governance as a soufflé that falls the second you look at it."
-  Bad: "4 larvae landed here — e.g. \"turtles\"." / "A smaller pocket clustered on turtles."
+- For each cluster, write a "rationale": exactly ONE vivid sentence explaining the JOKE / vibe — never restate the label, never say "N larvae landed here", never use "e.g.".
 - Return clusters sorted by size, largest first.
-- Include every respondent number exactly once, in exactly one cluster.
-- Answers that are NOT what the question asked for (e.g. "ponzi scheme" for a childhood-toy question) may stay as their own row — do not invent toys for them.
+- Only include respondent numbers whose answers fit the category. Off-category answers are omitted entirely.
+- Prefer 4–8 clusters. If fewer than 3 on-category clusters exist, still return what you have.
 
 Respond with ONLY a JSON array, no markdown, no preamble:
 [{"label":"SOUFFLÉ","rationale":"The hive kept describing governance as a soufflé that falls the second you look at it.","members":[1,4,9]}, ...]`;
@@ -1143,13 +1208,14 @@ async function clusterResponses(
   question: string,
   responses: SurveyResponse[]
 ): Promise<Cluster[]> {
+  const cat = inferAnswerCategory(question);
   const numbered = responses
     .map((r, i) => `${i + 1}. ${r.answer}`)
     .join("\n");
 
   const raw = await haiku(
     CLUSTER_SYSTEM,
-    `Question: ${question}\n\nAnswers:\n${numbered}`,
+    `Question: ${question}\nRequired category: ${cat}\nCategory rule: ${categoryBrief(cat)}\n\nAnswers:\n${numbered}`,
     1800
   );
 
@@ -1187,23 +1253,48 @@ async function clusterResponses(
       seen.add(n);
       members.push(n);
     }
-    if (label && members.length > 0) clusters.push({ label, rationale, members });
-  }
-
-  // Any respondent the model dropped becomes its own cluster, so counts still
-  // add up to the number surveyed.
-  for (let i = 1; i <= responses.length; i++) {
-    if (!seen.has(i)) {
-      const answer = responses[i - 1].answer;
-      clusters.push({
-        label: answer.toUpperCase().slice(0, 40),
-        rationale: "A lone larva took this swing — rare enough to spotlight.",
-        members: [i],
-      });
+    if (label && members.length > 0 && labelLooksOnCategory(label, cat)) {
+      clusters.push({ label, rationale, members });
     }
   }
 
+  // On-category orphans the model dropped → their own cluster.
+  // Off-category orphans are discarded (they used to pollute emoji/food boards).
+  for (let i = 1; i <= responses.length; i++) {
+    if (seen.has(i)) continue;
+    const answer = responses[i - 1].answer;
+    const label = answer.toUpperCase().slice(0, 40);
+    if (!labelLooksOnCategory(label, cat)) continue;
+    clusters.push({
+      label,
+      rationale: "A lone larva took this swing — rare enough to spotlight.",
+      members: [i],
+    });
+  }
+
   return clusters;
+}
+
+/** Soft lexical gate so obviously wrong labels never hit the board. */
+function labelLooksOnCategory(label: string, cat: AnswerCategory): boolean {
+  const n = normalize(label);
+  if (!n) return false;
+
+  const governanceJunk =
+    /\b(roadmap|tokenomics|audit|receipt|governance|vault|staking|kpi|protocol|sybil|treasury)\b/;
+  if (cat === "emoji") {
+    // Emoji names are short; reject rants and governance phrases.
+    if (n.split(" ").length > 3) return false;
+    if (governanceJunk.test(n)) return false;
+    return true;
+  }
+  if (cat === "food" && governanceJunk.test(n)) return false;
+  if (cat === "animal" && governanceJunk.test(n)) return false;
+  if (cat === "toy" && /\b(ponzi|pyramid|scheme)\b/.test(n)) return false;
+  if ((cat === "movie" || cat === "tv" || cat === "song" || cat === "game") && governanceJunk.test(n)) {
+    return false;
+  }
+  return true;
 }
 
 /** Collapse adjective / state variants the model left as separate rows. */
@@ -1248,13 +1339,29 @@ export async function buildBoard(questionId: string): Promise<SurveyBoard | null
   const responses = surveyed.filter(Boolean) as SurveyResponse[];
   if (responses.length < 3) return null;
 
-  const clustered = await clusterResponses(q.text, responses);
+  const cat = inferAnswerCategory(q.text);
+  let clustered = await clusterResponses(q.text, responses);
   if (clustered.length === 0) return null;
-  const clusters = mergeNearDuplicateClusters(clustered);
+  let clusters = mergeNearDuplicateClusters(clustered).filter((c) =>
+    labelLooksOnCategory(c.label, cat)
+  );
+
+  // Quality gate: emoji/food/etc boards with <3 on-category rows are unplayable.
+  if (clusters.length < 3) {
+    console.error("survey board quality fail", questionId, cat, clusters.length);
+    return null;
+  }
 
   const ranked = clusters
     .sort((a, b) => b.members.length - a.members.length)
     .slice(0, MAX_BOARD_ANSWERS);
+
+  const covered = ranked.reduce((n, c) => n + c.members.length, 0);
+  // If clustering threw away almost everyone, the board is noise — refuse it.
+  if (covered < Math.max(8, Math.floor(responses.length * 0.25))) {
+    console.error("survey board coverage fail", questionId, covered, responses.length);
+    return null;
+  }
 
   const answers: BoardAnswer[] = ranked.map((c, i) => {
     const members = c.members.map((n) => responses[n - 1]).filter(Boolean);
@@ -1291,6 +1398,10 @@ export async function buildBoard(questionId: string): Promise<SurveyBoard | null
 function normalize(s: string): string {
   return s
     .toLowerCase()
+    // Apostrophes glue ("don't" → "dont"), other junk becomes spaces.
+    .replace(/[''`´]/g, "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1310,6 +1421,41 @@ function contentWords(s: string): string[] {
 
 /** Free tier: exact, substring, or strong content-word overlap. */
 function localMatch(guess: string, answers: BoardAnswer[]): BoardAnswer | null {
+  const expanded = expandEmojiGuess(guess);
+  for (const candidate of expanded) {
+    const hit = localMatchOne(candidate, answers);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Map a few common emoji characters to names players can type. */
+function expandEmojiGuess(guess: string): string[] {
+  const raw = guess.trim();
+  if (!raw) return [];
+  const out = [raw];
+  const map: Record<string, string> = {
+    "🚀": "rocket",
+    "🔥": "fire",
+    "🤡": "clown",
+    "💀": "skull",
+    "🐢": "turtle",
+    "🤝": "handshake",
+    "❤️": "heart",
+    "♥️": "heart",
+    "🦞": "lobster",
+    "👀": "eyes",
+    "💯": "hundred",
+    "😭": "sob",
+    "😂": "joy",
+  };
+  for (const [emoji, name] of Object.entries(map)) {
+    if (raw.includes(emoji)) out.push(name);
+  }
+  return out;
+}
+
+function localMatchOne(guess: string, answers: BoardAnswer[]): BoardAnswer | null {
   const g = normalize(guess);
   if (!g) return null;
   const gWords = contentWords(guess);
@@ -1350,7 +1496,8 @@ const MATCH_SYSTEM = `You judge whether a player's guess means the same thing as
 
 You will receive the question, the player's guess, and a numbered list of unrevealed answers. Decide whether the guess means substantially the same thing as one of them.
 
-Be reasonably generous about wording — "no timeline" and "VAGUE ROADMAPS" are a match. Be strict about meaning — "bad code" and "VAGUE ROADMAPS" are not.
+Be reasonably generous about wording — "no timeline" and "VAGUE ROADMAPS" are a match; "🚀" and "ROCKET" are a match; "Don't Stop Believin'" and "DON'T STOP BELIEVIN" are a match.
+Be strict about meaning — "bad code" and "VAGUE ROADMAPS" are not.
 
 Respond with ONLY a JSON object, no markdown, no preamble:
 {"match": 3}   — the number of the matching answer
@@ -1385,7 +1532,7 @@ export async function matchGuess(
     const raw = await haiku(
       MATCH_SYSTEM,
       `Question: ${question}\nPlayer's guess: "${guess.trim().slice(0, 80)}"\n\nUnrevealed answers:\n${numbered}`,
-      60
+      200
     );
     const clean = raw.replace(/```json|```/g, "").trim();
     const start = clean.indexOf("{");
