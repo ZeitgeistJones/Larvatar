@@ -16,11 +16,11 @@ import Nav from "@/components/Nav";
 export const metadata: Metadata = {
   title: "Pepe Incarnate — Larvatar",
   description:
-    "50,000 iNaturalist frogs → green gate → 96 ranking ballots → equal-exposure final → Cuban Tree Frog, 11 of 16 firsts.",
+    "50,000 iNaturalist frogs → green gate → 96 ranking ballots → equal-exposure final → Cuban Tree Frog, 9 of 15 firsts.",
   openGraph: {
     title: "Pepe Incarnate",
     description:
-      "Open ranking found four near-perfect frogs. Head-to-head final: Cuban Tree Frog, 11 of 16.",
+      "Open ranking found four near-perfect frogs. Head-to-head final: Cuban Tree Frog, 9 of 15.",
     url: "https://larvatar.vercel.app/pepe",
     images: [
       {
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Pepe Incarnate",
     description:
-      "Open ranking → equal-exposure final → Cuban Tree Frog, 11 of 16 firsts.",
+      "Open ranking → equal-exposure final → Cuban Tree Frog, 9 of 15 firsts.",
     images: ["/pepe-incarnate-share.png"],
   },
 };
@@ -48,10 +48,10 @@ const WINNER = {
   observationId: "2365141",
   photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/2632035/medium.jpg",
   observer: "mewaters",
-  /** Final-round firsts / views (equal exposure). */
-  votes: 11,
-  views: 16,
-  meanRank: 1.6875,
+  /** Final-round firsts / views (equal exposure). Snapshot from pepe:final after freeze. */
+  votes: 9,
+  views: 15,
+  meanRank: 1.8,
   /** Open-ranking record before the final. */
   openVotes: 7,
   openViews: 7,
@@ -75,7 +75,7 @@ const CHAMPION_BALLOT_QUOTES = [
   {
     name: "Federationist",
     reason:
-      "The Cuban tree frog wins by feeling. It's not just a frog; it's a localized inhabitant staring out from its own proprietary infrastructure, perfectly capturing the smug, resigned, 'void-staring' essence of the meme without needing aesthetic artifice.",
+      "The Cuban tree frog wins by feeling. It doesn't just look like the meme — it inhabits the void, staring out from its enclosure with that perfect, resigned, internet-native smugness. Pure signal, zero performative wildlife aesthetic.",
   },
 ];
 
@@ -94,9 +94,9 @@ const FINALISTS = [
     openVotes: 7,
     openViews: 7,
     openMeanRank: 1.0,
-    finalVotes: 11,
-    finalViews: 16,
-    finalMeanRank: 1.6875,
+    finalVotes: 9,
+    finalViews: 15,
+    finalMeanRank: 1.8,
   },
   {
     rank: 2,
@@ -109,8 +109,8 @@ const FINALISTS = [
     openViews: 5,
     openMeanRank: 1.0,
     finalVotes: 3,
-    finalViews: 16,
-    finalMeanRank: 2.5625,
+    finalViews: 15,
+    finalMeanRank: 2.533,
   },
   {
     rank: 3,
@@ -123,8 +123,8 @@ const FINALISTS = [
     openViews: 6,
     openMeanRank: 1.0,
     finalVotes: 2,
-    finalViews: 16,
-    finalMeanRank: 2.5625,
+    finalViews: 15,
+    finalMeanRank: 2.467,
   },
   {
     rank: 4,
@@ -136,9 +136,9 @@ const FINALISTS = [
     openVotes: 7,
     openViews: 7,
     openMeanRank: 1.0,
-    finalVotes: 0,
-    finalViews: 16,
-    finalMeanRank: 3.1875,
+    finalVotes: 1,
+    finalViews: 15,
+    finalMeanRank: 3.2,
   },
 ];
 
@@ -317,8 +317,8 @@ const FUNNEL = [
   { n: "119", label: "nominated", note: "one per larva, none twice" },
   { n: "96", label: "open ranking ballots", note: "overlapping slates — produced the candidates" },
   { n: "4", label: "finalists", note: "near-perfect first-place rates (7/7, 7/7, 6/6, 5/5)" },
-  { n: "16", label: "final ballots", note: "every larva saw every finalist" },
-  { n: "1", label: "winner", note: "Cuban Tree Frog — 11 of 16 firsts" },
+  { n: "15", label: "final ballots", note: "every larva saw every finalist" },
+  { n: "1", label: "winner", note: "Cuban Tree Frog — 9 of 15 firsts" },
 ];
 
 const LOOKS_SIDE = [
@@ -420,7 +420,7 @@ export default function PepePage() {
           </p>
           <p className="mb-2 text-[#8a929c]">
             Four frogs with near-perfect open-ranking rates (firsts ≥ 5 and ≥ 80% of
-            views, or ≥ 6 firsts). Sixteen larvae each ranked every finalist.
+            views, or ≥ 6 firsts). Fifteen larvae each ranked every finalist.
           </p>
           <p className="mb-6 text-sm text-[#7a828c]">
             This is the crown. Open ranking only produced the shortlist — it could not
@@ -614,9 +614,9 @@ export default function PepePage() {
               equal exposure decided it
             </p>
             <p className="mt-3 text-[#c8ced6]">
-              Sixteen larvae each saw all four finalists on the same slate. No
-              observation-id tie-break. Cuban took 11 firsts; Squirrel — tied for first
-              in the open ranking — took zero.
+              Fifteen larvae each saw all four finalists on the same slate. No
+              observation-id tie-break. Cuban took 9 firsts; Squirrel — tied for first
+              in the open ranking — fell to one.
             </p>
             <p className="mt-3 text-[#c8ced6]">
               Green stayed a hard gate in the heats. Two larvae opened their set, found
@@ -669,7 +669,7 @@ export default function PepePage() {
           Photographs by iNaturalist contributors under their stated licences. Judgements
           were produced by language models speaking as each larva — they are opinions,
           not measurements. Open ranking stopped at 96 ballots by design; the final ran
-          16 equal-exposure ballots among four near-perfect frogs. The jury illustration
+          15 equal-exposure ballots among four near-perfect frogs. The jury illustration
           is decorative; the larvae do not have faces, chairs, or a gavel. Taxa: Hylidae +
           Ranidae, research-grade only.
         </p>
