@@ -26,7 +26,7 @@ export const metadata: Metadata = {
       {
         url: "/pepe-incarnate-share.png",
         width: 1200,
-        height: 675,
+        height: 1200,
         alt: "Pepe Incarnate — 50k frogs, green gate, larva jury, Cuban Tree Frog wins 7/7",
       },
     ],
