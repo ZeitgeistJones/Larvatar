@@ -1353,6 +1353,11 @@ function labelLooksOnCategory(label: string, cat: AnswerCategory): boolean {
   const n = normalize(label);
   if (!n) return false;
 
+  // Clustering sometimes invents dump buckets instead of real answers.
+  const abstractJunk =
+    /^(miscellaneous|misc(\s+\w+)?|other|others|various|unknown|n ?a|none|random|stuff|things?|items?|options?|answers?|general|assorted|mixed|etc|variety)$/;
+  if (abstractJunk.test(n)) return false;
+
   const governanceJunk =
     /\b(roadmap|tokenomics|audit|receipt|governance|vault|staking|kpi|protocol|sybil|treasury)\b/;
   if (cat === "emoji") {
