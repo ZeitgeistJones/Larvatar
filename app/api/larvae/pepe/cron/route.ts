@@ -13,7 +13,7 @@
 //   Resume      : ...&resume=rank
 //
 // Auth: LARVAE_BUILD_SECRET query param, or Authorization: Bearer CRON_SECRET.
-// Gemini: GEMINI_PEPE_KEY or GEMINI_API_KEY (never commit secrets).
+// Gemini: GEMINI_PEPE_KEY, else GEMINI_LOBSTER_KEY, else GEMINI_API_KEY (never commit secrets).
 
 import { NextRequest, NextResponse } from "next/server";
 import {

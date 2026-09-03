@@ -20,8 +20,11 @@
 //   PEPE_PAGES_PER_RUN   default 25
 //   PEPE_HEAT_SIZE       default 8
 //   PEPE_SLATE_SIZE      default 8
+//   PEPE_RANK_MAX_SLATES cap ranking voters (default 96) — keeps vision cost lean
+//   PEPE_RANK_BALLOT_TARGET soft mid-run cap (default 96); trims queue without wipe
 //   PEPE_TOP_N           how many standings to keep on the page, default 12
-//   GEMINI_PEPE_KEY      or falls back to GEMINI_API_KEY
+//   GEMINI_PEPE_KEY      preferred; else GEMINI_LOBSTER_KEY (separate Google project);
+//                        else GEMINI_API_KEY
 //   GEMINI_MODEL         default gemini-3.6-flash
 
 import { redis, getIndex, getProfile } from "@/lib/larvae";
@@ -64,6 +67,10 @@ export const COLLECT_MAX = Number(process.env.PEPE_COLLECT_MAX || 50_000);
 const PAGES_PER_RUN = Number(process.env.PEPE_PAGES_PER_RUN || 25);
 const MAX_HEAT_SIZE = Number(process.env.PEPE_HEAT_SIZE || 8);
 const SLATE_SIZE = Number(process.env.PEPE_SLATE_SIZE || 8);
+/** Cap how many larvae get a ranking slate (new draws). Mid-run uses BALLOT_TARGET. */
+const RANK_MAX_SLATES = Number(process.env.PEPE_RANK_MAX_SLATES || 96);
+/** Soft ceiling on ranking ballots — trims remaining queue mid-run without a wipe. */
+const RANK_BALLOT_TARGET = Number(process.env.PEPE_RANK_BALLOT_TARGET || 96);
 export const TOP_N = Number(process.env.PEPE_TOP_N || 12);
 
 const TAXA = (process.env.PEPE_TAXA || "Hylidae,Ranidae")
@@ -75,8 +82,17 @@ export const NOMINATE_MODEL =
   process.env.GEMINI_PEPE_VOTE_MODEL || process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
 export function pepeKey(): string {
-  const k = process.env.GEMINI_PEPE_KEY || process.env.GEMINI_API_KEY;
-  if (!k) throw new Error("GEMINI_PEPE_KEY (or GEMINI_API_KEY) not set");
+  // Prefer a dedicated pepe key; otherwise borrow the lobster project's key
+  // (separate Google Cloud quota from GEMINI_API_KEY) before the shared API key.
+  const k =
+    process.env.GEMINI_PEPE_KEY ||
+    process.env.GEMINI_LOBSTER_KEY ||
+    process.env.GEMINI_API_KEY;
+  if (!k) {
+    throw new Error(
+      "GEMINI_PEPE_KEY, GEMINI_LOBSTER_KEY, or GEMINI_API_KEY must be set"
+    );
+  }
   return k;
 }
 
@@ -664,12 +680,21 @@ export async function drawRankSlates(): Promise<{
   const results = await getResults();
   const nominees = results?.nominees || [];
   const index = await getIndex();
-  const wallets = index.map((e: { wallet: string }) => e.wallet.toLowerCase());
+  let wallets = index.map((e: { wallet: string }) => e.wallet.toLowerCase());
 
   if (nominees.length === 0 || wallets.length === 0) {
     await jset(K.rankSlates, []);
     await jset(K.rankQ, []);
     return { slates: 0, slateSize: 0, viewsEach: 0 };
+  }
+
+  // Lean draw: subsample voters when the hive is huge. Deterministic shuffle
+  // so a re-draw with the same field is stable.
+  if (wallets.length > RANK_MAX_SLATES) {
+    wallets = shuffleSeeded(
+      wallets,
+      `pepe-rank-wallets:${nominees.length}:${wallets.length}`
+    ).slice(0, RANK_MAX_SLATES);
   }
 
   const slateSize = Math.min(SLATE_SIZE, nominees.length);
@@ -721,14 +746,73 @@ Rank EVERY image, best first, and never refer to a candidate by its image number
 
 Reply with ONLY: {"ranked":[<image numbers, best first, each exactly once>],"reason":"<max 40 words on why your top choice won, in your voice>"}`;
 
+/** First-place tallies from current ballots — used for mid-run early stop. */
+function firstPlaceLead(ballots: RankBallot[]): { top: number; second: number; lead: number } {
+  const votes = new Map<number, number>();
+  for (const b of ballots) {
+    votes.set(b.pick, (votes.get(b.pick) || 0) + 1);
+  }
+  const ranked = [...votes.values()].sort((a, b) => b - a);
+  const top = ranked[0] || 0;
+  const second = ranked[1] || 0;
+  return { top, second, lead: top - second };
+}
+
+/**
+ * Mid-run: trim remaining queue toward PEPE_RANK_BALLOT_TARGET, and stop early
+ * when first place cannot be caught (lead > remaining ballots).
+ * Returns true when ranking should freeze now.
+ */
+async function maybeFinishRankEarly(
+  ballots: RankBallot[],
+  queue: string[]
+): Promise<{ queue: string[]; finish: boolean; reason?: string }> {
+  if (ballots.length === 0) return { queue, finish: false };
+
+  // Soft cap — keep work lean even if the original draw was large.
+  if (RANK_BALLOT_TARGET > 0 && ballots.length >= RANK_BALLOT_TARGET) {
+    await jset(K.rankQ, []);
+    return {
+      queue: [],
+      finish: true,
+      reason: `ballot target ${RANK_BALLOT_TARGET} reached`,
+    };
+  }
+
+  if (RANK_BALLOT_TARGET > 0 && ballots.length + queue.length > RANK_BALLOT_TARGET) {
+    const keep = Math.max(0, RANK_BALLOT_TARGET - ballots.length);
+    queue = queue.slice(0, keep);
+    await jset(K.rankQ, queue);
+  }
+
+  const { lead } = firstPlaceLead(ballots);
+  // Plurality lock: no remaining ballot can overturn first place.
+  if (ballots.length >= 24 && lead > queue.length) {
+    await jset(K.rankQ, []);
+    return {
+      queue: [],
+      finish: true,
+      reason: `lead ${lead} > remaining ${queue.length}`,
+    };
+  }
+
+  return { queue, finish: false };
+}
+
 export async function rankSlice(
   deadline: number,
   maxItems = Infinity
 ): Promise<{ done: boolean; count: number; failed: number; quota: boolean; lastError?: string }> {
-  const queue = await jget<string[]>(K.rankQ, []);
+  let queue = await jget<string[]>(K.rankQ, []);
   const slates = await jget<Slate[]>(K.rankSlates, []);
   const ballots = await jget<RankBallot[]>(K.rankBallots, []);
   const results = await getResults();
+
+  const early = await maybeFinishRankEarly(ballots, queue);
+  queue = early.queue;
+  if (early.finish) {
+    return { done: true, count: 0, failed: 0, quota: false, lastError: early.reason };
+  }
 
   const byWallet = new Map(slates.map((s) => [s.wallet, s]));
   const byId = new Map((results?.nominees || []).map((c) => [c.id, c]));
@@ -820,6 +904,12 @@ export async function rankSlice(
 
     await jset(K.rankQ, queue);
     await jset(K.rankBallots, ballots);
+
+    const again = await maybeFinishRankEarly(ballots, queue);
+    queue = again.queue;
+    if (again.finish) {
+      return { done: true, count, failed, quota: false, lastError: again.reason };
+    }
   }
 
   return { done: queue.length === 0, count, failed, quota: false, lastError };
