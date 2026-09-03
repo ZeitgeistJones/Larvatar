@@ -15,6 +15,8 @@
 //   PEPE_TAXA            comma names, default Hylidae,Ranidae
 //   PEPE_SHORTLIST_MAX   default 800
 //   PEPE_PER_SPECIES     default 20
+//   PEPE_COLLECT_MAX     hard stop on observations scanned, default 50000
+//                        (frog taxa dwarf lobsters; without this, collect never ends)
 //   PEPE_PAGES_PER_RUN   default 25
 //   PEPE_HEAT_SIZE       default 8
 //   PEPE_SLATE_SIZE      default 8
@@ -57,6 +59,8 @@ export const UA = "Larvatar/1.0 (+https://larvatar.vercel.app) pepe-incarnate";
 
 export const SHORTLIST_MAX = Number(process.env.PEPE_SHORTLIST_MAX || 800);
 export const PER_SPECIES_CAP = Number(process.env.PEPE_PER_SPECIES || 20);
+/** Hard ceiling on iNat rows scanned — frog taxa never "run out" like lobsters. */
+export const COLLECT_MAX = Number(process.env.PEPE_COLLECT_MAX || 50_000);
 const PAGES_PER_RUN = Number(process.env.PEPE_PAGES_PER_RUN || 25);
 const MAX_HEAT_SIZE = Number(process.env.PEPE_HEAT_SIZE || 8);
 const SLATE_SIZE = Number(process.env.PEPE_SLATE_SIZE || 8);
@@ -298,6 +302,12 @@ function weight(c: Candidate): number {
 export async function collectSlice(state: State, deadline: number): Promise<boolean> {
   let shortlist = await jget<Candidate[]>(K.shortlist, []);
   const species = await jget<Record<string, number>>(K.species, {});
+
+  // Already over the scan ceiling (e.g. live run that started before COLLECT_MAX).
+  if (state.considered >= COLLECT_MAX) {
+    return true;
+  }
+
   let pages = 0;
 
   while (pages < PAGES_PER_RUN && Date.now() < deadline) {
@@ -327,30 +337,36 @@ export async function collectSlice(state: State, deadline: number): Promise<bool
       state.idAbove = Math.max(state.idAbove, Number(row.id) || 0);
 
       const c = toCandidate(row);
-      if (!c) continue;
-
-      const used = species[c.species] || 0;
-      if (used >= PER_SPECIES_CAP) {
-        const mine = shortlist.filter((s) => s.species === c.species);
-        if (mine.length === 0) continue;
-        const weakest = mine.reduce((a, b) => (weight(a) <= weight(b) ? a : b));
-        if (weight(c) > weight(weakest)) {
-          shortlist = shortlist.filter((s) => s.id !== weakest.id);
+      if (c) {
+        const used = species[c.species] || 0;
+        if (used >= PER_SPECIES_CAP) {
+          const mine = shortlist.filter((s) => s.species === c.species);
+          if (mine.length > 0) {
+            const weakest = mine.reduce((a, b) => (weight(a) <= weight(b) ? a : b));
+            if (weight(c) > weight(weakest)) {
+              shortlist = shortlist.filter((s) => s.id !== weakest.id);
+              shortlist.push(c);
+            }
+          }
+        } else {
           shortlist.push(c);
+          species[c.species] = used + 1;
+
+          if (shortlist.length > SHORTLIST_MAX) {
+            let weakestIdx = 0;
+            for (let i = 1; i < shortlist.length; i++) {
+              if (weight(shortlist[i]) < weight(shortlist[weakestIdx])) weakestIdx = i;
+            }
+            const [dropped] = shortlist.splice(weakestIdx, 1);
+            species[dropped.species] = Math.max(0, (species[dropped.species] || 1) - 1);
+          }
         }
-        continue;
       }
 
-      shortlist.push(c);
-      species[c.species] = used + 1;
-
-      if (shortlist.length > SHORTLIST_MAX) {
-        let weakestIdx = 0;
-        for (let i = 1; i < shortlist.length; i++) {
-          if (weight(shortlist[i]) < weight(shortlist[weakestIdx])) weakestIdx = i;
-        }
-        const [dropped] = shortlist.splice(weakestIdx, 1);
-        species[dropped.species] = Math.max(0, (species[dropped.species] || 1) - 1);
+      if (state.considered >= COLLECT_MAX) {
+        await jset(K.shortlist, shortlist);
+        await jset(K.species, species);
+        return true;
       }
     }
 
@@ -359,7 +375,7 @@ export async function collectSlice(state: State, deadline: number): Promise<bool
 
   await jset(K.shortlist, shortlist);
   await jset(K.species, species);
-  return false;
+  return state.considered >= COLLECT_MAX;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -111,7 +111,7 @@ export async function GET(req: NextRequest) {
       phase: state.phase,
       considered: state.considered,
       message: finished
-        ? "Collected the frog pool. Drawing heats next."
+        ? "Collected the frog pool (taxa done or PEPE_COLLECT_MAX). Drawing heats next."
         : "Still collecting frogs from iNaturalist.",
     });
   }
