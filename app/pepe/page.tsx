@@ -10,7 +10,35 @@
 // If you ever run another round, that round gets its own page. This one is
 // the record of what happened.
 
+import type { Metadata } from "next";
 import Nav from "@/components/Nav";
+
+export const metadata: Metadata = {
+  title: "Pepe Incarnate — Larvatar",
+  description:
+    "50,000 iNaturalist frogs → green gate → 124 larva heats → 96 ballots → one winner: Cuban Tree Frog, 7/7 votes.",
+  openGraph: {
+    title: "Pepe Incarnate",
+    description:
+      "The hive found the real frog that looks and feels like Pepe. Cuban Tree Frog wins 7/7.",
+    url: "https://larvatar.vercel.app/pepe",
+    images: [
+      {
+        url: "/pepe-incarnate-share.png",
+        width: 1200,
+        height: 675,
+        alt: "Pepe Incarnate — 50k frogs, green gate, larva jury, Cuban Tree Frog wins 7/7",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Pepe Incarnate",
+    description:
+      "50,000 frogs → green gate → 124 heats → 96 ballots → Cuban Tree Frog wins 7/7.",
+    images: ["/pepe-incarnate-share.png"],
+  },
+};
 
 // ── EDIT ME ────────────────────────────────────────────────────────────────
 // Fill these from the winning observation on iNaturalist / pepe API.
