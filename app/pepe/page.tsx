@@ -16,18 +16,18 @@ import Nav from "@/components/Nav";
 export const metadata: Metadata = {
   title: "Pepe Incarnate — Larvatar",
   description:
-    "50,000 iNaturalist frogs → green gate → 124 larva heats → 96 ballots → one winner: Cuban Tree Frog, 7/7 votes.",
+    "50,000 iNaturalist frogs → green gate → 124 larva heats → 96 ballots → Cuban Tree Frog tied at 7 firsts, crowned on tie-break.",
   openGraph: {
     title: "Pepe Incarnate",
     description:
-      "The hive found the real frog that looks and feels like Pepe. Cuban Tree Frog wins 7/7.",
+      "The hive found the real frog that looks and feels like Pepe. Cuban Tree Frog wins on a 7–7 first-place tie.",
     url: "https://larvatar.vercel.app/pepe",
     images: [
       {
         url: "/pepe-incarnate-share.png",
         width: 1200,
         height: 1200,
-        alt: "Pepe Incarnate — 50k frogs, green gate, larva jury, Cuban Tree Frog wins 7/7",
+        alt: "Pepe Incarnate — 50k frogs, green gate, larva jury, Cuban Tree Frog wins",
       },
     ],
   },
@@ -35,13 +35,13 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Pepe Incarnate",
     description:
-      "50,000 frogs → green gate → 124 heats → 96 ballots → Cuban Tree Frog wins 7/7.",
+      "50,000 frogs → green gate → 124 heats → 96 ballots → Cuban Tree Frog, 7 firsts (tied).",
     images: ["/pepe-incarnate-share.png"],
   },
 };
 
 // ── EDIT ME ────────────────────────────────────────────────────────────────
-// Fill these from the winning observation on iNaturalist / pepe API.
+// Snapshot from GET /api/larvae/pepe on 2026-09-03 (phase done, 96 ballots).
 const WINNER = {
   species: "Cuban Tree Frog",
   sciName: "Osteopilus septentrionalis",
@@ -50,12 +50,39 @@ const WINNER = {
   observer: "mewaters",
   votes: 7,
   views: 7,
+  meanRank: 1.0,
+  /** Heat nominator reason (Velocity Thesis). */
+  reason:
+    "The Cuban tree frog delivers the frontal, blank-faced stare required. It isn't performing; it's just sitting in the infrastructure, waiting for the timeline to resolve.",
 };
+
+/** Ranking-pass first-place reasons for the champion (stored ballot text). */
+const CHAMPION_BALLOT_QUOTES = [
+  {
+    name: "Standard",
+    reason:
+      "The Cuban tree frog wins by aesthetic weight: its front-facing gaze from the hollow is pure, unvarnished 'feels' energy. It captures the meme's existential stare better than the others, who are just posing for the camera.",
+  },
+  {
+    name: "Tollmaster",
+    reason:
+      "The Cuban tree frog staring from that knothole hits the existential void perfectly. It captures that specific, dead-eyed, front-facing internet malaise.",
+  },
+  {
+    name: "Wilson Concrete",
+    reason:
+      "The Cuban Tree Frog captures the exact, dead-eyed, architectural vacancy required. It sits in a pre-constructed hollow like a module waiting for an API call.",
+  },
+];
 
 // Drop the jury image into /public with this name.
 const JURY_IMAGE = "/pepe-incarnate-jury.png";
 
-/** Top 12 by first-place votes (tie-break: mean rank). Snapshot from GET /api/larvae/pepe on 2026-09-03. */
+/**
+ * Top 12 by first-place votes (tie-break: mean rank, then lower observation id).
+ * Snapshot from GET /api/larvae/pepe on 2026-09-03.
+ * `reason` = heat nomination reason (or heat note when the nominator referred to image numbers).
+ */
 const STANDINGS = [
   {
     rank: 1,
@@ -66,6 +93,9 @@ const STANDINGS = [
     observer: "mewaters",
     votes: 7,
     views: 7,
+    meanRank: 1.0,
+    reason:
+      "The Cuban tree frog delivers the frontal, blank-faced stare required. It isn't performing; it's just sitting in the infrastructure, waiting for the timeline to resolve.",
   },
   {
     rank: 2,
@@ -76,6 +106,9 @@ const STANDINGS = [
     observer: "bridgetspencer",
     votes: 7,
     views: 7,
+    meanRank: 1.0,
+    reason:
+      "The squirrel tree frog in the pipe captures the essence: isolated, front-facing, and visibly tired of the infrastructure. It has the correct color, the correct gaze, and feels like it belongs in the timeline, not a textbook.",
   },
   {
     rank: 3,
@@ -86,6 +119,9 @@ const STANDINGS = [
     observer: "parham_beyhaghi",
     votes: 6,
     views: 6,
+    meanRank: 1.0,
+    reason:
+      "Front-facing, blank-eyed, and smugly stoic. This is the only candidate that captures the meme's infrastructure.",
   },
   {
     rank: 4,
@@ -96,6 +132,9 @@ const STANDINGS = [
     observer: "gvp666",
     votes: 5,
     views: 5,
+    meanRank: 1.0,
+    reason:
+      "The third frog alone possesses the requisite front-facing, blankly cynical energy. It is the only candidate that balances the necessary green hue with the specific, world-weary stare required for the role.",
   },
   {
     rank: 5,
@@ -106,6 +145,9 @@ const STANDINGS = [
     observer: "francescovigliotti",
     votes: 4,
     views: 6,
+    meanRank: 1.333,
+    reason:
+      "The Italian tree frog has the frontal, blank-faced stare that anchors the meme. It captures the resignation of someone watching a project fail in real-time. It ships the vibe immediately.",
   },
   {
     rank: 6,
@@ -116,6 +158,9 @@ const STANDINGS = [
     observer: "jakubpelka",
     votes: 4,
     views: 6,
+    meanRank: 1.333,
+    reason:
+      "The winner delivers the exact frontal, dead-eyed gaze that defines the meme. It's vibrant, distinct, and holds the screen with the audacity of a project that knows it's hitting 100M. The rest are noise.",
   },
   {
     rank: 7,
@@ -126,6 +171,9 @@ const STANDINGS = [
     observer: "claudurana",
     votes: 4,
     views: 6,
+    meanRank: 1.333,
+    reason:
+      "Frontal, wide-eyed, expressionless stare. This specimen possesses the necessary aesthetic alignment with the source material.",
   },
   {
     rank: 8,
@@ -136,6 +184,9 @@ const STANDINGS = [
     observer: "magazhu",
     votes: 4,
     views: 7,
+    meanRank: 1.429,
+    reason:
+      "The duck-billed frog alone delivers the essential Pepe optics: a static, front-facing, slightly unhinged stare that mimics the meme's signature void-gaze. No other candidate matched the visual requirements for this high-value nomination.",
   },
   {
     rank: 9,
@@ -146,6 +197,9 @@ const STANDINGS = [
     observer: "franciscoacos",
     votes: 4,
     views: 6,
+    meanRank: 1.5,
+    reason:
+      "The frontal posture and wide, resigned mouth are the exact architectural blueprint of the Pepe meme.",
   },
   {
     rank: 10,
@@ -156,6 +210,9 @@ const STANDINGS = [
     observer: "michelotto",
     votes: 4,
     views: 7,
+    meanRank: 1.571,
+    reason:
+      "The chosen frog has the necessary frontal orientation and vacant, wide-eyed stare. It bypasses the 'nature photography' glamour trap to mirror the meme's signature, detached resignation perfectly. High signal-to-noise ratio.",
   },
   {
     rank: 11,
@@ -166,6 +223,9 @@ const STANDINGS = [
     observer: "biodefensores",
     votes: 4,
     views: 6,
+    meanRank: 1.667,
+    reason:
+      "Only the top pick demonstrates the necessary frontal alignment and consistent, flat green hue to represent the meme architecture. All other candidates suffer from poor colour saturation or incorrect orientation, failing our verification standards.",
   },
   {
     rank: 12,
@@ -176,6 +236,9 @@ const STANDINGS = [
     observer: "tigerswallowtail",
     votes: 3,
     views: 6,
+    meanRank: 1.667,
+    reason:
+      "The top pick provides the required green saturation and successfully achieves the necessary frontal, blank-stare gaze required to replicate the meme's existential energy.",
   },
 ];
 
@@ -186,7 +249,7 @@ const FUNNEL = [
   { n: "288", label: "green enough", note: "passed the colour gate" },
   { n: "119", label: "nominated", note: "one per larva, none twice" },
   { n: "96", label: "ranking ballots", note: "overlapping slates of nominees" },
-  { n: "1", label: "winner", note: "" },
+  { n: "1", label: "winner", note: "7–7 tie broken by observation id" },
 ];
 
 const LOOKS_SIDE = [
@@ -202,6 +265,10 @@ const FEELS_SIDE = [
   "A little sad or resigned",
   "Staring into the timeline",
 ];
+
+function formatMeanRank(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
 
 export default function PepePage() {
   return (
@@ -242,12 +309,22 @@ export default function PepePage() {
               <h2 className="mt-2 text-4xl font-bold">{WINNER.species}</h2>
               <p className="text-lg italic text-[#7a828c]">{WINNER.sciName}</p>
 
-              <p className="mt-5 text-2xl font-bold">
-                {WINNER.votes} of {WINNER.views}
+              <p className="mt-5 text-3xl font-bold tracking-tight">
+                <span className="text-[#d2a64c]">{WINNER.votes}</span> first-place votes
               </p>
-              <p className="text-[#8a929c]">
-                larvae who saw it ranked it first — every ballot that met it put it
-                on top.
+              <p className="mt-1 font-mono text-sm text-[#8a929c]">
+                seen on {WINNER.views} ballots · mean rank {formatMeanRank(WINNER.meanRank)}
+              </p>
+              <p className="mt-3 text-[#8a929c]">
+                Tied with Squirrel Tree Frog at 7 firsts / 7 views / mean rank 1.0. They never
+                shared a ballot. The crown went to the lower observation id — not a blowout.
+              </p>
+
+              <blockquote className="mt-5 border-l-2 border-[#d2a64c]/60 pl-4 text-[#c8ced6]">
+                {WINNER.reason}
+              </blockquote>
+              <p className="mt-2 font-mono text-xs text-[#7a828c]">
+                heat nomination · Velocity Thesis
               </p>
 
               <a
@@ -262,14 +339,41 @@ export default function PepePage() {
           </div>
         </section>
 
+        {/* ── ranking voices ────────────────────────────────────────────── */}
+        <section className="mb-12">
+          <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
+            why they put it first
+          </p>
+          <p className="mb-5 text-[#8a929c]">
+            Three of the seven ranking ballots that crowned it — stored larva reasons, not
+            rewritten.
+          </p>
+          <ul className="space-y-4">
+            {CHAMPION_BALLOT_QUOTES.map((q) => (
+              <li
+                key={q.name}
+                className="rounded-2xl border border-[#2c313a] bg-[#14171d] px-5 py-4"
+              >
+                <p className="text-[#c8ced6]">&ldquo;{q.reason}&rdquo;</p>
+                <p className="mt-2 font-mono text-xs text-[#7a828c]">{q.name}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+
         {/* ── the field: top twelve ─────────────────────────────────────── */}
         <section className="mb-12">
           <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
             the field
           </p>
-          <p className="mb-6 text-[#8a929c]">
-            Top twelve by first-place votes across 96 ranking ballots — 119 nominees
-            total, each seen on overlapping slates.
+          <p className="mb-2 text-[#8a929c]">
+            Top twelve by first-place votes across 96 ranking ballots — 119 nominees total,
+            each seen on overlapping slates of roughly 5–7 ballots.
+          </p>
+          <p className="mb-6 text-sm text-[#7a828c]">
+            &ldquo;7 firsts on 7 ballots&rdquo; means every larva who saw that frog put it
+            first — not that it beat the whole field. Perfect rates are common when exposure
+            is small and slates rarely collide.
           </p>
           <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {STANDINGS.map((frog) => {
@@ -307,11 +411,18 @@ export default function PepePage() {
                     <div className="p-4">
                       <p className="font-bold leading-snug">{frog.species}</p>
                       <p className="mt-0.5 text-sm italic text-[#7a828c]">{frog.sciName}</p>
-                      <p className="mt-3 font-mono text-sm">
+
+                      <p className="mt-3 text-xl font-bold tracking-tight">
                         <span className="text-[#d2a64c]">{frog.votes}</span>
-                        <span className="text-[#8a929c]"> of {frog.views} first</span>
+                        <span className="text-[#f3f3f1]"> firsts</span>
                       </p>
-                      <p className="mt-1 font-mono text-xs text-[#6fbf73] group-hover:underline">
+                      <p className="mt-0.5 font-mono text-xs text-[#8a929c]">
+                        on {frog.views} ballots · mean rank {formatMeanRank(frog.meanRank)}
+                      </p>
+
+                      <p className="mt-3 text-sm leading-snug text-[#a8b0ba]">{frog.reason}</p>
+
+                      <p className="mt-3 font-mono text-xs text-[#6fbf73] group-hover:underline">
                         {frog.observationId} · {frog.observer} ↗
                       </p>
                     </div>
@@ -356,7 +467,8 @@ export default function PepePage() {
             </p>
             <p className="mt-3 text-[#c8ced6]">
               Nominees were then re-judged across overlapping ranking slates. Nothing
-              lived or died on a single opinion.
+              lived or died on a single opinion — but with only ~6 views each, two strong
+              frogs can finish with identical perfect rates without ever meeting.
             </p>
           </div>
 
@@ -419,8 +531,9 @@ export default function PepePage() {
         <p className="border-t border-[#2c313a] pt-6 font-mono text-xs leading-relaxed text-[#5f6772]">
           Photographs by iNaturalist contributors under their stated licences. Judgements
           were produced by language models speaking as each larva — they are opinions,
-          not measurements. The jury illustration is decorative; the larvae do not have
-          faces, chairs, or a gavel. Taxa: Hylidae + Ranidae, research-grade only.
+          not measurements. Ranking stopped at 96 ballots by design. The jury illustration
+          is decorative; the larvae do not have faces, chairs, or a gavel. Taxa: Hylidae +
+          Ranidae, research-grade only.
         </p>
       </div>
     </main>
