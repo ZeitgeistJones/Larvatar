@@ -1319,7 +1319,7 @@ function mergeNearDuplicateClusters(clusters: Cluster[]): Cluster[] {
 
 // ─── Board building ────────────────────────────────────────────────
 
-const RESPONDENT_COUNT = 100;
+const RESPONDENT_COUNT = Number(process.env.SURVEY_RESPONDENTS || 40);
 
 /**
  * Build one complete board: survey N larvae, cluster their answers, rank them.
