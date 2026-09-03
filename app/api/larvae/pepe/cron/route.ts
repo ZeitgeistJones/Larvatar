@@ -2,7 +2,7 @@
 //
 // Pepe Incarnate — lean pipeline, one route.
 //
-//   collect → filter → heats → draw → rank → done
+//   collect → filter → heats → draw → rank → done → (optional) final
 //
 // Each visit does one slice and returns (Vercel Hobby ~60s cap).
 //
@@ -11,26 +11,34 @@
 //   Nuke it     : ...&hardReset=true
 //   Smoke test  : ...&limit=3
 //   Resume      : ...&resume=rank
+//   Final vote  : ...&final=true        (seed or continue equal-exposure final)
+//   Re-seed     : ...&final=true&resetFinal=true
 //
 // Auth: LARVAE_BUILD_SECRET query param, or Authorization: Bearer CRON_SECRET.
 // Gemini: GEMINI_PEPE_KEY, else GEMINI_LOBSTER_KEY, else GEMINI_API_KEY (never commit secrets).
 
 // Scheduled run: removed from vercel.json crons - Pepe Incarnate contest is decided; /pepe is static.
+// The &final=true path is manual only — run after ranking when near-perfect frogs need a head-to-head.
 
 import { NextRequest, NextResponse } from "next/server";
 import {
   collectSlice,
   drawHeats,
   drawRankSlates,
+  finalSlice,
   freezeChampion,
+  freezeFinalChampion,
   freshState,
+  getFinalRound,
   getState,
   hardReset,
   heatSlice,
   publish,
   rankSlice,
+  resetFinal,
   resetRun,
   resolveTaxa,
+  seedFinal,
   setState,
   type Phase,
 } from "@/lib/pepe";
@@ -60,6 +68,104 @@ export async function GET(req: NextRequest) {
 
   if (params.get("hardReset") === "true") await hardReset();
   else if (params.get("reset") === "true") await resetRun();
+
+  // ── equal-exposure final (optional, after ranking is done) ───────────────
+  // Does not wipe heats/ranking. Seeds near-perfect frogs onto identical
+  // slates, then drains ballots across cron visits until freeze.
+  if (params.get("final") === "true") {
+    if (params.get("resetFinal") === "true") await resetFinal();
+
+    const state = await getState();
+    if (!state || state.phase !== "done") {
+      return NextResponse.json(
+        {
+          error: "final requires phase=done ranking results",
+          phase: state?.phase ?? null,
+        },
+        { status: 409 }
+      );
+    }
+
+    let round = await getFinalRound();
+
+    if (!round) {
+      try {
+        const seeded = await seedFinal();
+        await publish(state);
+        return NextResponse.json({
+          ok: true,
+          done: false,
+          phase: "final",
+          status: "seeded",
+          finalists: seeded.finalists,
+          ids: seeded.ids,
+          species: seeded.species,
+          ballots: seeded.ballots,
+          message: `Final seeded: ${seeded.species.join(", ")}. Call &final=true again to vote.`,
+        });
+      } catch (e) {
+        return NextResponse.json(
+          { error: String(e).slice(0, 400) },
+          { status: 500 }
+        );
+      }
+    }
+
+    if (round.status === "done") {
+      return NextResponse.json({
+        ok: true,
+        done: true,
+        phase: "final",
+        status: "done",
+        championId: round.championId,
+        preliminaryChampionId: round.preliminaryChampionId,
+        standings: round.standings,
+        ballots: round.ballots.length,
+        message: "Final already closed. Pass &resetFinal=true to re-run.",
+      });
+    }
+
+    const limit = Number(params.get("limit") || 0);
+    const r = await finalSlice(deadline, limit > 0 ? limit : Infinity);
+
+    if (r.done && limit === 0) {
+      const frozen = await freezeFinalChampion();
+      const published = await getFinalRound();
+      return NextResponse.json({
+        ok: true,
+        done: true,
+        phase: "final",
+        status: "done",
+        championId: frozen.championId,
+        preliminaryChampionId: frozen.preliminaryChampionId,
+        changed: frozen.changed,
+        standings: frozen.standings,
+        ballots: published?.ballots.length ?? 0,
+        species: published?.candidates.map((c) => c.species) ?? [],
+        message: frozen.changed
+          ? `Final overturned ranking champ → ${frozen.championId}.`
+          : `Final confirmed ranking champ ${frozen.championId}.`,
+      });
+    }
+
+    await publish(state);
+    round = await getFinalRound();
+    return NextResponse.json({
+      ok: true,
+      done: false,
+      phase: "final",
+      status: round?.status ?? "running",
+      votedThisRun: r.count,
+      failed: r.failed,
+      quotaExhausted: r.quota,
+      lastError: r.lastError,
+      ballotsSoFar: round?.ballots.length ?? 0,
+      ballotTarget: round?.ballotTarget ?? null,
+      message: r.quota
+        ? "Daily allowance spent. Resumes tomorrow — call &final=true again."
+        : "Final ballots running.",
+    });
+  }
 
   const state = await getState();
 
