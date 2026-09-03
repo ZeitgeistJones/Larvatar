@@ -24,6 +24,9 @@ const WINNER = {
   views: 7,
 };
 
+// Drop the jury image into /public with this name.
+const JURY_IMAGE = "/pepe-incarnate-jury.png";
+
 /** Top 12 by first-place votes (tie-break: mean rank). Snapshot from GET /api/larvae/pepe on 2026-09-03. */
 const STANDINGS = [
   {
@@ -189,14 +192,10 @@ export default function PepePage() {
           </p>
         </header>
 
-        {/* ── hero: the champion ────────────────────────────────────────── */}
+        {/* ── the jury ──────────────────────────────────────────────────── */}
         <figure className="mb-10 overflow-hidden rounded-2xl border border-[#2c313a]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={WINNER.photo}
-            alt={`${WINNER.species} — Pepe Incarnate`}
-            className="max-h-[70vh] w-full object-cover object-center"
-          />
+          <img src={JURY_IMAGE} alt="The larvae jury delivering its verdict" className="w-full" />
         </figure>
 
         {/* ── the verdict ───────────────────────────────────────────────── */}
@@ -392,7 +391,8 @@ export default function PepePage() {
         <p className="border-t border-[#2c313a] pt-6 font-mono text-xs leading-relaxed text-[#5f6772]">
           Photographs by iNaturalist contributors under their stated licences. Judgements
           were produced by language models speaking as each larva — they are opinions,
-          not measurements. Taxa: Hylidae + Ranidae, research-grade only.
+          not measurements. The jury illustration is decorative; the larvae do not have
+          faces, chairs, or a gavel. Taxa: Hylidae + Ranidae, research-grade only.
         </p>
       </div>
     </main>
