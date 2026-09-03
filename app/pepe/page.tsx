@@ -24,6 +24,130 @@ const WINNER = {
   views: 7,
 };
 
+/** Top 12 by first-place votes (tie-break: mean rank). Snapshot from GET /api/larvae/pepe on 2026-09-03. */
+const STANDINGS = [
+  {
+    rank: 1,
+    species: "Cuban Tree Frog",
+    sciName: "Osteopilus septentrionalis",
+    observationId: "2365141",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/2632035/medium.jpg",
+    observer: "mewaters",
+    votes: 7,
+    views: 7,
+  },
+  {
+    rank: 2,
+    species: "Squirrel Tree Frog",
+    sciName: "Dryophytes squirellus",
+    observationId: "3660877",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/4238920/medium.jpg",
+    observer: "bridgetspencer",
+    votes: 7,
+    views: 7,
+  },
+  {
+    rank: 3,
+    species: "Lemon-yellow Tree Frog",
+    sciName: "Hyla savignyi",
+    observationId: "2604524",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/2909153/medium.jpg",
+    observer: "parham_beyhaghi",
+    votes: 6,
+    views: 6,
+  },
+  {
+    rank: 4,
+    species: "Eastern Tree Frog",
+    sciName: "Hyla orientalis",
+    observationId: "10750188",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/15027203/medium.jpg",
+    observer: "gvp666",
+    votes: 5,
+    views: 5,
+  },
+  {
+    rank: 5,
+    species: "Italian Tree Frog",
+    sciName: "Hyla intermedia",
+    observationId: "4282813",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/5133087/medium.jpg",
+    observer: "francescovigliotti",
+    votes: 4,
+    views: 6,
+  },
+  {
+    rank: 6,
+    species: "Palearctic Treefrogs",
+    sciName: "Hyla",
+    observationId: "5583181",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/6892289/medium.jpeg",
+    observer: "jakubpelka",
+    votes: 4,
+    views: 6,
+  },
+  {
+    rank: 7,
+    species: "Green Dotted Tree Frog",
+    sciName: "Dendropsophus molitor",
+    observationId: "9132700",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/12343146/medium.jpeg",
+    observer: "claudurana",
+    votes: 4,
+    views: 6,
+  },
+  {
+    rank: 8,
+    species: "Duck-billed Tree Frog",
+    sciName: "Triprion spatulatus",
+    observationId: "1580899",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/1952727/medium.jpg",
+    observer: "magazhu",
+    votes: 4,
+    views: 7,
+  },
+  {
+    rank: 9,
+    species: "Ridged Tree Frog",
+    sciName: "Dryophytes plicatus",
+    observationId: "12648904",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/18298207/medium.jpeg",
+    observer: "franciscoacos",
+    votes: 4,
+    views: 6,
+  },
+  {
+    rank: 10,
+    species: "Black-spotted Casque-headed Tree Frog",
+    sciName: "Trachycephalus nigromaculatus",
+    observationId: "17052582",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/25802005/medium.jpeg",
+    observer: "michelotto",
+    votes: 4,
+    views: 7,
+  },
+  {
+    rank: 11,
+    species: "Mountain Tree Frog",
+    sciName: "Dryophytes eximius",
+    observationId: "8636585",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/11560047/medium.jpg",
+    observer: "biodefensores",
+    votes: 4,
+    views: 6,
+  },
+  {
+    rank: 12,
+    species: "Green Treefrog",
+    sciName: "Dryophytes cinereus",
+    observationId: "6797664",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/8646590/medium.jpg",
+    observer: "tigerswallowtail",
+    votes: 3,
+    views: 6,
+  },
+];
+
 const FUNNEL = [
   { n: "50,000", label: "observations read", note: "Hylidae + Ranidae on iNaturalist" },
   { n: "800", label: "shortlisted", note: "research-grade, photographed, licensed" },
@@ -109,6 +233,66 @@ export default function PepePage() {
               </a>
             </div>
           </div>
+        </section>
+
+        {/* ── the field: top twelve ─────────────────────────────────────── */}
+        <section className="mb-12">
+          <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
+            the field
+          </p>
+          <p className="mb-6 text-[#8a929c]">
+            Top twelve by first-place votes across 96 ranking ballots — 119 nominees
+            total, each seen on overlapping slates.
+          </p>
+          <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {STANDINGS.map((frog) => {
+              const champion = frog.rank === 1;
+              return (
+                <li
+                  key={frog.observationId}
+                  className={`overflow-hidden rounded-2xl border bg-[#14171d] ${
+                    champion ? "border-[#d2a64c]/50" : "border-[#2c313a]"
+                  }`}
+                >
+                  <a
+                    href={`https://www.inaturalist.org/observations/${frog.observationId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group block"
+                  >
+                    <div className="relative aspect-[4/3] overflow-hidden">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={frog.photo}
+                        alt={frog.species}
+                        className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+                      />
+                      <span
+                        className={`absolute left-3 top-3 rounded-full px-2.5 py-1 font-mono text-xs font-bold ${
+                          champion
+                            ? "bg-[#d2a64c] text-[#0b0d10]"
+                            : "bg-[#0b0d10]/80 text-[#f3f3f1]"
+                        }`}
+                      >
+                        #{frog.rank}
+                      </span>
+                    </div>
+                    <div className="p-4">
+                      <p className="font-bold leading-snug">{frog.species}</p>
+                      <p className="mt-0.5 text-sm italic text-[#7a828c]">{frog.sciName}</p>
+                      <p className="mt-3 font-mono text-sm">
+                        <span className="text-[#d2a64c]">{frog.votes}</span>
+                        <span className="text-[#8a929c]"> of {frog.views} first</span>
+                      </p>
+                      <p className="mt-1 font-mono text-xs text-[#6fbf73] group-hover:underline">
+                        {frog.observationId} · {frog.observer} ↗
+                      </p>
+                    </div>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
         </section>
 
         {/* ── the funnel ────────────────────────────────────────────────── */}
