@@ -16,11 +16,11 @@ import Nav from "@/components/Nav";
 export const metadata: Metadata = {
   title: "Pepe Incarnate — Larvatar",
   description:
-    "50,000 iNaturalist frogs → green gate → 124 larva heats → 96 ballots → Cuban Tree Frog tied at 7 firsts, crowned on tie-break.",
+    "50,000 iNaturalist frogs → green gate → 96 ranking ballots → equal-exposure final → Cuban Tree Frog, 11 of 16 firsts.",
   openGraph: {
     title: "Pepe Incarnate",
     description:
-      "The hive found the real frog that looks and feels like Pepe. Cuban Tree Frog wins on a 7–7 first-place tie.",
+      "Open ranking found four near-perfect frogs. Head-to-head final: Cuban Tree Frog, 11 of 16.",
     url: "https://larvatar.vercel.app/pepe",
     images: [
       {
@@ -35,43 +35,110 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Pepe Incarnate",
     description:
-      "50,000 frogs → green gate → 124 heats → 96 ballots → Cuban Tree Frog, 7 firsts (tied).",
+      "Open ranking → equal-exposure final → Cuban Tree Frog, 11 of 16 firsts.",
     images: ["/pepe-incarnate-share.png"],
   },
 };
 
 // ── EDIT ME ────────────────────────────────────────────────────────────────
-// Snapshot from GET /api/larvae/pepe on 2026-09-03 (phase done, 96 ballots).
+// Snapshot from GET /api/larvae/pepe on 2026-09-03 after equal-exposure final.
 const WINNER = {
   species: "Cuban Tree Frog",
   sciName: "Osteopilus septentrionalis",
   observationId: "2365141",
   photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/2632035/medium.jpg",
   observer: "mewaters",
-  votes: 7,
-  views: 7,
-  meanRank: 1.0,
+  /** Final-round firsts / views (equal exposure). */
+  votes: 11,
+  views: 16,
+  meanRank: 1.6875,
+  /** Open-ranking record before the final. */
+  openVotes: 7,
+  openViews: 7,
   /** Heat nominator reason (Velocity Thesis). */
   reason:
     "The Cuban tree frog delivers the frontal, blank-faced stare required. It isn't performing; it's just sitting in the infrastructure, waiting for the timeline to resolve.",
 };
 
-/** Ranking-pass first-place reasons for the champion (stored ballot text). */
+/** Final-round first-place reasons for the champion (stored ballot text). */
 const CHAMPION_BALLOT_QUOTES = [
   {
-    name: "Standard",
+    name: "Iterant",
     reason:
-      "The Cuban tree frog wins by aesthetic weight: its front-facing gaze from the hollow is pure, unvarnished 'feels' energy. It captures the meme's existential stare better than the others, who are just posing for the camera.",
+      "The Cuban frog captures the specific, existential detachment of the meme. It isn't performing for a lens; it is trapped in the infrastructure of a knot hole. This is the authentic, cynical aesthetic I demand.",
   },
   {
-    name: "Tollmaster",
+    name: "Kinkin",
     reason:
-      "The Cuban tree frog staring from that knothole hits the existential void perfectly. It captures that specific, dead-eyed, front-facing internet malaise.",
+      "The Cuban tree frog possesses the requisite 'void-staring' aesthetic and structural isolation. It lacks the performative posture of the others, embodying the existential detachment of the Feels Guy with the necessary zero-context architectural framing.",
   },
   {
-    name: "Wilson Concrete",
+    name: "Federationist",
     reason:
-      "The Cuban Tree Frog captures the exact, dead-eyed, architectural vacancy required. It sits in a pre-constructed hollow like a module waiting for an API call.",
+      "The Cuban tree frog wins by feeling. It's not just a frog; it's a localized inhabitant staring out from its own proprietary infrastructure, perfectly capturing the smug, resigned, 'void-staring' essence of the meme without needing aesthetic artifice.",
+  },
+];
+
+/**
+ * Near-perfect frogs invited to the equal-exposure final.
+ * Open = uneven ranking pass. Final = every larva saw every finalist.
+ */
+const FINALISTS = [
+  {
+    rank: 1,
+    species: "Cuban Tree Frog",
+    sciName: "Osteopilus septentrionalis",
+    observationId: "2365141",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/2632035/medium.jpg",
+    observer: "mewaters",
+    openVotes: 7,
+    openViews: 7,
+    openMeanRank: 1.0,
+    finalVotes: 11,
+    finalViews: 16,
+    finalMeanRank: 1.6875,
+  },
+  {
+    rank: 2,
+    species: "Eastern Tree Frog",
+    sciName: "Hyla orientalis",
+    observationId: "10750188",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/15027203/medium.jpg",
+    observer: "gvp666",
+    openVotes: 5,
+    openViews: 5,
+    openMeanRank: 1.0,
+    finalVotes: 3,
+    finalViews: 16,
+    finalMeanRank: 2.5625,
+  },
+  {
+    rank: 3,
+    species: "Lemon-yellow Tree Frog",
+    sciName: "Hyla savignyi",
+    observationId: "2604524",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/2909153/medium.jpg",
+    observer: "parham_beyhaghi",
+    openVotes: 6,
+    openViews: 6,
+    openMeanRank: 1.0,
+    finalVotes: 2,
+    finalViews: 16,
+    finalMeanRank: 2.5625,
+  },
+  {
+    rank: 4,
+    species: "Squirrel Tree Frog",
+    sciName: "Dryophytes squirellus",
+    observationId: "3660877",
+    photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/4238920/medium.jpg",
+    observer: "bridgetspencer",
+    openVotes: 7,
+    openViews: 7,
+    openMeanRank: 1.0,
+    finalVotes: 0,
+    finalViews: 16,
+    finalMeanRank: 3.1875,
   },
 ];
 
@@ -79,7 +146,7 @@ const CHAMPION_BALLOT_QUOTES = [
 const JURY_IMAGE = "/pepe-incarnate-jury.png";
 
 /**
- * Top 12 by first-place votes (tie-break: mean rank, then lower observation id).
+ * Top 12 by first-place votes in the open ranking pass (before the final).
  * Snapshot from GET /api/larvae/pepe on 2026-09-03.
  * `reason` = heat nomination reason (or heat note when the nominator referred to image numbers).
  */
@@ -248,8 +315,10 @@ const FUNNEL = [
   { n: "726", label: "judged by a larva", note: "each one seen in a heat" },
   { n: "288", label: "green enough", note: "passed the colour gate" },
   { n: "119", label: "nominated", note: "one per larva, none twice" },
-  { n: "96", label: "ranking ballots", note: "overlapping slates of nominees" },
-  { n: "1", label: "winner", note: "7–7 tie broken by observation id" },
+  { n: "96", label: "open ranking ballots", note: "overlapping slates — produced the candidates" },
+  { n: "4", label: "finalists", note: "near-perfect first-place rates (7/7, 7/7, 6/6, 5/5)" },
+  { n: "16", label: "final ballots", note: "every larva saw every finalist" },
+  { n: "1", label: "winner", note: "Cuban Tree Frog — 11 of 16 firsts" },
 ];
 
 const LOOKS_SIDE = [
@@ -283,7 +352,8 @@ export default function PepePage() {
           <h1 className="mt-2 text-5xl font-bold tracking-tight">Pepe Incarnate</h1>
           <p className="mt-3 max-w-2xl text-lg text-[#8a929c]">
             Of the frogs recorded on iNaturalist, this is the one the hive chose as
-            most Pepe — green first, then looks-like versus feels-like.
+            most Pepe — green first, then looks-like versus feels-like. Open ranking
+            found the candidates; an equal-exposure final crowned the champion.
           </p>
         </header>
 
@@ -304,20 +374,24 @@ export default function PepePage() {
             />
             <div className="min-w-0">
               <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#d2a64c]">
-                pepe incarnate
+                pepe incarnate · final champion
               </p>
               <h2 className="mt-2 text-4xl font-bold">{WINNER.species}</h2>
               <p className="text-lg italic text-[#7a828c]">{WINNER.sciName}</p>
 
               <p className="mt-5 text-3xl font-bold tracking-tight">
-                <span className="text-[#d2a64c]">{WINNER.votes}</span> first-place votes
+                <span className="text-[#d2a64c]">{WINNER.votes}</span> of {WINNER.views}{" "}
+                final firsts
               </p>
               <p className="mt-1 font-mono text-sm text-[#8a929c]">
-                seen on {WINNER.views} ballots · mean rank {formatMeanRank(WINNER.meanRank)}
+                mean rank {formatMeanRank(WINNER.meanRank)} · every finalist on every
+                ballot
               </p>
               <p className="mt-3 text-[#8a929c]">
-                Tied with Squirrel Tree Frog at 7 firsts / 7 views / mean rank 1.0. They never
-                shared a ballot. The crown went to the lower observation id — not a blowout.
+                Open ranking had it tied 7–7 with Squirrel Tree Frog (never on the same
+                slate — crowned only by lower observation id). The final put all four
+                near-perfect frogs on the same ballots. Cuban won outright. Champion
+                unchanged.
               </p>
 
               <blockquote className="mt-5 border-l-2 border-[#d2a64c]/60 pl-4 text-[#c8ced6]">
@@ -339,14 +413,78 @@ export default function PepePage() {
           </div>
         </section>
 
+        {/* ── final head-to-head ────────────────────────────────────────── */}
+        <section className="mb-12">
+          <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
+            the final
+          </p>
+          <p className="mb-2 text-[#8a929c]">
+            Four frogs with near-perfect open-ranking rates (firsts ≥ 5 and ≥ 80% of
+            views, or ≥ 6 firsts). Sixteen larvae each ranked every finalist.
+          </p>
+          <p className="mb-6 text-sm text-[#7a828c]">
+            This is the crown. Open ranking only produced the shortlist — it could not
+            separate Cuban from Squirrel when they never shared a ballot.
+          </p>
+          <ul className="grid gap-5 sm:grid-cols-2">
+            {FINALISTS.map((frog) => {
+              const champion = frog.rank === 1;
+              return (
+                <li
+                  key={frog.observationId}
+                  className={`overflow-hidden rounded-2xl border bg-[#14171d] ${
+                    champion ? "border-[#d2a64c]/50" : "border-[#2c313a]"
+                  }`}
+                >
+                  <a
+                    href={`https://www.inaturalist.org/observations/${frog.observationId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group flex gap-4 p-4"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={frog.photo}
+                      alt={frog.species}
+                      className="h-28 w-28 flex-shrink-0 rounded-xl object-cover"
+                    />
+                    <div className="min-w-0">
+                      <p
+                        className={`font-mono text-xs uppercase tracking-widest ${
+                          champion ? "text-[#d2a64c]" : "text-[#7a828c]"
+                        }`}
+                      >
+                        final #{frog.rank}
+                      </p>
+                      <p className="mt-1 font-bold leading-snug">{frog.species}</p>
+                      <p className="text-sm italic text-[#7a828c]">{frog.sciName}</p>
+                      <p className="mt-3 text-xl font-bold tracking-tight">
+                        <span className="text-[#d2a64c]">{frog.finalVotes}</span>
+                        <span className="text-[#f3f3f1]"> / {frog.finalViews}</span>
+                      </p>
+                      <p className="mt-0.5 font-mono text-xs text-[#8a929c]">
+                        final mean rank {formatMeanRank(frog.finalMeanRank)}
+                      </p>
+                      <p className="mt-2 font-mono text-xs text-[#5f6772]">
+                        open ranking {frog.openVotes}/{frog.openViews} · mean{" "}
+                        {formatMeanRank(frog.openMeanRank)}
+                      </p>
+                    </div>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
         {/* ── ranking voices ────────────────────────────────────────────── */}
         <section className="mb-12">
           <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
             why they put it first
           </p>
           <p className="mb-5 text-[#8a929c]">
-            Three of the seven ranking ballots that crowned it — stored larva reasons, not
-            rewritten.
+            Three of the eleven final ballots that crowned it — stored larva reasons,
+            not rewritten.
           </p>
           <ul className="space-y-4">
             {CHAMPION_BALLOT_QUOTES.map((q) => (
@@ -364,25 +502,26 @@ export default function PepePage() {
         {/* ── the field: top twelve ─────────────────────────────────────── */}
         <section className="mb-12">
           <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
-            the field
+            open ranking · the field
           </p>
           <p className="mb-2 text-[#8a929c]">
-            Top twelve by first-place votes across 96 ranking ballots — 119 nominees total,
-            each seen on overlapping slates of roughly 5–7 ballots.
+            Top twelve by first-place votes across 96 open ranking ballots — 119
+            nominees total, each seen on overlapping slates of roughly 5–7 ballots.
+            This pass produced the finalists; it did not decide the champion.
           </p>
           <p className="mb-6 text-sm text-[#7a828c]">
-            &ldquo;7 firsts on 7 ballots&rdquo; means every larva who saw that frog put it
-            first — not that it beat the whole field. Perfect rates are common when exposure
-            is small and slates rarely collide.
+            &ldquo;7 firsts on 7 ballots&rdquo; means every larva who saw that frog put
+            it first — not that it beat the whole field. Perfect rates are common when
+            exposure is small and slates rarely collide.
           </p>
           <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {STANDINGS.map((frog) => {
-              const champion = frog.rank === 1;
+              const finalist = FINALISTS.some((f) => f.observationId === frog.observationId);
               return (
                 <li
                   key={frog.observationId}
                   className={`overflow-hidden rounded-2xl border bg-[#14171d] ${
-                    champion ? "border-[#d2a64c]/50" : "border-[#2c313a]"
+                    finalist ? "border-[#d2a64c]/40" : "border-[#2c313a]"
                   }`}
                 >
                   <a
@@ -398,15 +537,14 @@ export default function PepePage() {
                         alt={frog.species}
                         className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
                       />
-                      <span
-                        className={`absolute left-3 top-3 rounded-full px-2.5 py-1 font-mono text-xs font-bold ${
-                          champion
-                            ? "bg-[#d2a64c] text-[#0b0d10]"
-                            : "bg-[#0b0d10]/80 text-[#f3f3f1]"
-                        }`}
-                      >
+                      <span className="absolute left-3 top-3 rounded-full bg-[#0b0d10]/80 px-2.5 py-1 font-mono text-xs font-bold text-[#f3f3f1]">
                         #{frog.rank}
                       </span>
+                      {finalist ? (
+                        <span className="absolute right-3 top-3 rounded-full bg-[#d2a64c] px-2.5 py-1 font-mono text-xs font-bold text-[#0b0d10]">
+                          finalist
+                        </span>
+                      ) : null}
                     </div>
                     <div className="p-4">
                       <p className="font-bold leading-snug">{frog.species}</p>
@@ -457,33 +595,32 @@ export default function PepePage() {
         <section className="mb-12 grid gap-6 sm:grid-cols-2">
           <div className="rounded-2xl border border-[#2c313a] bg-[#14171d] p-6">
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
-              nobody saw the same set
+              open ranking found candidates
             </p>
             <p className="mt-3 text-[#c8ced6]">
               The shortlist was dealt into private heats so every larva judged its own
-              handful that no other larva was shown. One nomination each, and nothing
-              could be nominated twice — so no frog advanced because it happened to be
-              drawn against weak company.
+              handful. Nominees were then re-judged across overlapping ranking slates.
+              With only ~6 views each, two strong frogs can finish with identical perfect
+              rates without ever meeting — Cuban and Squirrel both went 7/7.
             </p>
             <p className="mt-3 text-[#c8ced6]">
-              Nominees were then re-judged across overlapping ranking slates. Nothing
-              lived or died on a single opinion — but with only ~6 views each, two strong
-              frogs can finish with identical perfect rates without ever meeting.
+              Near-perfect rates (7/7, 6/6, 5/5) became the finalist cut. That is not a
+              championship; it is a shortlist.
             </p>
           </div>
 
           <div className="rounded-2xl border border-[#2c313a] bg-[#14171d] p-6">
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
-              green was a gate, not a preference
+              equal exposure decided it
             </p>
             <p className="mt-3 text-[#c8ced6]">
-              Pepe is green, so a brown toad was simply the wrong answer however funny
-              or well-photographed. As one score among several it kept getting traded
-              away for a striking image; as a hard rule it could not be.
+              Sixteen larvae each saw all four finalists on the same slate. No
+              observation-id tie-break. Cuban took 11 firsts; Squirrel — tied for first
+              in the open ranking — took zero.
             </p>
             <p className="mt-3 text-[#c8ced6]">
-              Two larvae opened their set, found nothing green enough, and nominated
-              nobody. An empty heat is a real answer.
+              Green stayed a hard gate in the heats. Two larvae opened their set, found
+              nothing green enough, and nominated nobody.
             </p>
           </div>
         </section>
@@ -531,7 +668,8 @@ export default function PepePage() {
         <p className="border-t border-[#2c313a] pt-6 font-mono text-xs leading-relaxed text-[#5f6772]">
           Photographs by iNaturalist contributors under their stated licences. Judgements
           were produced by language models speaking as each larva — they are opinions,
-          not measurements. Ranking stopped at 96 ballots by design. The jury illustration
+          not measurements. Open ranking stopped at 96 ballots by design; the final ran
+          16 equal-exposure ballots among four near-perfect frogs. The jury illustration
           is decorative; the larvae do not have faces, chairs, or a gavel. Taxa: Hylidae +
           Ranidae, research-grade only.
         </p>
