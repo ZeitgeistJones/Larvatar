@@ -1,335 +1,216 @@
 // app/pepe/page.tsx
 //
-// Pepe Incarnate — live contest page.
-// Reads /api/larvae/pepe (never calls Gemini). While the cron runs, this
-// fills in: shortlist → nominees → ranking → champion.
-// After a round is decided, leave this live until you hardcode a static
-// winner page the way /lobsters did.
+// Pepe Incarnate — the result.
+//
+// This page is deliberately STATIC. Every number below is hardcoded rather
+// than read from redis, because the live results object gets overwritten by
+// every run and was already destroyed once on Clawd by a stray reset. A
+// declared winner should not be able to disappear because a cron fired.
+//
+// If you ever run another round, that round gets its own page. This one is
+// the record of what happened.
 
-"use client";
-
-import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
-import { useTheme } from "@/components/ThemeProvider";
 
-type Candidate = {
-  id: number;
-  species: string;
-  sciName: string;
-  photo: string;
-  page: string;
-  observer: string;
+// ── EDIT ME ────────────────────────────────────────────────────────────────
+// Fill these from the winning observation on iNaturalist / pepe API.
+const WINNER = {
+  species: "Cuban Tree Frog",
+  sciName: "Osteopilus septentrionalis",
+  observationId: "2365141",
+  photo: "https://inaturalist-open-data.s3.amazonaws.com/photos/2632035/medium.jpg",
+  observer: "mewaters",
+  votes: 7,
+  views: 7,
 };
 
-type Standing = { id: number; votes: number; views: number; meanRank: number };
+const FUNNEL = [
+  { n: "50,000", label: "observations read", note: "Hylidae + Ranidae on iNaturalist" },
+  { n: "800", label: "shortlisted", note: "research-grade, photographed, licensed" },
+  { n: "726", label: "judged by a larva", note: "each one seen in a heat" },
+  { n: "288", label: "green enough", note: "passed the colour gate" },
+  { n: "119", label: "nominated", note: "one per larva, none twice" },
+  { n: "96", label: "ranking ballots", note: "overlapping slates of nominees" },
+  { n: "1", label: "winner", note: "" },
+];
 
-type Judged = Candidate & {
-  rank: number;
-  note: string;
-  green: boolean;
-  judge: string;
-  heatSize: number;
-};
+const LOOKS_SIDE = [
+  "Front-facing, eyes toward the camera",
+  "That blank or faintly smug mouth",
+  "Classic meme silhouette, not a side profile in a swamp",
+  "Reads as Pepe before it reads as wildlife",
+];
 
-type Nomination = {
-  wallet: string;
-  name: string;
-  pick: number | null;
-  reason: string;
-};
-
-type Payload = {
-  ready: boolean;
-  phase: string | null;
-  note?: string | null;
-  considered?: number;
-  shortlisted?: number;
-  heatsRun?: number;
-  abstentions?: number;
-  greenCount?: number;
-  nominees?: Candidate[];
-  nominations?: Nomination[];
-  standings?: Standing[];
-  top?: Candidate[];
-  championId?: number | null;
-  judged?: Judged[];
-  updatedAt?: string;
-  round?: string;
-};
-
-const PHASE_LABEL: Record<string, string> = {
-  collect: "Collecting frogs from iNaturalist",
-  filter: "Drawing heats",
-  heats: "Larvae nominating (green gate)",
-  draw: "Drawing ranking slates",
-  rank: "Ranking pass",
-  done: "Decided",
-};
+const FEELS_SIDE = [
+  "Blank internet energy",
+  "Not glamorous, not photographer-of-the-year",
+  "A little sad or resigned",
+  "Staring into the timeline",
+];
 
 export default function PepePage() {
-  const { colors } = useTheme();
-  const { ink: INK, sheet: SHEET, card: CARD, coral: CORAL, gold: GOLD, green: GREEN } = colors;
-  const [data, setData] = useState<Payload | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      fetch("/api/larvae/pepe")
-        .then((r) => r.json())
-        .then((d: Payload) => {
-          if (!alive) return;
-          setData(d);
-          setErr(null);
-        })
-        .catch((e) => {
-          if (!alive) return;
-          setErr(String(e));
-        });
-    };
-    load();
-    const t = setInterval(load, 20_000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
-
-  const phase = data?.phase ?? null;
-  const champion =
-    data?.championId && data?.top
-      ? data.top.find((c) => c.id === data.championId) ||
-        data.nominees?.find((c) => c.id === data.championId)
-      : null;
-  const champStanding = data?.standings?.find((s) => s.id === data.championId);
-
-  const byId = new Map((data?.nominees || []).map((c) => [c.id, c]));
-  const topRows =
-    data?.standings
-      ?.slice(0, 12)
-      .map((s) => ({ standing: s, c: byId.get(s.id) }))
-      .filter((r) => r.c) || [];
-
-  const greenJudged = (data?.judged || []).filter((j) => j.green).slice(0, 24);
-  const nominations = (data?.nominations || []).filter((n) => n.pick !== null).slice(0, 20);
-
   return (
-    <main className="min-h-screen px-4 py-10" style={{ background: SHEET, color: INK }}>
+    <main className="min-h-screen bg-[#0b0d10] px-4 py-10 text-[#f3f3f1]">
       <div className="page-shell">
         <Nav />
 
         <header className="mb-8">
-          <p className="font-mono text-xs uppercase tracking-[0.2em]" style={{ color: GREEN || CORAL }}>
-            larv.ai field guide · pepe incarnate
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#6fbf73]">
+            larv.ai field guide · decided
           </p>
-          <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-5xl">Pepe Incarnate</h1>
-          <p className="mt-3 max-w-2xl text-lg opacity-70">
-            Real frogs from iNaturalist. Larvae pick the one that <em>is</em> Pepe — green gate,
-            then looks-like vs feels-like.
+          <h1 className="mt-2 text-5xl font-bold tracking-tight">Pepe Incarnate</h1>
+          <p className="mt-3 max-w-2xl text-lg text-[#8a929c]">
+            Of the frogs recorded on iNaturalist, this is the one the hive chose as
+            most Pepe — green first, then looks-like versus feels-like.
           </p>
         </header>
 
-        {/* status strip */}
-        <section
-          className="mb-10 rounded-2xl border px-5 py-4"
-          style={{ borderColor: `${INK}18`, background: CARD }}
-        >
-          {!data && !err && <p className="opacity-60">loading contest…</p>}
-          {err && <p style={{ color: CORAL }}>could not load: {err}</p>}
-          {data && (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-widest opacity-50">phase</p>
-                <p className="text-xl font-semibold">
-                  {PHASE_LABEL[phase || ""] || phase || "not started"}
-                </p>
-                {data.note && <p className="mt-1 text-sm opacity-55">{data.note}</p>}
-              </div>
-              <div className="flex flex-wrap gap-6 font-mono text-sm">
-                <Stat label="read" value={data.considered ?? 0} />
-                <Stat label="shortlist" value={data.shortlisted ?? 0} />
-                <Stat label="green" value={data.greenCount ?? 0} />
-                <Stat label="nominees" value={data.nominees?.length ?? 0} />
-                <Stat label="abstain" value={data.abstentions ?? 0} />
-              </div>
+        {/* ── hero: the champion ────────────────────────────────────────── */}
+        <figure className="mb-10 overflow-hidden rounded-2xl border border-[#2c313a]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={WINNER.photo}
+            alt={`${WINNER.species} — Pepe Incarnate`}
+            className="max-h-[70vh] w-full object-cover object-center"
+          />
+        </figure>
+
+        {/* ── the verdict ───────────────────────────────────────────────── */}
+        <section className="mb-12 overflow-hidden rounded-2xl border border-[#d2a64c]/50 bg-[#14171d]">
+          <div className="flex flex-col gap-6 p-6 sm:flex-row">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={WINNER.photo}
+              alt={WINNER.species}
+              className="h-64 w-64 flex-shrink-0 rounded-xl object-cover"
+            />
+            <div className="min-w-0">
+              <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#d2a64c]">
+                pepe incarnate
+              </p>
+              <h2 className="mt-2 text-4xl font-bold">{WINNER.species}</h2>
+              <p className="text-lg italic text-[#7a828c]">{WINNER.sciName}</p>
+
+              <p className="mt-5 text-2xl font-bold">
+                {WINNER.votes} of {WINNER.views}
+              </p>
+              <p className="text-[#8a929c]">
+                larvae who saw it ranked it first — every ballot that met it put it
+                on top.
+              </p>
+
+              <a
+                href={`https://www.inaturalist.org/observations/${WINNER.observationId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-5 inline-block font-mono text-xs text-[#6fbf73] underline"
+              >
+                observation {WINNER.observationId} by {WINNER.observer} ↗
+              </a>
             </div>
-          )}
-          {data?.updatedAt && (
-            <p className="mt-3 font-mono text-[10px] uppercase tracking-widest opacity-40">
-              updated {new Date(data.updatedAt).toLocaleString()}
-              {data.round ? ` · round ${data.round}` : ""}
-            </p>
-          )}
+          </div>
         </section>
 
-        {/* champion */}
-        {champion && (
-          <section
-            className="mb-12 overflow-hidden rounded-2xl border"
-            style={{ borderColor: `${GOLD}55`, background: CARD }}
-          >
-            <div className="flex flex-col gap-6 p-6 sm:flex-row">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={champion.photo}
-                alt={champion.species}
-                className="h-64 w-64 flex-shrink-0 rounded-xl object-cover"
-              />
-              <div className="min-w-0">
-                <p
-                  className="font-mono text-xs uppercase tracking-[0.2em]"
-                  style={{ color: GOLD }}
-                >
-                  pepe incarnate
-                </p>
-                <h2 className="mt-2 text-3xl font-bold sm:text-4xl">{champion.species}</h2>
-                <p className="text-lg italic opacity-55">{champion.sciName}</p>
-                {champStanding && (
-                  <>
-                    <p className="mt-5 text-2xl font-bold">
-                      {champStanding.votes} of {champStanding.views}
-                    </p>
-                    <p className="opacity-60">
-                      first-place rankings among larvae who saw it in the ranking pass.
-                    </p>
-                  </>
-                )}
-                <a
-                  href={champion.page}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-4 inline-block font-mono text-xs uppercase tracking-widest underline opacity-70"
-                >
-                  iNaturalist · @{champion.observer}
-                </a>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {!data?.ready && phase && phase !== "done" && (
-          <p className="mb-10 max-w-xl text-sm opacity-60">
-            Contest is running. Cron advances one slice at a time — this page refreshes every
-            20s. Trigger:{" "}
-            <code className="font-mono text-xs">/api/larvae/pepe/cron?secret=…</code>
+        {/* ── the funnel ────────────────────────────────────────────────── */}
+        <section className="mb-12">
+          <p className="mb-4 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
+            how it got here
           </p>
-        )}
+          <ul className="divide-y divide-[#2c313a] border-y border-[#2c313a]">
+            {FUNNEL.map((s) => (
+              <li key={s.label} className="flex items-baseline gap-5 py-3">
+                <span className="w-24 flex-shrink-0 text-right text-2xl font-bold">
+                  {s.n}
+                </span>
+                <span className="w-44 flex-shrink-0 font-mono text-xs uppercase tracking-widest text-[#8a929c]">
+                  {s.label}
+                </span>
+                <span className="text-sm text-[#7a828c]">{s.note}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
 
-        {/* standings */}
-        {topRows.length > 0 && (
-          <section className="mb-12">
-            <h2 className="mb-4 text-2xl font-bold">Standings</h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {topRows.map(({ standing, c }, i) => (
-                <a
-                  key={standing.id}
-                  href={c!.page}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex gap-3 rounded-xl border p-3 transition-opacity hover:opacity-90"
-                  style={{ borderColor: `${INK}15`, background: CARD }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={c!.photo}
-                    alt={c!.species}
-                    className="h-20 w-20 flex-shrink-0 rounded-lg object-cover"
-                  />
-                  <div className="min-w-0">
-                    <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
-                      #{i + 1}
-                    </p>
-                    <p className="truncate font-semibold">{c!.species}</p>
-                    <p className="text-sm opacity-55">
-                      {standing.votes} votes · mean rank {standing.meanRank.toFixed(1)}
-                    </p>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* recent nominations */}
-        {nominations.length > 0 && (
-          <section className="mb-12">
-            <h2 className="mb-4 text-2xl font-bold">Nominations</h2>
-            <ul className="space-y-3">
-              {nominations.map((n) => {
-                const pick = byId.get(n.pick!);
-                return (
-                  <li
-                    key={n.wallet}
-                    className="rounded-xl border px-4 py-3"
-                    style={{ borderColor: `${INK}12`, background: CARD }}
-                  >
-                    <p className="font-mono text-[10px] uppercase tracking-widest opacity-45">
-                      {n.name}
-                    </p>
-                    <p className="mt-1 text-sm">
-                      {pick ? (
-                        <>
-                          picked <strong>{pick.species}</strong>
-                        </>
-                      ) : (
-                        "abstained"
-                      )}
-                      {n.reason ? ` — ${n.reason}` : ""}
-                    </p>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
-
-        {/* green field sample */}
-        {greenJudged.length > 0 && (
-          <section className="mb-12">
-            <h2 className="mb-2 text-2xl font-bold">Passed the green gate</h2>
-            <p className="mb-4 max-w-xl text-sm opacity-60">
-              Sample of frogs a larva judged green enough to be Pepe-eligible.
+        {/* ── the method ────────────────────────────────────────────────── */}
+        <section className="mb-12 grid gap-6 sm:grid-cols-2">
+          <div className="rounded-2xl border border-[#2c313a] bg-[#14171d] p-6">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
+              nobody saw the same set
             </p>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {greenJudged.map((j) => (
-                <a
-                  key={`${j.id}-${j.judge}`}
-                  href={j.page}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="overflow-hidden rounded-xl border"
-                  style={{ borderColor: `${INK}12`, background: CARD }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={j.photo} alt={j.species} className="aspect-square w-full object-cover" />
-                  <div className="p-2">
-                    <p className="truncate text-xs font-semibold">{j.species}</p>
-                    <p className="truncate text-[11px] opacity-50">
-                      {j.judge}: {j.note || "—"}
-                    </p>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
+            <p className="mt-3 text-[#c8ced6]">
+              The shortlist was dealt into private heats so every larva judged its own
+              handful that no other larva was shown. One nomination each, and nothing
+              could be nominated twice — so no frog advanced because it happened to be
+              drawn against weak company.
+            </p>
+            <p className="mt-3 text-[#c8ced6]">
+              Nominees were then re-judged across overlapping ranking slates. Nothing
+              lived or died on a single opinion.
+            </p>
+          </div>
 
-        <footer className="border-t pt-6 font-mono text-[10px] uppercase tracking-widest opacity-40"
-          style={{ borderColor: `${INK}12` }}
-        >
-          Data: iNaturalist research-grade Hylidae + Ranidae · licensed photos only · Redis{" "}
-          <code>pepe:*</code>
-        </footer>
+          <div className="rounded-2xl border border-[#2c313a] bg-[#14171d] p-6">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
+              green was a gate, not a preference
+            </p>
+            <p className="mt-3 text-[#c8ced6]">
+              Pepe is green, so a brown toad was simply the wrong answer however funny
+              or well-photographed. As one score among several it kept getting traded
+              away for a striking image; as a hard rule it could not be.
+            </p>
+            <p className="mt-3 text-[#c8ced6]">
+              Two larvae opened their set, found nothing green enough, and nominated
+              nobody. An empty heat is a real answer.
+            </p>
+          </div>
+        </section>
+
+        {/* ── the criteria ──────────────────────────────────────────────── */}
+        <section className="mb-12">
+          <p className="mb-1 font-mono text-xs uppercase tracking-[0.2em] text-[#7a828c]">
+            what they were looking for
+          </p>
+          <p className="mb-5 text-[#8a929c]">
+            Two halves that pull against each other. The winner had to resolve both.
+          </p>
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div>
+              <p className="mb-3 font-mono text-sm uppercase tracking-widest text-[#6fbf73]">
+                looks like Pepe
+              </p>
+              <ul className="space-y-2">
+                {LOOKS_SIDE.map((t) => (
+                  <li key={t} className="text-[#c8ced6]">
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="mb-3 font-mono text-sm uppercase tracking-widest text-[#5aa9b4]">
+                feels like Pepe
+              </p>
+              <ul className="space-y-2">
+                {FEELS_SIDE.map((t) => (
+                  <li key={t} className="text-[#c8ced6]">
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <p className="mt-5 text-sm text-[#7a828c]">
+            Meme silhouette and blank timeline energy are opposites. A frog that only
+            poses is a mascot with nothing behind it; one that only sulks is invisible.
+          </p>
+        </section>
+
+        <p className="border-t border-[#2c313a] pt-6 font-mono text-xs leading-relaxed text-[#5f6772]">
+          Photographs by iNaturalist contributors under their stated licences. Judgements
+          were produced by language models speaking as each larva — they are opinions,
+          not measurements. Taxa: Hylidae + Ranidae, research-grade only.
+        </p>
       </div>
     </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <p className="text-[10px] uppercase tracking-widest opacity-45">{label}</p>
-      <p className="text-lg font-semibold tabular-nums">{value.toLocaleString()}</p>
-    </div>
   );
 }
