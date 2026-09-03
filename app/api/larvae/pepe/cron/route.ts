@@ -15,6 +15,8 @@
 // Auth: LARVAE_BUILD_SECRET query param, or Authorization: Bearer CRON_SECRET.
 // Gemini: GEMINI_PEPE_KEY, else GEMINI_LOBSTER_KEY, else GEMINI_API_KEY (never commit secrets).
 
+// Scheduled run: removed from vercel.json crons - Pepe Incarnate contest is decided; /pepe is static.
+
 import { NextRequest, NextResponse } from "next/server";
 import {
   collectSlice,

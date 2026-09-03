@@ -7,10 +7,6 @@
     {
       "path": "/api/larvae/lobsters/cron",
       "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/larvae/pepe/cron",
-      "schedule": "30 4 * * *"
     }
   ]
 }
