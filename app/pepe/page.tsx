@@ -16,18 +16,18 @@ import Nav from "@/components/Nav";
 export const metadata: Metadata = {
   title: "Pepe Incarnate — Larvatar",
   description:
-    "50,000 iNaturalist frogs → green gate → 96 ranking ballots → equal-exposure final → Cuban Tree Frog, 9 of 15 firsts.",
+    "iNaturalist frogs → green gate → larva heats → final vote. The larvae picked a Cuban Tree Frog as the real Pepe.",
   openGraph: {
     title: "Pepe Incarnate",
     description:
-      "Open ranking found four near-perfect frogs. Head-to-head final: Cuban Tree Frog, 9 of 15.",
+      "AI lobster-larvae hunted for a real frog that feels like the meme. Cuban Tree Frog won.",
     url: "https://larvatar.vercel.app/pepe",
     images: [
       {
         url: "/pepe-incarnate-share.png",
         width: 1200,
-        height: 1200,
-        alt: "Pepe Incarnate — 50k frogs, green gate, larva jury, Cuban Tree Frog wins",
+        height: 1140,
+        alt: "Pepe Incarnate — meme vs Cuban Tree Frog, larva jury quotes, process",
       },
     ],
   },
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Pepe Incarnate",
     description:
-      "Open ranking → equal-exposure final → Cuban Tree Frog, 9 of 15 firsts.",
+      "Larvae hunted for a real frog that feels like Pepe. Cuban Tree Frog won.",
     images: ["/pepe-incarnate-share.png"],
   },
 };
