@@ -26,8 +26,8 @@ export const metadata: Metadata = {
       {
         url: "/pepe-incarnate-share.png",
         width: 1200,
-        height: 1140,
-        alt: "Pepe Incarnate — meme vs Cuban Tree Frog, larva jury quotes, process",
+        height: 1384,
+        alt: "Pepe Incarnate — meme vs Cuban Tree Frog, finalists, what larvae looked for",
       },
     ],
   },
